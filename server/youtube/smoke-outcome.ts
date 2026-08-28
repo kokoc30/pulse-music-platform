@@ -1,4 +1,4 @@
-import type { YouTubeErrorBody, YouTubeSearchBody } from './handler'
+import type { YouTubeErrorBody, YouTubeSearchBody } from './handler.js'
 
 /**
  * Classification of the single live response the YouTube smoke suite makes.

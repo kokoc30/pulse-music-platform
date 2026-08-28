@@ -1,4 +1,4 @@
-import { handleJamendoRequestSafely } from '../server/jamendo/handler'
+import { handleJamendoRequestSafely } from '../server/jamendo/handler.js'
 
 /**
  * `GET /api/jamendo?action=search&q=<query>&limit=<n>` — the only route the

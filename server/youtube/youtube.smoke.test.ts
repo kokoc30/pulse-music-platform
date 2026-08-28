@@ -1,12 +1,12 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { TestContext } from 'vitest'
-import { handleYouTubeRequest } from './handler'
-import type { YouTubeVideoPayload } from './sanitize'
-import { PAYLOAD_KEYS } from './sanitize'
-import { assertYouTubeSmokeCredential } from './smoke-env'
-import { blockedByTransport, classifyLiveResponse, describeBlock } from './smoke-outcome'
-import type { SmokeOutcome } from './smoke-outcome'
-import { RESULT_COUNT } from './upstream'
+import { handleYouTubeRequest } from './handler.js'
+import type { YouTubeVideoPayload } from './sanitize.js'
+import { PAYLOAD_KEYS } from './sanitize.js'
+import { assertYouTubeSmokeCredential } from './smoke-env.js'
+import { blockedByTransport, classifyLiveResponse, describeBlock } from './smoke-outcome.js'
+import type { SmokeOutcome } from './smoke-outcome.js'
+import { RESULT_COUNT } from './upstream.js'
 
 /**
  * Optional real-provider smoke check (agents/27_PHASE3_TESTING_QA.md → "Live

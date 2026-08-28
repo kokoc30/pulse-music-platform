@@ -1,15 +1,15 @@
-import { readJamendoEnv } from './env'
-import type { EnvSource } from './env'
-import { containsSecret, describeError, redactLiteral } from './redact'
-import { FORBIDDEN_KEYS } from './sanitize'
-import type { JamendoTrackPayload } from './sanitize'
+import { readJamendoEnv } from './env.js'
+import type { EnvSource } from './env.js'
+import { containsSecret, describeError, redactLiteral } from './redact.js'
+import { FORBIDDEN_KEYS } from './sanitize.js'
+import type { JamendoTrackPayload } from './sanitize.js'
 import {
   MAX_QUERY_LENGTH,
   clampLimit,
   isValidJamendoId,
   searchJamendo,
   similarJamendo,
-} from './upstream'
+} from './upstream.js'
 
 /**
  * The one same-origin endpoint the browser is allowed to call.

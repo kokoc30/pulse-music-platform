@@ -9,7 +9,7 @@ import {
   classifyGoogleError,
   detectRelevanceLanguage,
   searchYouTube,
-} from './upstream'
+} from './upstream.js'
 
 const API_KEY = 'AIzaSyA-1234567890abcdefghijklmnopqrstu'
 

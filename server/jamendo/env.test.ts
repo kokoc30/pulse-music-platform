@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readJamendoEnv } from './env'
+import { readJamendoEnv } from './env.js'
 
 describe('Jamendo server environment', () => {
   it('accepts a plausible client id', () => {

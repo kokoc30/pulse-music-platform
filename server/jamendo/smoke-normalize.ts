@@ -1,4 +1,4 @@
-import type { JamendoTrackPayload } from './sanitize'
+import type { JamendoTrackPayload } from './sanitize.js'
 
 /**
  * A copy of the browser's Jamendo normalization, for the live smoke suite only.

@@ -7,7 +7,7 @@ import {
   clampLimit,
   readEnvelope,
   searchJamendo,
-} from './upstream'
+} from './upstream.js'
 
 const CLIENT_ID = 'abc12345'
 

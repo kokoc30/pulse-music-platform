@@ -1,4 +1,4 @@
-import { containsSecret } from '../shared/redact'
+import { containsSecret } from '../shared/redact.js'
 
 /**
  * Raw YouTube API resources → the narrow payload the browser is allowed to see.

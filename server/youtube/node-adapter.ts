@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { EnvSource } from './env'
-import { handleYouTubeRequestSafely } from './handler'
+import type { EnvSource } from './env.js'
+import { handleYouTubeRequestSafely } from './handler.js'
 
 /**
  * Bridges the shared Web-standard handler onto Node's `(req, res)` middleware

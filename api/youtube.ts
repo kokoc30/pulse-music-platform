@@ -1,4 +1,4 @@
-import { handleYouTubeRequestSafely } from '../server/youtube/handler'
+import { handleYouTubeRequestSafely } from '../server/youtube/handler.js'
 
 /**
  * `GET /api/youtube?action=search&q=<query>` — the only route the browser uses

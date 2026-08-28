@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest'
-import { handleJamendoRequest } from './handler'
-import { assertSmokeCredential } from './smoke-env'
-import { normalizeJamendoLike } from './smoke-normalize'
-import type { JamendoTrackPayload } from './sanitize'
+import { handleJamendoRequest } from './handler.js'
+import { assertSmokeCredential } from './smoke-env.js'
+import { normalizeJamendoLike } from './smoke-normalize.js'
+import type { JamendoTrackPayload } from './sanitize.js'
 
 /**
  * Optional real-provider smoke check (agents/18_PHASE2_TESTING_QA.md → "Live

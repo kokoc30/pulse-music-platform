@@ -6,7 +6,7 @@ import {
   SMOKE_ENV_KEYS,
   assertSmokeCredential,
   resolveSmokeEnv,
-} from './smoke-env'
+} from './smoke-env.js'
 
 /**
  * These run in the *deterministic* suite and never touch the network or a real

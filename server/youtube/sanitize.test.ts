@@ -8,7 +8,7 @@ import {
   readVideoId,
   sanitizeYouTubeVideo,
   sanitizeYouTubeVideos,
-} from './sanitize'
+} from './sanitize.js'
 
 /** A complete `videos.list` item, in the shape the live API documents. */
 function videoItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {

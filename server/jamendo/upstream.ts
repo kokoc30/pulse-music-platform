@@ -1,6 +1,6 @@
-import { describeError } from './redact'
-import { sanitizeJamendoTracks } from './sanitize'
-import type { JamendoTrackPayload } from './sanitize'
+import { describeError } from './redact.js'
+import { sanitizeJamendoTracks } from './sanitize.js'
+import type { JamendoTrackPayload } from './sanitize.js'
 
 /**
  * The only place that talks to Jamendo, and the only place the client id is

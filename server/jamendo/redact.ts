@@ -7,4 +7,4 @@
  * about Jamendo's behaviour changed: every existing import path and every
  * existing test still resolves through this file.
  */
-export { REDACTED, redactSecrets, redactLiteral, containsSecret, describeError } from '../shared/redact'
+export { REDACTED, redactSecrets, redactLiteral, containsSecret, describeError } from '../shared/redact.js'

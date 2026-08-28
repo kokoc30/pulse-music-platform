@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ALLOWED_PARAMS, handleYouTubeRequest, handleYouTubeRequestSafely } from './handler'
-import type { YouTubeSearchBody } from './handler'
+import { ALLOWED_PARAMS, handleYouTubeRequest, handleYouTubeRequestSafely } from './handler.js'
+import type { YouTubeSearchBody } from './handler.js'
 
 const API_KEY = 'AIzaSyA-1234567890abcdefghijklmnopqrstu'
 const ENV = { YOUTUBE_API_KEY: API_KEY }

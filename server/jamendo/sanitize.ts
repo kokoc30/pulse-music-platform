@@ -1,4 +1,4 @@
-import { containsSecret } from './redact'
+import { containsSecret } from './redact.js'
 
 /**
  * Raw Jamendo track → the narrow payload the browser is allowed to see.

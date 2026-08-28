@@ -1,6 +1,6 @@
-import { describeError } from '../shared/redact'
-import { sanitizeYouTubeVideos } from './sanitize'
-import type { YouTubeVideoPayload } from './sanitize'
+import { describeError } from '../shared/redact.js'
+import { sanitizeYouTubeVideos } from './sanitize.js'
+import type { YouTubeVideoPayload } from './sanitize.js'
 
 /**
  * The only place that talks to the YouTube Data API, and the only place the API

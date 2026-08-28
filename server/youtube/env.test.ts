@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readYouTubeEnv } from './env'
+import { readYouTubeEnv } from './env.js'
 
 describe('YouTube server environment', () => {
   it('accepts a plausible Google API key', () => {

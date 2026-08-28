@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
-import { handleJamendoRequest } from './handler'
-import type { JamendoSimilarBody } from './handler'
-import { PAYLOAD_KEYS } from './sanitize'
+import { handleJamendoRequest } from './handler.js'
+import type { JamendoSimilarBody } from './handler.js'
+import { PAYLOAD_KEYS } from './sanitize.js'
 import {
   JAMENDO_SIMILAR_ENDPOINT,
   SIMILAR_LIMIT,
   buildSimilarUrl,
   isValidJamendoId,
-} from './upstream'
+} from './upstream.js'
 
 /**
  * The `similar` action.

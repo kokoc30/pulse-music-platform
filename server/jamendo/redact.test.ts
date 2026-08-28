@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { REDACTED, containsSecret, describeError, redactLiteral, redactSecrets } from './redact'
+import { REDACTED, containsSecret, describeError, redactLiteral, redactSecrets } from './redact.js'
 
 describe('credential redaction', () => {
   it('strips the Jamendo client id from a request URL', () => {

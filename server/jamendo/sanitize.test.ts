@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FORBIDDEN_KEYS, PAYLOAD_KEYS, sanitizeJamendoTrack, sanitizeJamendoTracks } from './sanitize'
+import { FORBIDDEN_KEYS, PAYLOAD_KEYS, sanitizeJamendoTrack, sanitizeJamendoTracks } from './sanitize.js'
 
 /** A complete, realistic Jamendo v3.0 track row. */
 function rawTrack(overrides: Record<string, unknown> = {}): Record<string, unknown> {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { REDACTED, containsSecret, describeError, redactLiteral, redactSecrets } from './redact'
-import { redactSecrets as jamendoRedactSecrets } from '../jamendo/redact'
+import { REDACTED, containsSecret, describeError, redactLiteral, redactSecrets } from './redact.js'
+import { redactSecrets as jamendoRedactSecrets } from '../jamendo/redact.js'
 
 const YOUTUBE_KEY = 'AIzaSyA-1234567890abcdefghijklmnopqrstu'
 

@@ -5,7 +5,7 @@ import {
   classifyLiveResponse,
   describeBlock,
   isSearchBody,
-} from './smoke-outcome'
+} from './smoke-outcome.js'
 
 /**
  * Deterministic cover for the live smoke's triage.

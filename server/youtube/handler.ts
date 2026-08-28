@@ -1,9 +1,9 @@
-import { containsSecret, describeError, redactLiteral } from '../shared/redact'
-import { readYouTubeEnv } from './env'
-import type { EnvSource } from './env'
-import { FORBIDDEN_KEYS } from './sanitize'
-import type { YouTubeVideoPayload } from './sanitize'
-import { MAX_QUERY_LENGTH, RESULT_COUNT, detectRelevanceLanguage, searchYouTube } from './upstream'
+import { containsSecret, describeError, redactLiteral } from '../shared/redact.js'
+import { readYouTubeEnv } from './env.js'
+import type { EnvSource } from './env.js'
+import { FORBIDDEN_KEYS } from './sanitize.js'
+import type { YouTubeVideoPayload } from './sanitize.js'
+import { MAX_QUERY_LENGTH, RESULT_COUNT, detectRelevanceLanguage, searchYouTube } from './upstream.js'
 
 /**
  * The one same-origin endpoint the browser is allowed to call for YouTube

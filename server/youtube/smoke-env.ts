@@ -1,4 +1,4 @@
-import type { EnvRecord, SmokeEnvInputs } from '../jamendo/smoke-env'
+import type { EnvRecord, SmokeEnvInputs } from '../jamendo/smoke-env.js'
 
 /**
  * Env resolution for the opt-in live YouTube smoke suite. Test harness only —

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { handleJamendoRequest, handleJamendoRequestSafely } from './handler'
-import { FORBIDDEN_KEYS } from './sanitize'
+import { handleJamendoRequest, handleJamendoRequestSafely } from './handler.js'
+import { FORBIDDEN_KEYS } from './sanitize.js'
 
 const CLIENT_ID = 'abc12345'
 const ENV = { JAMENDO_CLIENT_ID: CLIENT_ID }
