@@ -1,0 +1,537 @@
+/**
+ * Production-only surfaces the reference prototype does not contain.
+ *
+ * The reference has no loading state, no error state, no queue UI and no mobile
+ * navigation (its `.mobile-menu` button has no handler at all). These are
+ * required by agents/01_PROJECT_CONTRACT.md and agents/07_PLAYER_BEHAVIOR.md, so
+ * they are built strictly from the reference's own visual language: the same
+ * surfaces, radii, spacing rhythm, motion curve and accent colour.
+ *
+ * Every rule here is logged in docs/reference-deviations.md.
+ */
+
+/* ==========================================================================
+   Interactive rails (progress + volume)
+   The reference renders `<div><i/></div>` as a static bar. Production keeps the
+   exact 4px rail visual and wraps it in a 14px keyboard/pointer hit area so it
+   is a real, accessible slider.
+   ========================================================================== */
+
+.rail-hit {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 14px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.rail-hit > div {
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--color-track-rail);
+}
+
+.rail-hit > div > i {
+  display: block;
+  height: 100%;
+  background: var(--color-track-fill);
+}
+
+.rail-hit:hover > div > i,
+.rail-hit:focus-visible > div > i,
+.rail-hit[data-dragging='true'] > div > i {
+  background: var(--accent);
+}
+
+.rail-hit[aria-disabled='true'] {
+  cursor: default;
+}
+
+.rail-hit[aria-disabled='true']:hover > div > i {
+  background: var(--color-track-fill);
+}
+
+/* ==========================================================================
+   Loading skeletons — reference artwork placeholder colour, no new shapes
+   ========================================================================== */
+
+.skeleton {
+  background: var(--color-art-placeholder);
+  border-radius: var(--radius-row);
+}
+
+.skeleton-art {
+  aspect-ratio: 1;
+  width: 100%;
+  border-radius: var(--radius-surface);
+}
+
+.skeleton-line {
+  height: 11px;
+  margin: 10px 0 4px;
+  border-radius: 3px;
+}
+
+.skeleton-line.short {
+  width: 58%;
+  height: 9px;
+  margin: 0;
+}
+
+.skeleton-row {
+  display: grid;
+  grid-template-columns: 36px 42px minmax(0, 1fr) 58px 27px;
+  align-items: center;
+  gap: 12px;
+  min-height: 59px;
+  padding: 7px 10px;
+}
+
+.skeleton-row .skeleton-art {
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-art-sm);
+}
+
+.skeleton-row .skeleton-stack {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton {
+    animation: skeleton-pulse 1.25s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes skeleton-pulse {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.55;
+  }
+}
+
+@media (max-width: 560px) {
+  .skeleton-row {
+    grid-template-columns: 27px 42px minmax(0, 1fr) 46px;
+    gap: 9px;
+    padding: 7px 3px;
+  }
+}
+
+/* ==========================================================================
+   Error state — reuses `.empty-results` geometry, adds one action
+   ========================================================================== */
+
+.empty-results svg {
+  color: var(--color-text-muted);
+}
+
+.empty-results.is-error svg {
+  color: var(--destructive);
+}
+
+.retry-button {
+  height: 34px;
+  margin-top: 18px;
+  padding: 0 17px;
+  border-radius: var(--radius-pill);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 12px;
+  font-weight: 800;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) ease;
+}
+
+.retry-button:hover {
+  background: #f0f0f0;
+  transform: scale(1.035);
+}
+
+.retry-button:active {
+  transform: scale(0.97);
+}
+
+/* Inline shelf error keeps the shelf slot alive instead of collapsing it. */
+.shelf-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 20px;
+  border-radius: var(--radius-surface);
+  background: var(--overlay-card);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.shelf-error .retry-button {
+  margin-top: 0;
+  flex: 0 0 auto;
+}
+
+/* ==========================================================================
+   Queue panel — player surface language, anchored above the player
+   ========================================================================== */
+
+.queue-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background: rgba(0, 0, 0, 0.42);
+  border: 0;
+  padding: 0;
+  animation: fade-in var(--dur-fast) ease both;
+}
+
+.queue-panel {
+  position: fixed;
+  right: var(--frame-gutter);
+  bottom: calc(var(--player-height) + var(--frame-gutter) * 2);
+  z-index: calc(var(--z-overlay) + 1);
+  width: min(392px, calc(100vw - 16px));
+  max-height: min(520px, 60vh);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-player-border);
+  border-radius: var(--radius-bar);
+  background: var(--color-player-bg);
+  box-shadow: var(--shadow-bar);
+  animation: pop 0.18s var(--ease-out) both;
+}
+
+.queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 15px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.queue-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -0.15px;
+  color: var(--color-text-strong);
+}
+
+.queue-head p {
+  margin: 3px 0 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-dim);
+}
+
+.queue-head button {
+  padding: 4px;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+  background: transparent;
+  transition: color var(--dur-fast) ease;
+}
+
+.queue-head button:hover {
+  color: var(--color-text-strong);
+}
+
+.queue-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  scrollbar-width: thin;
+}
+
+.queue-body .song-list {
+  gap: 1px;
+}
+
+.queue-body .song-row {
+  grid-template-columns: 30px 36px minmax(0, 1fr) 46px;
+  min-height: 50px;
+  padding: 5px 8px;
+}
+
+.queue-body .song-row img {
+  width: 36px;
+  height: 36px;
+}
+
+.queue-empty {
+  padding: 46px 16px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+@media (max-width: 560px) {
+  .queue-panel {
+    right: 0;
+    left: 0;
+    bottom: var(--player-height-sm);
+    width: auto;
+    max-height: 62vh;
+    border-radius: var(--radius-bar) var(--radius-bar) 0 0;
+  }
+}
+
+/* ==========================================================================
+   Mobile navigation drawer — carries the sidebar content hidden below 830px
+   ========================================================================== */
+
+.mobile-nav-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background: rgba(0, 0, 0, 0.62);
+  border: 0;
+  padding: 0;
+  animation: fade-in var(--dur-fast) ease both;
+}
+
+.mobile-nav {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: calc(var(--z-overlay) + 1);
+  width: min(var(--sidebar-width), 86vw);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--color-shell);
+  box-shadow: var(--shadow-bar);
+  animation: slide-in var(--dur-art) var(--ease-out) both;
+  scrollbar-width: thin;
+}
+
+.mobile-nav .library-heading {
+  padding: 17px 16px 14px 20px;
+}
+
+.mobile-nav-links {
+  display: grid;
+  padding: 4px 9px 12px;
+}
+
+.mobile-nav-links a,
+.mobile-nav-links button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 11px;
+  border-radius: var(--radius-row);
+  color: var(--color-text-muted);
+  background: transparent;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  transition:
+    color var(--dur-fast) ease,
+    background var(--dur-fast) ease;
+}
+
+.mobile-nav-links a:hover,
+.mobile-nav-links button:hover {
+  color: var(--color-text-strong);
+  background: var(--overlay-row-hover);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .queue-panel,
+  .mobile-nav,
+  .queue-backdrop,
+  .mobile-nav-backdrop,
+  .notice {
+    animation: none;
+  }
+}
+
+/* ==========================================================================
+   Small functional states the reference never needed
+   ========================================================================== */
+
+/* Loading spinner inside `.card-play` and `.round-play`. */
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation-duration: 2.4s;
+  }
+}
+
+/* The reference has no disabled variants because nothing could be disabled. */
+.login-button:disabled,
+.side-card button:disabled,
+.join-strip button:disabled,
+.card-play:disabled,
+.station-cover:disabled,
+.retry-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+  transform: none;
+}
+
+.login-button:disabled:hover,
+.side-card button:disabled:hover,
+.card-play:disabled:hover,
+.station-cover:disabled:hover {
+  transform: none !important;
+  background: var(--primary);
+}
+
+.station-cover:disabled:hover {
+  background: transparent;
+}
+
+.card-play:disabled:hover {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+/* The row-wide play affordance.
+
+   The reference drew .song-row as a single <button>. Jamendo requires a real
+   <a> backlink per content item and an anchor may not nest inside a button, so
+   the row became a container and the button became this stretched overlay:
+   the genuine keyboard/AT control, painting nothing.
+
+   pointer-events: none hands the mouse back to the row container, which keeps
+   whole-row clicking, the truncated-text tooltips and the source link all
+   working. Keyboard focus is unaffected — focus does not use hit-testing. */
+.song-row-action {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  pointer-events: none;
+}
+
+/* The one thing that must stay above the row and take the mouse: the required
+   Jamendo backlink. */
+.song-row .provider-credit-link {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+/* Non-streamable rows stay visible but read as unavailable. */
+.song-row[data-streamable='false'] .song-duration {
+  color: var(--color-text-dim);
+  font-style: italic;
+}
+
+/* The header's primary action carries two labels so the pill keeps the
+   reference's measured width at every breakpoint (78px <=830, 69px <=560). */
+.login-button .label-narrow {
+  display: none;
+}
+
+@media (max-width: 830px) {
+  .login-button .label-wide {
+    display: none;
+  }
+
+  .login-button .label-narrow {
+    display: inline;
+  }
+}
+
+/* ==========================================================================
+   Provider source attribution (Phase 2)
+
+   Jamendo's API terms require every item to credit the artist, credit Jamendo
+   as the provider, and link back to its own Jamendo page
+   (agents/17_ATTRIBUTION_LICENSE_COMPLIANCE.md). The credit therefore has to be
+   present but must not disturb the reference's typography: it inherits the
+   size and weight of the line it sits in and only differs in colour.
+   ========================================================================== */
+
+.provider-credit {
+  color: var(--color-text-dim);
+  font-size: inherit;
+  font-weight: inherit;
+  white-space: nowrap;
+}
+
+.provider-credit-link {
+  color: var(--color-text-dim);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition:
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+
+.provider-credit-link:hover,
+.provider-credit-link:focus-visible {
+  color: var(--color-text-strong);
+  border-bottom-color: currentColor;
+}
+
+/* Only attributed rows change layout: the reference's single ellipsised line
+   becomes a flex row so the credit survives a long artist name instead of
+   being clipped away with it. Audius rows keep the reference markup exactly. */
+.song-row .song-data small[data-attributed='true'] {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.song-row .song-data small[data-attributed='true'] .artist-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.song-row .song-data small[data-attributed='true'] .provider-credit {
+  flex: none;
+}

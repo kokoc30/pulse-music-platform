@@ -1,0 +1,15 @@
+/**
+ * Global stylesheet entry.
+ *
+ * Tailwind is imported for the same reason the reference imports it: its
+ * preflight is the baseline the design was authored against (heading/paragraph
+ * margin reset, border-box, image defaults). The design itself is expressed in
+ * the semantic classes ported from the reference — see app.css.
+ */
+@import 'tailwindcss';
+@import './tokens.css';
+@import './app.css';
+@import './additions.css';
+@import './youtube.css';
+@import './personalization.css';
+@import './search-suggestions.css';

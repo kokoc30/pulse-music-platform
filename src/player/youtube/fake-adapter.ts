@@ -1,0 +1,186 @@
+import { YT_STATE, describePlayerError } from './iframe-adapter'
+import type {
+  CreatePlayerOptions,
+  YouTubePlayerFactory,
+  YouTubePlayerHandle,
+} from './iframe-adapter'
+
+/**
+ * Deterministic stand-in for the official IFrame player.
+ *
+ * jsdom cannot run the YouTube player, and the normal test suites must never
+ * touch a real iframe or the live network (agents/24 → "Testability",
+ * agents/27 → "Normal E2E must not use live YouTube"). Tests drive this
+ * instead of weakening the production adapter.
+ */
+
+export interface FakeYouTubePlayer extends YouTubePlayerHandle {
+  readonly videoId: string | null
+  readonly playing: boolean
+  readonly cued: boolean
+  readonly destroyed: boolean
+  readonly playCalls: number
+  readonly container: HTMLElement
+  readonly options: CreatePlayerOptions
+  /** Drive the documented events from a test. */
+  emitState(state: number): void
+  emitError(code: number): void
+  emitAutoplayBlocked(): void
+  setCurrentTime(seconds: number): void
+  setDuration(seconds: number): void
+}
+
+export interface FakeYouTubeFactory extends YouTubePlayerFactory {
+  /** Every player this factory built — the single-instance assertion. */
+  readonly players: FakeYouTubePlayer[]
+  readonly created: number
+  /** The live player, or null once destroyed. */
+  current(): FakeYouTubePlayer | null
+  /** Make the next `create()` reject, as a failed script load would. */
+  failNextCreate(message: string): void
+  reset(): void
+}
+
+export function createFakeYouTubeFactory(): FakeYouTubeFactory {
+  const players: FakeYouTubePlayer[] = []
+  let failNext: string | null = null
+
+  const factory: FakeYouTubeFactory = {
+    players,
+    get created() {
+      return players.length
+    },
+    current() {
+      const last = players[players.length - 1]
+      return last && !last.destroyed ? last : null
+    },
+    failNextCreate(message) {
+      failNext = message
+    },
+    reset() {
+      players.length = 0
+      failNext = null
+    },
+    create(container, options) {
+      if (failNext) {
+        const message = failNext
+        failNext = null
+        return Promise.reject(new Error(message))
+      }
+
+      let videoId: string | null = options.videoId || null
+      let playing = false
+      let cued = Boolean(options.videoId)
+      let destroyed = false
+      let playCalls = 0
+      let currentTime = 0
+      let duration = 0
+      let state: number = YT_STATE.UNSTARTED
+
+      const player: FakeYouTubePlayer = {
+        get videoId() {
+          return videoId
+        },
+        get playing() {
+          return playing
+        },
+        get cued() {
+          return cued
+        },
+        get destroyed() {
+          return destroyed
+        },
+        get playCalls() {
+          return playCalls
+        },
+        container,
+        options,
+
+        cueVideoById(next) {
+          videoId = next
+          cued = true
+          playing = false
+          state = YT_STATE.CUED
+          options.events.onStateChange?.('cued')
+        },
+        loadVideoById(next) {
+          videoId = next
+          cued = true
+          playing = true
+          playCalls += 1
+          state = YT_STATE.PLAYING
+          options.events.onStateChange?.('playing')
+        },
+        playVideo() {
+          playCalls += 1
+          playing = true
+          state = YT_STATE.PLAYING
+          options.events.onStateChange?.('playing')
+        },
+        pauseVideo() {
+          playing = false
+          state = YT_STATE.PAUSED
+          options.events.onStateChange?.('paused')
+        },
+        stopVideo() {
+          playing = false
+          currentTime = 0
+          state = YT_STATE.UNSTARTED
+          options.events.onStateChange?.('unstarted')
+        },
+        getCurrentTime: () => currentTime,
+        getDuration: () => duration,
+        getPlayerState: () => state,
+        getIframe: () => container.querySelector('iframe'),
+        destroy() {
+          destroyed = true
+          playing = false
+          container.replaceChildren()
+        },
+
+        emitState(next) {
+          state = next
+          playing = next === YT_STATE.PLAYING
+          const named =
+            next === YT_STATE.PLAYING
+              ? 'playing'
+              : next === YT_STATE.PAUSED
+                ? 'paused'
+                : next === YT_STATE.ENDED
+                  ? 'ended'
+                  : next === YT_STATE.BUFFERING
+                    ? 'buffering'
+                    : next === YT_STATE.CUED
+                      ? 'cued'
+                      : 'unstarted'
+          options.events.onStateChange?.(named)
+        },
+        emitError(code) {
+          options.events.onError?.(describePlayerError(code))
+        },
+        emitAutoplayBlocked() {
+          playing = false
+          options.events.onAutoplayBlocked?.()
+        },
+        setCurrentTime(seconds) {
+          currentTime = seconds
+        },
+        setDuration(seconds) {
+          duration = seconds
+        },
+      }
+
+      players.push(player)
+      // The real API creates the iframe itself; the fake mirrors that so
+      // "the container holds exactly one iframe and nothing else" is testable.
+      const iframe = container.ownerDocument.createElement('iframe')
+      iframe.title = 'YouTube video player'
+      container.replaceChildren(iframe)
+
+      options.events.onReady?.()
+      return Promise.resolve(player)
+    },
+  }
+
+  return factory
+}

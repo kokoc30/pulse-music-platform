@@ -1,0 +1,284 @@
+/**
+ * Phase 5 — the search history dropdown.
+ *
+ * Built entirely from the reference's own vocabulary: `--color-control` surfaces,
+ * `--overlay-row-hover` for hover, `--radius-search` to echo the field it hangs
+ * from, `--color-text-*` for type, `--dur-fast` for transitions. No new colour,
+ * no new radius, no new type scale — the panel should read as the search field
+ * having grown downwards, not as a browser autocomplete pasted over the page
+ * (docs/reference-deviations.md D-38).
+ */
+
+/* --------------------------------------------------------------------------
+   Anchor
+   -------------------------------------------------------------------------- */
+
+/**
+ * The search field keeps its reference geometry; the shell now carries it, so
+ * the panel has something to be positioned against. Sizing moves out to the
+ * shell and the field fills it, which is why `.top-search` is overridden here.
+ */
+.search-shell {
+  position: relative;
+  width: var(--search-width);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.search-shell .top-search {
+  width: 100%;
+  flex: 1 1 auto;
+}
+
+@media (max-width: 830px) {
+  .search-shell {
+    flex: 1;
+    width: auto;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Panel
+   -------------------------------------------------------------------------- */
+
+.search-suggestions {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  /* Above the header it hangs from, below the player and the toast. */
+  z-index: calc(var(--z-header) + 1);
+  overflow: hidden;
+  padding: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+  background: var(--color-control);
+  box-shadow: var(--shadow-bar, 0 16px 40px rgb(0 0 0 / 55%));
+}
+
+.suggestion-list {
+  max-height: min(58vh, 420px);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+/* --------------------------------------------------------------------------
+   Group headings
+   -------------------------------------------------------------------------- */
+
+.suggestion-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 14px 6px;
+  color: var(--color-text-dim);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+}
+
+.suggestion-group-head-played {
+  margin-top: 4px;
+  border-top: 1px solid var(--color-divider);
+  padding-top: 10px;
+}
+
+.suggestion-clear {
+  padding: 0;
+  color: var(--color-text-dim);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: none;
+  transition: color var(--dur-fast) ease;
+}
+
+.suggestion-clear:hover,
+.suggestion-clear:focus-visible {
+  color: var(--color-text-strong);
+  text-decoration: underline;
+}
+
+/* --------------------------------------------------------------------------
+   Rows
+   -------------------------------------------------------------------------- */
+
+.suggestion-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  /* A comfortable 40px target: the remove control must never be a pinprick. */
+  min-height: 40px;
+  padding: 0 8px 0 14px;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+}
+
+.suggestion-row:hover,
+.suggestion-row[data-active='true'] {
+  background: var(--overlay-row-hover);
+}
+
+.suggestion-icon {
+  flex: 0 0 auto;
+  color: var(--color-text-dim);
+}
+
+.suggestion-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestion-remove {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--color-text-dim);
+  background: transparent;
+  opacity: 0;
+  transition:
+    opacity var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    background var(--dur-fast) ease;
+}
+
+.suggestion-row:hover .suggestion-remove,
+.suggestion-row[data-active='true'] .suggestion-remove,
+.suggestion-remove:focus-visible {
+  opacity: 1;
+}
+
+.suggestion-remove:hover,
+.suggestion-remove:focus-visible {
+  color: var(--color-text-strong);
+  background: var(--color-control-hover);
+}
+
+/* Touch pointers have no hover, so the control is always visible there. */
+@media (hover: none) {
+  .suggestion-remove {
+    opacity: 1;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Recently played rows
+   -------------------------------------------------------------------------- */
+
+.suggestion-row-media {
+  padding-right: 14px;
+}
+
+.suggestion-art {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--color-art-placeholder);
+}
+
+.suggestion-art img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+/* A YouTube thumbnail keeps its 16:9 frame and is never cropped square. */
+.suggestion-art-video {
+  width: 56px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  background: #000;
+}
+
+.suggestion-art-video .yt-thumb-fill img {
+  object-fit: contain;
+}
+
+.suggestion-media-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.suggestion-media-text b {
+  overflow: hidden;
+  color: var(--color-text-card);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestion-media-text small {
+  overflow: hidden;
+  color: var(--color-text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestion-provider {
+  color: var(--color-text-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Mobile
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 560px) {
+  /**
+   * On a phone the field is only part of a crowded header, so anchoring the
+   * panel to its width would leave roughly 200px for a song title. It breaks out
+   * to the viewport instead — still directly under the field it belongs to, but
+   * using the width that is actually available. `fixed` is safe here because the
+   * header is sticky at the top, so the two stay aligned while the page scrolls.
+   */
+  .search-suggestions {
+    position: fixed;
+    top: calc(var(--header-height-sm) - 4px);
+    left: 10px;
+    right: 10px;
+  }
+
+  .suggestion-list {
+    max-height: min(52vh, 340px);
+  }
+
+  .suggestion-row {
+    min-height: 44px;
+  }
+
+  .suggestion-text,
+  .suggestion-media-text b {
+    font-size: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .suggestion-row,
+  .suggestion-remove,
+  .suggestion-clear {
+    transition: none;
+  }
+}

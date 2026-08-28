@@ -1,0 +1,476 @@
+/**
+ * YouTube fallback surfaces — Phase 3.
+ *
+ * Kept in its own file rather than folded into additions.css because these are
+ * the only rules in the application that answer to an external policy as well
+ * as to the design: sizes, overlays and visibility here are constrained by
+ * YouTube's Required Minimum Functionality, not only by taste
+ * (docs/youtube-policy-audit.md §4 and §6).
+ *
+ * Everything is built from the reference's own visual language — the same
+ * surfaces, radii, spacing rhythm, motion curve and type scale — but a YouTube
+ * result is deliberately never disguised as an audio row. Every rule is logged
+ * in docs/reference-deviations.md D-28 … D-32.
+ */
+
+/* ==========================================================================
+   The fallback call to action
+   ========================================================================== */
+
+.yt-fallback-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 10px 20px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--color-control);
+  color: var(--color-text-strong);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+
+.yt-fallback-button:hover:not(:disabled),
+.yt-fallback-button:focus-visible:not(:disabled) {
+  background: var(--color-control-hover);
+  border-color: var(--color-outline-soft);
+}
+
+.yt-fallback-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.yt-fallback-more-row {
+  display: flex;
+  justify-content: center;
+  padding: 18px 0 4px;
+}
+
+.yt-fallback-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--color-text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--dur-fast) ease;
+}
+
+.yt-fallback-link:hover:not(:disabled),
+.yt-fallback-link:focus-visible:not(:disabled) {
+  color: var(--color-text-strong);
+}
+
+.yt-fallback-link:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ==========================================================================
+   The separately labelled results section
+   ========================================================================== */
+
+.yt-results {
+  margin-top: 34px;
+  padding-top: 22px;
+  border-top: 1px solid var(--color-divider);
+}
+
+.yt-results-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.yt-results-note,
+.yt-results-error {
+  margin: 4px 0 14px;
+  color: var(--color-text-dim);
+  font-size: 13px;
+}
+
+.yt-results-error {
+  color: var(--destructive);
+}
+
+.yt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ==========================================================================
+   One result row
+   16:9 art, not the square `.song-row` artwork: cropping a YouTube thumbnail
+   into album art is explicitly forbidden. Same 12px gutter rhythm and 4px
+   radius as the reference row, so the two still read as one family.
+   ========================================================================== */
+
+.yt-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: var(--radius-row);
+  transition: background var(--dur-fast) ease;
+}
+
+.yt-row[data-embeddable="true"] {
+  cursor: pointer;
+}
+
+.yt-row:hover {
+  background: var(--overlay-row-hover);
+}
+
+.yt-row[data-current="true"] {
+  background: var(--overlay-card);
+}
+
+/* Same technique as `.song-row-action`: a real, tabbable button stretched over
+   the row with `pointer-events: none`, so the mouse falls through to the row
+   and the YouTube backlink inside stays clickable. It paints nothing. */
+.yt-row-action {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  pointer-events: none;
+}
+
+.yt-row-art {
+  position: relative;
+  display: block;
+  width: 80px;
+}
+
+.yt-thumb {
+  display: block;
+  overflow: hidden;
+  border-radius: var(--radius-art-sm);
+  background: var(--color-art-placeholder);
+}
+
+/* `contain`, never `cover`: the image is shown whole and unmodified. */
+.yt-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.yt-row-play {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.62);
+  color: var(--color-text-strong);
+  opacity: 0;
+  transition: opacity var(--dur-fast) ease;
+}
+
+.yt-row:hover .yt-row-play,
+.yt-row[data-current="true"] .yt-row-play {
+  opacity: 1;
+}
+
+.yt-row-data {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.yt-row-data b {
+  overflow: hidden;
+  color: var(--color-text-card);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yt-row-data small {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  color: var(--color-text-dim);
+  font-size: 12px;
+}
+
+.yt-channel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yt-source {
+  flex: none;
+  white-space: nowrap;
+}
+
+.yt-source-link {
+  /* Sits above the stretched row button so the backlink is genuinely clickable. */
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--color-text-dim);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  pointer-events: auto;
+  transition:
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+
+.yt-source-link:hover,
+.yt-source-link:focus-visible {
+  color: var(--color-text-strong);
+  border-bottom-color: currentColor;
+}
+
+.yt-row-note {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.yt-row-duration {
+  color: var(--color-text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.yt-row-state {
+  color: var(--color-text-dim);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.yt-row.is-skeleton {
+  grid-template-columns: 80px minmax(0, 1fr);
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   The visible player surface
+   Sits above the bottom player and stays on screen for as long as a video is
+   loaded. `.yt-surface-stage` holds the API-created iframe and nothing else:
+   no overlay, no gradient, no click interceptor, at any breakpoint.
+   ========================================================================== */
+
+.yt-surface {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--player-height) + 16px);
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  padding: 10px;
+  border: 1px solid var(--color-player-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-player-bg);
+  box-shadow: var(--shadow-bar);
+}
+
+.yt-surface-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+
+.yt-surface-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.yt-surface-title b {
+  overflow: hidden;
+  color: var(--color-text-strong);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yt-surface-title small {
+  overflow: hidden;
+  color: var(--color-text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yt-surface-close {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-control);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+}
+
+.yt-surface-close:hover,
+.yt-surface-close:focus-visible {
+  background: var(--color-control-hover);
+}
+
+/* 480x270 is the size the IFrame API reference recommends for 16:9; the
+   min-width / min-height floor is the documented 200x200 hard minimum. */
+.yt-surface-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-width: 200px;
+  min-height: 200px;
+  overflow: hidden;
+  border-radius: var(--radius-art-md);
+  background: #000;
+}
+
+.yt-surface-stage > *,
+.yt-surface-stage iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.yt-surface-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.yt-surface-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-track-fill);
+  color: #111;
+  cursor: pointer;
+}
+
+.yt-surface-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.yt-surface-time {
+  color: var(--color-text-player);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.yt-surface-status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .yt-surface {
+    right: 8px;
+    left: 8px;
+    bottom: calc(var(--player-height-sm) + 10px);
+    width: auto;
+    max-width: none;
+  }
+}
+
+/* ==========================================================================
+   The privacy page
+   ========================================================================== */
+
+.prose {
+  max-width: 62ch;
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.prose h2 {
+  margin: 26px 0 8px;
+  color: var(--color-text-strong);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.prose p,
+.prose ul {
+  margin: 0 0 12px;
+}
+
+.prose ul {
+  padding-left: 20px;
+  list-style: disc;
+}
+
+.prose li {
+  margin-bottom: 6px;
+}
+
+.prose a {
+  color: var(--color-text-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.prose code {
+  padding: 1px 5px;
+  border-radius: var(--radius-art-sm);
+  background: var(--color-control);
+  font-size: 12px;
+}
+
+.prose-back {
+  margin-top: 26px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-divider);
+}

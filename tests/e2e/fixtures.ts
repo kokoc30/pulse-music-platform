@@ -1,0 +1,793 @@
+import type { Page, Route } from '@playwright/test'
+
+/**
+ * Deterministic Audius doubles for E2E.
+ *
+ * The suite must not depend on the live Audius service or on real audio bytes
+ * (agents/09_TESTING_QA.md). Discovery/search JSON is stubbed at the network
+ * layer, and the stream URL points at a tiny locally-generated WAV so the real
+ * `<audio>` element genuinely loads, plays, seeks and ends.
+ */
+
+const ENVELOPE = {
+  latest_chain_block: 1,
+  latest_indexed_block: 1,
+  latest_chain_slot_plays: 1,
+  latest_indexed_slot_plays: 1,
+  signature: 'sig',
+  timestamp: '2026-01-01T00:00:00Z',
+  version: { service: 'discovery-node', version: '1.0.0' },
+}
+
+interface TrackSpec {
+  id: string
+  title: string
+  artist: string
+  duration: number
+  streamable?: boolean
+}
+
+const rawTrack = (spec: TrackSpec) => ({
+  id: spec.id,
+  title: spec.title,
+  duration: spec.duration,
+  genre: 'Electronic',
+  mood: 'Energizing',
+  play_count: 1000,
+  permalink: `/${spec.artist.toLowerCase().replace(/\s+/g, '')}/${spec.id}`,
+  is_streamable: spec.streamable !== false,
+  access: { stream: spec.streamable !== false, download: false },
+  artwork: null,
+  followee_reposts: [],
+  followee_favorites: [],
+  track_segments: [],
+  remix_of: null,
+  field_visibility: { mood: true, tags: true, genre: true, share: true, remixes: true, play_count: true },
+  is_original_available: false,
+  is_downloadable: false,
+  repost_count: 1,
+  favorite_count: 1,
+  comment_count: 0,
+  blocknumber: 1,
+  created_at: '2026-01-01T00:00:00Z',
+  cover_art_sizes: 'art',
+  user: {
+    id: `u-${spec.id}`,
+    name: spec.artist,
+    handle: spec.artist.toLowerCase().replace(/\s+/g, ''),
+    is_verified: false,
+    is_deactivated: false,
+    is_available: true,
+    profile_picture: null,
+  },
+})
+
+export const TRENDING: TrackSpec[] = [
+  { id: 't1', title: 'Neon Corridor', artist: 'Aster Vale', duration: 8 },
+  { id: 't2', title: 'Glass Harbour', artist: 'Ilo Rhen', duration: 8 },
+  { id: 't3', title: 'Slow Transit', artist: 'Mora Kest', duration: 8 },
+  { id: 't4', title: 'Copper Field', artist: 'Nell Aro', duration: 8 },
+  { id: 't5', title: 'Late Return', artist: 'Sable Junot', duration: 8 },
+]
+
+export const SEARCH_RESULTS: TrackSpec[] = [
+  { id: 's1', title: 'Night Signal', artist: 'Aster Vale', duration: 8 },
+  { id: 's2', title: 'Night Drive', artist: 'Ilo Rhen', duration: 8 },
+  { id: 's3', title: 'Night Vault', artist: 'The Vault', duration: 8, streamable: false },
+]
+
+const USERS = [
+  {
+    id: 'a1',
+    name: 'Aster Vale',
+    handle: 'astervale',
+    is_verified: true,
+    is_deactivated: false,
+    is_available: true,
+    follower_count: 1200,
+    track_count: 20,
+    profile_picture: null,
+  },
+  {
+    id: 'a2',
+    name: 'Ilo Rhen',
+    handle: 'ilorhen',
+    is_verified: false,
+    is_deactivated: false,
+    is_available: true,
+    follower_count: 800,
+    track_count: 12,
+    profile_picture: null,
+  },
+  {
+    id: 'a3',
+    name: 'Mora Kest',
+    handle: 'morakest',
+    is_verified: false,
+    is_deactivated: false,
+    is_available: true,
+    follower_count: 400,
+    track_count: 8,
+    profile_picture: null,
+  },
+  {
+    id: 'a4',
+    name: 'Nell Aro',
+    handle: 'nellaro',
+    is_verified: false,
+    is_deactivated: false,
+    is_available: true,
+    follower_count: 200,
+    track_count: 4,
+    profile_picture: null,
+  },
+]
+
+/** A 2-second silent 8 kHz mono WAV — small, real, and decodable by Chromium. */
+export function silentWav(seconds = 2): Buffer {
+  const sampleRate = 8000
+  const samples = sampleRate * seconds
+  const buffer = Buffer.alloc(44 + samples * 2)
+  buffer.write('RIFF', 0)
+  buffer.writeUInt32LE(36 + samples * 2, 4)
+  buffer.write('WAVE', 8)
+  buffer.write('fmt ', 12)
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(1, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(sampleRate * 2, 28)
+  buffer.writeUInt16LE(2, 32)
+  buffer.writeUInt16LE(16, 34)
+  buffer.write('data', 36)
+  buffer.writeUInt32LE(samples * 2, 40)
+  return buffer
+}
+
+/** A 1x1 transparent PNG, so an image renders with no request leaving the machine. */
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+)
+
+export const AUDIO_ORIGIN = 'https://audio.e2e.test'
+/** Stands in for an Audius content node serving cover art. */
+export const ARTWORK_ORIGIN = 'https://art.e2e.test'
+export const STREAM_PATH = `${AUDIO_ORIGIN}/stream.wav`
+
+export interface StubOptions {
+  /** Force every discovery + search request to fail with this status. */
+  failStatus?: number
+  /** Force search to return no results. */
+  emptySearch?: boolean
+  /** Make the stream-URL lookup fail. */
+  failStream?: boolean
+}
+
+export async function stubAudius(page: Page, options: StubOptions = {}): Promise<void> {
+  const json = (route: Route, body: unknown) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+
+  await page.route('https://api.audius.co/health_check', (route) =>
+    json(route, { data: { healthy: true, network: { content_nodes: [] } }, comms: { healthy: true } }),
+  )
+
+  await page.route('https://api.audius.co/v1/**', async (route) => {
+    const url = new URL(route.request().url())
+    const path = url.pathname
+
+    if (options.failStatus && !path.includes('/stream')) {
+      return route.fulfill({
+        status: options.failStatus,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'stubbed failure' }),
+      })
+    }
+
+    if (path.endsWith('/stream')) {
+      if (options.failStream) {
+        return route.fulfill({
+          status: 403,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'gated' }),
+        })
+      }
+      return json(route, { data: STREAM_PATH })
+    }
+
+    if (path === '/v1/tracks/search') {
+      const results = options.emptySearch ? [] : SEARCH_RESULTS
+      return json(route, { data: results.map(rawTrack) })
+    }
+
+    // The smart-search layer reads tracks and artists from one combined index.
+    if (path === '/v1/search/full') {
+      const results = options.emptySearch ? [] : SEARCH_RESULTS
+      return json(route, {
+        ...ENVELOPE,
+        data: { tracks: results.map(rawTrack), users: [], playlists: [], albums: [] },
+      })
+    }
+
+    if (/^\/v1\/users\/[^/]+\/tracks$/.test(path)) {
+      return json(route, { ...ENVELOPE, data: [] })
+    }
+
+    if (path === '/v1/users/top') {
+      return json(route, { ...ENVELOPE, data: USERS })
+    }
+
+    if (path === '/v1/tracks/trending/underground') {
+      return json(route, { ...ENVELOPE, data: TRENDING.slice(0, 3).map(rawTrack) })
+    }
+
+    if (path === '/v1/tracks/trending') {
+      return json(route, { ...ENVELOPE, data: TRENDING.map(rawTrack) })
+    }
+
+    // A single track by id. Recently Played re-resolves an Audius row through
+    // this, because a stored history entry deliberately keeps no playable URL.
+    //
+    // Checked *after* the named collection routes: `/v1/tracks/trending` also
+    // matches "one path segment after /tracks/", and answering it with a single
+    // track would empty the trending shelf.
+    const byId = /^\/v1\/tracks\/([^/]+)$/.exec(path)
+    if (byId) {
+      const id = byId[1]
+      const spec = [...TRENDING, ...SEARCH_RESULTS].find((track) => track.id === id) ?? {
+        id,
+        title: 'Recovered Track',
+        artist: 'Aster Vale',
+        duration: 8,
+      }
+      return json(route, { ...ENVELOPE, data: rawTrack(spec) })
+    }
+
+    return json(route, { ...ENVELOPE, data: [] })
+  })
+
+  // Phase 2: pin the second provider to a deterministic empty answer so an
+  // Audius-only spec behaves identically whether or not the machine running it
+  // happens to have a JAMENDO_CLIENT_ID configured. `stubJamendo` registers a
+  // later matching route, which Playwright gives precedence, so `stubProviders`
+  // still gets real Jamendo rows.
+  await page.route('**/api/jamendo*', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ provider: 'jamendo', action: 'search', query: '', count: 0, results: [] }),
+    }),
+  )
+
+  // Artwork, served locally. Audius publishes images on community content
+  // nodes; the suite must not depend on one being reachable, and a history card
+  // that renders its real image has to have a real image to render.
+  await page.route(`${ARTWORK_ORIGIN}/**`, (route) =>
+    route.fulfill({ status: 200, contentType: 'image/png', body: TINY_PNG }),
+  )
+
+  // Real audio bytes, served locally: no copyrighted stream, no live network.
+  await page.route(`${AUDIO_ORIGIN}/**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'audio/wav',
+      headers: { 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' },
+      body: silentWav(),
+    }),
+  )
+}
+
+/* ==========================================================================
+   Jamendo doubles (Phase 2)
+
+   The suite must not depend on the live Jamendo service, on a real
+   JAMENDO_CLIENT_ID, or on copyrighted audio (agents/18_PHASE2_TESTING_QA.md
+   → "E2E"). `/api/jamendo` is stubbed at the network layer with exactly the
+   sanitized payload the serverless function emits, and the stream URL points at
+   the same locally-generated WAV the Audius double uses, so real playback,
+   seeking and `ended` all happen against a real <audio> element.
+   ========================================================================== */
+
+export const JAMENDO_AUDIO_ORIGIN = 'https://prod-1.storage.jamendo.test'
+
+export interface JamendoTrackSpec {
+  id: string
+  title: string
+  artist: string
+  duration: number
+  /** Omit the stream URL, producing a visible but unplayable row. */
+  streamable?: boolean
+  /** Omit the Jamendo page URL, exercising the attribution fallback. */
+  sourceUrl?: boolean
+}
+
+export const JAMENDO_RESULTS: JamendoTrackSpec[] = [
+  { id: '1880336', title: 'Night Reverie', artist: 'Lumen Field', duration: 8 },
+  { id: '1880337', title: 'Night Cedar', artist: 'Cedar Room', duration: 8 },
+]
+
+/** Exactly the shape `server/jamendo/sanitize.ts` emits — no extra fields. */
+const jamendoPayload = (spec: JamendoTrackSpec) => ({
+  id: spec.id,
+  title: spec.title,
+  artistName: spec.artist,
+  artistId: `ja-${spec.id}`,
+  albumName: 'Slow Country',
+  durationSeconds: spec.duration,
+  artwork: undefined,
+  ...(spec.streamable === false ? {} : { audioUrl: `${JAMENDO_AUDIO_ORIGIN}/?trackid=${spec.id}` }),
+  ...(spec.sourceUrl === false
+    ? {}
+    : { sourceUrl: `https://www.jamendo.com/track/${spec.id}/${spec.title.toLowerCase().replace(/\s+/g, '-')}` }),
+  licenseUrl: 'https://creativecommons.org/licenses/by-nc-nd/3.0/',
+  releaseDate: '2023-04-11',
+})
+
+export interface JamendoStubOptions {
+  /** Answer 503, as a deployment with no JAMENDO_CLIENT_ID does. */
+  unavailable?: boolean
+  /** Answer 502, as a configured-but-broken Jamendo does. */
+  failing?: boolean
+  /** Return no rows. */
+  empty?: boolean
+  tracks?: JamendoTrackSpec[]
+}
+
+export async function stubJamendo(page: Page, options: JamendoStubOptions = {}): Promise<void> {
+  await page.route('**/api/jamendo*', (route) => {
+    if (options.unavailable) {
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'UNAVAILABLE', message: 'unavailable' } }),
+      })
+    }
+    if (options.failing) {
+      return route.fulfill({
+        status: 502,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'UPSTREAM', message: 'boom' } }),
+      })
+    }
+    const specs = options.empty ? [] : (options.tracks ?? JAMENDO_RESULTS)
+    const query = new URL(route.request().url()).searchParams.get('q') ?? ''
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        provider: 'jamendo',
+        action: 'search',
+        query,
+        count: specs.length,
+        results: specs.map(jamendoPayload),
+      }),
+    })
+  })
+
+  // Real audio bytes for the Jamendo stream URL, served locally.
+  await page.route(`${JAMENDO_AUDIO_ORIGIN}/**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'audio/wav',
+      headers: { 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' },
+      body: silentWav(),
+    }),
+  )
+}
+
+/** Both catalogues, the normal Phase 2 state. */
+export async function stubProviders(
+  page: Page,
+  options: { audius?: StubOptions; jamendo?: JamendoStubOptions } = {},
+): Promise<void> {
+  await stubAudius(page, options.audius ?? {})
+  await stubJamendo(page, options.jamendo ?? {})
+}
+
+/* ==========================================================================
+   YouTube doubles (Phase 3)
+
+   Nothing here touches the live YouTube network. `agents/27_PHASE3_TESTING_QA.md`
+   → "Normal E2E must not use live YouTube", and the daily allowance is 100
+   searches for the whole deployment, so an E2E run that spent real quota would
+   be both non-deterministic and expensive.
+
+   Three things are intercepted:
+
+   · `/api/youtube` — answered with exactly the sanitized payload the serverless
+     function emits, no extra fields;
+   · `https://www.youtube.com/iframe_api` — replaced with a local script that
+     defines a `YT.Player` with the documented method and event surface, so the
+     app's real adapter, engine and coordinator all run unchanged;
+   · `https://i.ytimg.com/**` — a locally generated PNG, so a thumbnail renders
+     without a request leaving the machine.
+
+   The fake player still creates a real `<iframe>` and still *replaces* the node
+   it is given, exactly as the official API does, which is what makes the
+   "nothing overlays the iframe" assertions meaningful.
+   ========================================================================== */
+
+export interface YouTubeSpec {
+  videoId: string
+  title: string
+  channelTitle: string
+  durationSeconds?: number
+  embeddable?: boolean
+  madeForKids?: boolean | null
+}
+
+export const YOUTUBE_RESULTS: YouTubeSpec[] = [
+  {
+    videoId: 'aaaaaaaaaaa',
+    title: 'Night Signal (Official Video)',
+    channelTitle: 'Aster Vale',
+    durationSeconds: 213,
+  },
+  { videoId: 'bbbbbbbbbbb', title: 'Night Drive Live', channelTitle: 'Ilo Rhen', durationSeconds: 245 },
+  {
+    videoId: 'ccccccccccc',
+    title: 'Night Songs For Kids',
+    channelTitle: 'Little Tunes',
+    durationSeconds: 180,
+    madeForKids: true,
+  },
+  {
+    videoId: 'ddddddddddd',
+    title: 'Night Vault Session',
+    channelTitle: 'The Vault',
+    durationSeconds: 300,
+    embeddable: false,
+  },
+]
+
+/** Exactly the shape `server/youtube/sanitize.ts` emits — no extra fields. */
+const youtubePayload = (spec: YouTubeSpec) => ({
+  videoId: spec.videoId,
+  title: spec.title,
+  channelTitle: spec.channelTitle,
+  channelId: `UC-${spec.videoId}`,
+  thumbnailUrl: `https://i.ytimg.com/vi/${spec.videoId}/maxresdefault.jpg`,
+  thumbnailWidth: 1280,
+  thumbnailHeight: 720,
+  publishedAt: '2019-10-24T06:36:00Z',
+  ...(spec.durationSeconds ? { durationSeconds: spec.durationSeconds } : {}),
+  embeddable: spec.embeddable !== false,
+  madeForKids: spec.madeForKids === undefined ? false : spec.madeForKids,
+})
+
+/**
+ * A local stand-in for `https://www.youtube.com/iframe_api`.
+ *
+ * It implements only the documented surface the app uses: the `YT.Player`
+ * constructor with `width`/`height`/`videoId`/`playerVars`/`events`, the
+ * playback methods, `getIframe`, `destroy`, and the `onReady`/`onStateChange`
+ * events carrying the documented state numbers.
+ */
+const FAKE_IFRAME_API = `
+(function () {
+  var STATE = { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 }
+  window.__pulseYouTube = { created: 0, playCalls: 0, lastVideoId: null, playing: false, destroyed: 0 }
+
+  function Player(element, config) {
+    var self = this
+    var doc = element.ownerDocument
+    var iframe = doc.createElement('iframe')
+    iframe.title = 'YouTube video player'
+    iframe.setAttribute('src', 'about:blank')
+    iframe.setAttribute('width', String(config.width || 480))
+    iframe.setAttribute('height', String(config.height || 270))
+    iframe.setAttribute('data-e2e-youtube', '1')
+    iframe.setAttribute('allow', 'accelerometer; autoplay; encrypted-media; picture-in-picture')
+    iframe.setAttribute('allowfullscreen', 'true')
+    element.parentNode.replaceChild(iframe, element)
+
+    var state = STATE.UNSTARTED
+    window.__pulseYouTube.created += 1
+    window.__pulseYouTube.lastVideoId = config.videoId || null
+    window.__pulseYouTube.playerVars = config.playerVars || {}
+
+    function fire(next) {
+      state = next
+      window.__pulseYouTube.playing = next === STATE.PLAYING
+      if (config.events && config.events.onStateChange) {
+        config.events.onStateChange({ data: next, target: self })
+      }
+    }
+
+    this.cueVideoById = function (id) { window.__pulseYouTube.lastVideoId = id; fire(STATE.CUED) }
+    this.loadVideoById = function (id) {
+      window.__pulseYouTube.lastVideoId = id
+      window.__pulseYouTube.playCalls += 1
+      fire(STATE.PLAYING)
+    }
+    this.playVideo = function () { window.__pulseYouTube.playCalls += 1; fire(STATE.PLAYING) }
+    this.pauseVideo = function () { fire(STATE.PAUSED) }
+    this.stopVideo = function () { fire(STATE.UNSTARTED) }
+    this.getCurrentTime = function () { return 0 }
+    this.getDuration = function () { return 213 }
+    this.getPlayerState = function () { return state }
+    this.getIframe = function () { return iframe }
+    this.destroy = function () {
+      window.__pulseYouTube.destroyed += 1
+      window.__pulseYouTube.playing = false
+      if (iframe.parentNode) iframe.parentNode.removeChild(iframe)
+    }
+
+    setTimeout(function () {
+      if (config.events && config.events.onReady) config.events.onReady({ target: self })
+    }, 0)
+  }
+
+  window.YT = { Player: Player, PlayerState: STATE }
+  if (typeof window.onYouTubeIframeAPIReady === 'function') window.onYouTubeIframeAPIReady()
+})()
+`
+
+export interface YouTubeStubOptions {
+  /** Answer 503, as a deployment with no YOUTUBE_API_KEY does. */
+  unavailable?: boolean
+  /** Answer 429, as an exhausted daily quota does. */
+  quotaExceeded?: boolean
+  /** Answer 502. */
+  failing?: boolean
+  /** Return no rows. */
+  empty?: boolean
+  videos?: YouTubeSpec[]
+}
+
+export async function stubYouTube(page: Page, options: YouTubeStubOptions = {}): Promise<void> {
+  await page.route('**/api/youtube*', (route) => {
+    if (options.unavailable) {
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'UNAVAILABLE', message: 'unavailable' } }),
+      })
+    }
+    if (options.quotaExceeded) {
+      return route.fulfill({
+        status: 429,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: { code: 'QUOTA', message: 'YouTube search is temporarily unavailable. Try again later.' },
+        }),
+      })
+    }
+    if (options.failing) {
+      return route.fulfill({
+        status: 502,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'UPSTREAM', message: 'boom' } }),
+      })
+    }
+    const specs = options.empty ? [] : (options.videos ?? YOUTUBE_RESULTS)
+    const query = new URL(route.request().url()).searchParams.get('q') ?? ''
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        provider: 'youtube',
+        action: 'search',
+        query,
+        count: specs.length,
+        results: specs.map(youtubePayload),
+      }),
+    })
+  })
+
+  await page.route('https://www.youtube.com/iframe_api', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/javascript', body: FAKE_IFRAME_API }),
+  )
+
+  await page.route('https://i.ytimg.com/**', (route) =>
+    route.fulfill({ status: 200, contentType: 'image/png', body: TINY_PNG }),
+  )
+}
+
+/**
+ * Records every request that would have gone to YouTube or Google.
+ *
+ * This is how "an ordinary search costs zero YouTube calls" is proved rather
+ * than asserted: the list must stay empty until the visitor presses the button.
+ */
+export function recordYouTubeTraffic(page: Page): string[] {
+  const calls: string[] = []
+  page.on('request', (request) => {
+    const url = request.url()
+    // Google Fonts is the page's own webfont stylesheet from index.html and has
+    // nothing to do with YouTube; everything else on these hosts does.
+    if (/fonts\.googleapis\.com|fonts\.gstatic\.com/.test(url)) return
+    if (/\/api\/youtube|youtube\.com|ytimg\.com|googleapis\.com|googlevideo\.com/.test(url)) {
+      calls.push(url)
+    }
+  })
+  return calls
+}
+
+/** All three catalogues, the normal Phase 3 state. */
+export async function stubAllProviders(
+  page: Page,
+  options: {
+    audius?: StubOptions
+    jamendo?: JamendoStubOptions
+    youtube?: YouTubeStubOptions
+  } = {},
+): Promise<void> {
+  await stubAudius(page, options.audius ?? {})
+  await stubJamendo(page, options.jamendo ?? {})
+  await stubYouTube(page, options.youtube ?? {})
+}
+
+/* ==========================================================================
+   Personalization doubles (Phase 4)
+
+   Personalization lives entirely in `localStorage`, so seeding it is the whole
+   of the setup: there is no server to stub, no account to create and no API to
+   intercept. `seedPersonalization` writes the same allow-listed shape the
+   application itself writes (`src/personalization/storage.ts` → `toPersisted`),
+   through an init script so the value is already in place before the app's first
+   render — which is what makes it a *returning visitor*, rather than a visitor
+   whose history appeared halfway through the page load.
+   ========================================================================== */
+
+export const PERSONALIZATION_KEY = 'pulse.personalization.v1'
+
+const DAY_MS = 86_400_000
+
+export interface SeedEntry {
+  id: string
+  provider?: 'audius' | 'jamendo' | 'youtube'
+  title: string
+  artist: string
+  /** Days before now that this was last played. */
+  daysAgo?: number
+  /** Days before now that this row was written. Defaults to `daysAgo`. */
+  storedDaysAgo?: number
+  playCount?: number
+  durationSeconds?: number
+  genre?: string
+  completionRatio?: number
+  embeddable?: boolean
+  madeForKids?: boolean | null
+}
+
+export interface SeedSearch {
+  query: string
+  script?: 'latin' | 'cyrillic' | 'arabic' | 'armenian' | 'other'
+  submitCount?: number
+  daysAgo?: number
+}
+
+export interface SeedOptions {
+  consent?: 'unset' | 'granted' | 'denied'
+  entries?: SeedEntry[]
+  searches?: SeedSearch[]
+}
+
+function buildPersonalization(options: SeedOptions, now: number): Record<string, unknown> {
+  const entries = (options.entries ?? []).map((entry) => {
+    const provider = entry.provider ?? 'audius'
+    const lastPlayedAt = now - (entry.daysAgo ?? 0) * DAY_MS
+    const playCount = entry.playCount ?? 1
+    const base: Record<string, unknown> = {
+      provider,
+      providerItemId: entry.id,
+      title: entry.title,
+      artist: entry.artist,
+      context: provider === 'youtube' ? 'search' : 'trending',
+      startedAt: lastPlayedAt - 60_000,
+      qualifiedAt: playCount > 0 ? lastPlayedAt : null,
+      lastPlayedAt,
+      playedSeconds: 60 * Math.max(playCount, 1),
+      completionRatio: entry.completionRatio ?? 0.6,
+      playCount,
+      skipCount: 0,
+      playedDays: [],
+      storedAt: now - (entry.storedDaysAgo ?? entry.daysAgo ?? 0) * DAY_MS,
+      durationSeconds: entry.durationSeconds ?? 213,
+    }
+    if (provider === 'youtube') {
+      base.thumbnailUrl = `https://i.ytimg.com/vi/${entry.id}/maxresdefault.jpg`
+      base.sourceUrl = `https://www.youtube.com/watch?v=${entry.id}`
+      base.embeddable = entry.embeddable !== false
+      base.madeForKids = entry.madeForKids === undefined ? false : entry.madeForKids
+    } else {
+      base.artworkUrl = `${ARTWORK_ORIGIN}/content/${entry.id}/480x480.jpg`
+      base.artworkMirrors = [ARTWORK_ORIGIN]
+      base.genre = entry.genre ?? 'Electronic'
+      base.sourceUrl = `https://audius.co/x/${entry.id}`
+    }
+    return base
+  })
+
+  const searches = (options.searches ?? []).map((search) => ({
+    query: search.query,
+    normalizedQuery: search.query.toLowerCase(),
+    submittedAt: now - (search.daysAgo ?? 0) * DAY_MS,
+    providers: ['audius'],
+    resultWasPlayed: false,
+    submitCount: search.submitCount ?? 1,
+    script: search.script ?? 'latin',
+  }))
+
+  return {
+    version: 1,
+    consent: options.consent ?? 'granted',
+    consentUpdatedAt: now - DAY_MS,
+    updatedAt: now,
+    preferences: { promptSeen: true },
+    dismissedItems: [],
+    listeningHistory: entries,
+    searchHistory: searches,
+  }
+}
+
+/**
+ * Puts personalization state in the browser *before* the app loads.
+ *
+ * `addInitScript` runs on every navigation, so the write is guarded: it seeds
+ * only when the key is absent. That distinction is the whole point of the
+ * persistence scenarios — re-seeding on reload would silently restore a row the
+ * visitor had just removed, and a test asserting "the removal survived" would
+ * pass without the application persisting anything at all.
+ */
+export async function seedPersonalization(page: Page, options: SeedOptions = {}): Promise<void> {
+  const payload = JSON.stringify(buildPersonalization(options, Date.now()))
+  await page.addInitScript(
+    ([key, value]) => {
+      try {
+        if (window.localStorage.getItem(key as string) === null) {
+          window.localStorage.setItem(key as string, value as string)
+        }
+      } catch {
+        // A context with storage disabled is a different scenario entirely.
+      }
+    },
+    [PERSONALIZATION_KEY, payload],
+  )
+}
+
+/** Reads whatever the application has actually persisted. */
+export async function readPersonalization(
+  page: Page,
+): Promise<Record<string, unknown> | null> {
+  return page.evaluate((key) => {
+    const raw = window.localStorage.getItem(key)
+    return raw ? (JSON.parse(raw) as Record<string, unknown>) : null
+  }, PERSONALIZATION_KEY)
+}
+
+/** Every localStorage key the page currently holds. */
+export async function storageKeys(page: Page): Promise<string[]> {
+  return page.evaluate(() => Object.keys(window.localStorage))
+}
+
+/** The shelf headings on the home page, in visual order. */
+export async function shelfTitles(page: Page): Promise<string[]> {
+  return page.locator('.music-section h2').allInnerTexts()
+}
+
+/**
+ * Records only requests that would **spend YouTube Data API quota** or load
+ * YouTube's player.
+ *
+ * Deliberately narrower than `recordYouTubeTraffic`. A page that displays a
+ * retained Recently Played entry loads YouTube's own thumbnail from
+ * `i.ytimg.com`, and it must: the policies require the image to be shown
+ * unmodified from YouTube rather than copied or re-hosted. That image request
+ * costs no quota and is not an API call. What must stay at zero is the Data API
+ * (`/api/youtube`, `googleapis.com`), the IFrame player script and the media
+ * CDN — which is what this records.
+ */
+export function recordYouTubeApiTraffic(page: Page): string[] {
+  const calls: string[] = []
+  page.on('request', (request) => {
+    const url = request.url()
+    if (/fonts\.googleapis\.com|fonts\.gstatic\.com/.test(url)) return
+    if (/i\.ytimg\.com/.test(url)) return
+    if (/\/api\/youtube|youtube\.com|googleapis\.com|googlevideo\.com|ytimg\.com/.test(url)) {
+      calls.push(url)
+    }
+  })
+  return calls
+}

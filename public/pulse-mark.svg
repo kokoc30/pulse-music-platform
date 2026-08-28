@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Pulse">
+  <circle cx="16" cy="16" r="16" fill="#ffffff" />
+  <g fill="none" stroke="#0a0a0a" stroke-width="2.4" stroke-linecap="round">
+    <path d="M12.4 11.6a6.2 6.2 0 0 1 0 8.8" />
+    <path d="M17.1 8.6a10.6 10.6 0 0 1 0 14.8" />
+    <path d="M21.8 6.4a14.6 14.6 0 0 1 0 19.2" />
+  </g>
+  <circle cx="9.4" cy="16" r="2.5" fill="#0a0a0a" />
+</svg>

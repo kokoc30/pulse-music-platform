@@ -1,0 +1,9 @@
+refe
+agents
+dist
+node_modules
+pnpm-lock.yaml
+test-results
+playwright-report
+coverage
+docs/reference-screenshots

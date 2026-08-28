@@ -1,0 +1,127 @@
+/**
+ * Design tokens — every value transcribed verbatim from the reference
+ * (refe/client/src/index.css). See docs/reference-audit.md §4.
+ *
+ * The reference hard-codes these hex values inline; production keeps the exact
+ * same values but names them, per agents/08_UI_FIDELITY_RULES.md.
+ */
+
+:root {
+  /* --- shadcn-compatible surface scale kept from the reference --- */
+  --radius: 0.55rem;
+  --background: #000;
+  --foreground: #f5f5f5;
+  --card: #202020;
+  --card-foreground: #f5f5f5;
+  --popover: #202020;
+  --popover-foreground: #f5f5f5;
+  --primary: #fff;
+  --primary-foreground: #111;
+  --secondary: #292929;
+  --secondary-foreground: #f7f7f7;
+  --muted: #242424;
+  --muted-foreground: #b3b3b3;
+  --accent: #b64be7;
+  --accent-foreground: #fff;
+  --destructive: #ff5858;
+  --destructive-foreground: #fff;
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.13);
+  --ring: #b64be7;
+
+  /* --- surfaces --- */
+  --color-app-bg: #000;
+  --color-shell: #121212;
+  --color-control: #242424;
+  --color-control-hover: #2f2f2f;
+  --color-search-focus: #2a2a2a;
+  --color-art-placeholder: #282828;
+  --color-player-bg: #181818;
+  --color-player-border: #343434;
+  --color-notice-bg: #2d2d2d;
+  --color-divider: #292929;
+  --color-social: #292929;
+  --color-social-hover: #444;
+  --surface-browse: linear-gradient(180deg, #242424 0, #121212 190px, #121212 100%);
+  --surface-search: linear-gradient(180deg, #2a2032 0, #121212 240px);
+  --surface-join: linear-gradient(100deg, #a51ea5 0%, #b64be7 40%, #4c9cf1 100%);
+  --overlay-row-hover: rgba(255, 255, 255, 0.08);
+  --overlay-card: rgba(255, 255, 255, 0.06);
+  --overlay-card-hover: rgba(255, 255, 255, 0.1);
+
+  /* --- text --- */
+  --color-text: #f4f4f4;
+  --color-text-strong: #fff;
+  --color-text-card: #f0f0f0;
+  --color-text-muted: #b3b3b3;
+  --color-text-dim: #a7a7a7;
+  --color-text-eyebrow: #cbb8d7;
+  --color-text-player: #d9d9d9;
+  --color-text-volume: #d1d1d1;
+  --color-rail-icon: #9a9a9a;
+  --color-rule: #767676;
+  --color-search-rule: #777;
+  --color-outline-soft: #727272;
+
+  /* --- controls --- */
+  --color-track-rail: #535353;
+  --color-track-fill: #fff;
+  --color-badge: #2389dc;
+
+  /* --- station tints --- */
+  --tone-lavender: #aaa6fa;
+  --tone-pink: #ed8fc7;
+  --tone-amber: #dbc875;
+
+  /* --- chart gradients --- */
+  --chart-global: linear-gradient(135deg, #9a4aba, #563288);
+  --chart-usa: #f12635;
+  --chart-top50: linear-gradient(180deg, #238c89, #283e75);
+  --chart-top50usa: linear-gradient(125deg, #d61683, #f5232a 63%, #202020);
+
+  /* --- radii --- */
+  --radius-surface: 7px;
+  --radius-bar: 5px;
+  --radius-station: 6px;
+  --radius-row: 4px;
+  --radius-art-sm: 3px;
+  --radius-art-md: 4px;
+  --radius-pill: 999px;
+  --radius-search: 25px;
+
+  /* --- geometry --- */
+  --header-height: 64px;
+  --header-height-sm: 58px;
+  --sidebar-width: 296px;
+  --sidebar-width-md: 255px;
+  --rail-width: 40px;
+  --frame-gutter: 8px;
+  --player-height: 66px;
+  --player-height-sm: 76px;
+  --app-bottom-space: 82px;
+  --app-bottom-space-sm: 78px;
+  --search-width: min(357px, 29vw);
+  --control-size: 48px;
+  --grid-gap: 24px;
+  --grid-gap-md: 17px;
+  --grid-gap-sm: 14px;
+
+  /* --- shadows --- */
+  --shadow-play: 0 7px 18px rgba(0, 0, 0, 0.34);
+  --shadow-bar: 0 4px 24px rgba(0, 0, 0, 0.32);
+  --shadow-notice: 0 8px 30px rgba(0, 0, 0, 0.3);
+
+  /* --- motion --- */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --dur-fast: 160ms;
+  --dur-art: 180ms;
+  --dur-shelf: 0.3s;
+  --stagger: 0.04s;
+
+  /* --- layers --- */
+  --z-sidebar: 12;
+  --z-header: 40;
+  --z-bottom-bar: 50;
+  --z-overlay: 60;
+  --z-notice: 70;
+}
