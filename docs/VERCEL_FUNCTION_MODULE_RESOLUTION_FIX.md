@@ -323,26 +323,46 @@ instead, which is what section 2 records.
 
 ## 7. Production status — **NOT VERIFIED**
 
-The fix is committed to the working tree only. It has **not** been pushed, and
-Vercel has **not** redeployed.
+The fix is **pushed**: commit `ed57fb6` on `main`, `ca99b6f..ed57fb6` to
+`origin/main` (`github.com/kokoc30/pulse-music-platform`). Whatever Vercel
+project is wired to that repository will have picked it up.
 
-`GET /api/youtube` and `GET /api/jamendo` in production are therefore still
-running the crashing build. This document does **not** claim a production pass.
+Production is nevertheless **not verified**, because the deployment URL is not
+determinable from this environment. This document does **not** claim a
+production pass.
 
-To close it out:
+What was tried:
 
-1. Commit and push to `main`.
-2. Let Vercel redeploy.
-3. Request both endpoints on the deployed URL and confirm neither returns
-   `500 FUNCTION_INVOCATION_FAILED`:
-   - `/api/jamendo?action=search&q=hello` → expect **200** with the search
-     envelope (or a documented 4xx/5xx, never a crash).
-   - `/api/youtube?action=search&q=hello` → expect **200**, or **429** while the
-     daily quota is spent, or **503** if `YOUTUBE_API_KEY` is not set on the
-     deployment. All three are non-crash responses that prove the module loaded.
-4. Check the Function logs contain no `ERR_MODULE_NOT_FOUND`.
+- There is no `.vercel/` project link in the repository and no Vercel
+  credentials here, so the deployment URL cannot be looked up through the CLI
+  (see the authentication failure in section 6).
+- No URL appears in `README.md`, `docs/` or `vercel.json`.
+- `pulse-music-platform.vercel.app` responds, but it is **a different
+  application**: it answers `/api/jamendo` and `/api/youtube` with the SPA
+  fallback HTML rather than a Function — so it has no `api/` routes and is not
+  running this `vercel.json` — and its `<title>` is `Pulse — Music Platform`,
+  a string that appears in no commit of this repository (`index.html` here has
+  read `Pulse — Music Discovery` since the initial release). It was not treated
+  as evidence either way.
 
-Only after step 3 returns non-crash responses is the production runtime fixed.
+### To close it out
+
+Request both endpoints on the real deployment URL and confirm neither returns
+`500 FUNCTION_INVOCATION_FAILED`:
+
+- `/api/jamendo?action=search&q=hello` → expect **200** with the search
+  envelope (or a documented 4xx/5xx, never a crash).
+- `/api/youtube?action=search&q=hello` → expect **200**, or **429** while the
+  daily quota is spent, or **503** if `YOUTUBE_API_KEY` is not set on the
+  deployment. All three are non-crash responses that prove the module loaded.
+
+Then check the Function logs contain no `ERR_MODULE_NOT_FOUND`.
+
+Only once those endpoints return non-crash responses is the production runtime
+fixed. Also confirm `JAMENDO_CLIENT_ID` and `YOUTUBE_API_KEY` are set in the
+Vercel project's environment variables — a missing key produces a legitimate
+`503 UNAVAILABLE`, which proves the module loaded but leaves the provider
+unusable.
 
 ---
 
