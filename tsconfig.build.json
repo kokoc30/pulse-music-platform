@@ -1,0 +1,13 @@
+{
+  // Root of the *production* project graph, used only by `pnpm build`.
+  //
+  // `tsconfig.json` remains the root of the development graph and is what
+  // `pnpm typecheck` still resolves, so the full gate — application, tests,
+  // fixtures, Vitest and Playwright configs — is unchanged and still catches
+  // errors inside test files.
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.build.json" },
+    { "path": "./tsconfig.node.build.json" }
+  ]
+}

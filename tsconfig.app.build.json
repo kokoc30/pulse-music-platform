@@ -1,0 +1,41 @@
+{
+  // Production build view of the browser application.
+  //
+  // Identical compiler settings to `tsconfig.app.json` — same strictness, same
+  // `@/*` alias, same target — differing only in *which files* it compiles.
+  //
+  // `tsconfig.app.json` includes all of `src`, which is right for development:
+  // `pnpm typecheck` must keep catching errors inside test files. It is wrong
+  // for deployment, because `.vercelignore` strips `src/test` from the upload,
+  // leaving 69 test files in the build context whose `@/test/*` imports no
+  // longer resolve. That produced 66 × TS2307 on Vercel while every local build
+  // passed, since locally the directory is still there.
+  //
+  // So the production build compiles the application and nothing else.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    // A separate incremental cache: sharing one with the development project
+    // would let a dev typecheck convince the production build it was already
+    // done, over a different file set.
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.build.tsbuildinfo",
+
+    // `@testing-library/jest-dom` is deliberately dropped. It is a
+    // devDependency, and a production typecheck that needs a test-only type
+    // package is one install-flag away from failing a deploy. Removing it also
+    // means this config would reject a jest-dom matcher that leaked into
+    // application source.
+    "types": ["vite/client"]
+  },
+  "include": ["src"],
+  "exclude": [
+    "refe",
+    "agents",
+    "node_modules",
+    "dist",
+    "src/test",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.spec.ts",
+    "src/**/*.spec.tsx"
+  ]
+}

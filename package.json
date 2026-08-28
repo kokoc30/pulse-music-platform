@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b --pretty false && vite build",
+    "build": "tsc -b tsconfig.build.json --pretty false && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
     "lint": "eslint . --max-warnings 0",

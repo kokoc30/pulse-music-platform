@@ -1,0 +1,35 @@
+{
+  // Production build view of the Node-side TypeScript.
+  //
+  // Three things genuinely ship or are needed to produce what ships:
+  //
+  //   · `vite.config.ts`      — runs the build, and imports the two node
+  //                             adapters below, so it must be typechecked with
+  //                             them
+  //   · `api/**`              — the Vercel Functions
+  //   · `server/**`           — the handlers those functions and the dev
+  //                             middleware share
+  //
+  // Everything else under the development config — the Vitest configs, the
+  // Playwright config, `tests/**`, `scripts/**` — is tooling. `.vercelignore`
+  // strips `tests` and `scripts` from the upload, so including them here would
+  // be asking the deploy to compile files it was never sent.
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.build.tsbuildinfo"
+  },
+  "include": ["vite.config.ts", "api/**/*.ts", "server/**/*.ts"],
+  "exclude": [
+    "refe",
+    "agents",
+    "node_modules",
+    "dist",
+    // `server/` holds its own unit and smoke suites alongside the handlers.
+    // They import `vitest`, which is a devDependency, and they are not part of
+    // the deployed surface.
+    "server/**/*.test.ts",
+    "server/**/*.spec.ts",
+    "api/**/*.test.ts",
+    "tests"
+  ]
+}
