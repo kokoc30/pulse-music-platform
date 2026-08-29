@@ -17,6 +17,7 @@ import { useUiStore } from '@/app/ui-store'
 import { LikeButton } from '@/components/library/LikeButton'
 import { TrackMenu } from '@/components/library/TrackMenu'
 import { Artwork } from '@/components/track/Artwork'
+import { YouTubeStageHost } from '@/components/youtube/YouTubeStageHost'
 import { usePlayerStore } from '@/player/player-store'
 import { REPEAT_LABELS } from '@/player/queue-order'
 import {
@@ -44,18 +45,21 @@ import { useVerticalSwipe } from './swipe'
  * same transport, same heart, same scrubber. A YouTube item differs in one
  * visible way, that the artwork slot holds a live player.
  *
+ * **This is the only place an embed is ever mounted.** The bottom bar shows
+ * YouTube's own thumbnail in its ordinary 56px cover slot, exactly as it shows a
+ * track's artwork, so the bar is byte-for-byte the same shape for every
+ * provider. Because the player exists only while this sheet is open, collapsing
+ * pauses it — see `unifiedExpand`. There is no state in which a video plays
+ * without its player on screen.
+ *
  * **It owns no playback.** Every control calls the same `unified*` action the
  * bottom bar calls, and every value it shows comes from the same snapshot. There
  * is no second engine, no second queue, no second progress state and no second
  * "next", which is what makes repeat, shuffle, playlist continuation and
  * autoplay behave identically whether the sheet is open or shut.
  *
- * **The stage is not rendered here.** `GlobalPlayer` mounts it once and moves it
- * by changing one attribute, because re-parenting an iframe reloads it — see
- * `YouTubeStageHost`. What this component contributes is the *space* the stage
- * occupies while expanded, and the guarantee that nothing is drawn over it: the
- * stage sits above this sheet in the stacking order, so the sheet can never
- * become an overlay in front of an embedded player.
+ * Every control is a sibling *below* the stage, never an overlay over it, which
+ * is the layout rule the developer policies actually impose.
  */
 export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
   const open = useUiStore((state) => state.nowPlayingOpen)
@@ -67,10 +71,10 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
 
   /**
    * Collapsing goes through the unified action rather than straight to the UI
-   * store, because for a video it is not only a change of view: a docked stage
-   * is small and easily scrolled past, and the developer policies prohibit a
-   * player that is not displayed in the screen the user is viewing. So the
-   * action pauses YouTube on the way down. Audio is untouched by it.
+   * store, because for a video it is not only a change of view: this panel is
+   * where the player lives, so collapsing takes it off the page. The action
+   * pauses YouTube on the way down. Audio is untouched by it — there, collapsing
+   * really is only a change of view over a running `HTMLAudioElement`.
    */
   const close = useCallback(() => unifiedExpand(false), [])
   const swipe = useVerticalSwipe({ onSwipeDown: close })
@@ -113,7 +117,9 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
    * visitor comes back to the row they were looking at.
    */
   useEffect(() => {
-    if (!open || typeof document === 'undefined') return
+    // A video panel is not modal and does not lock anything: the point of it is
+    // that the page behind stays readable and usable while a video plays.
+    if (!open || snapshot.isEmbeddedStage || typeof document === 'undefined') return
     const { body } = document
     const scrollY = window.scrollY
     const previous = {
@@ -135,7 +141,7 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
       body.style.overflow = previous.overflow
       window.scrollTo(0, scrollY)
     }
-  }, [open])
+  }, [open, snapshot.isEmbeddedStage])
 
   if (!open || snapshot.engine === 'none') return null
 
@@ -148,7 +154,10 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
       <section
         className="now-playing"
         role="dialog"
-        aria-modal="true"
+        // A video panel is deliberately *not* modal. It sits above the bar with
+        // the page still visible and clickable behind it, so declaring it modal
+        // would be a lie to assistive technology about what is reachable.
+        aria-modal={snapshot.isEmbeddedStage ? undefined : true}
         aria-label="Now playing"
         ref={sheetRef}
       >
@@ -170,11 +179,14 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
           </button>
         </header>
 
-        {snapshot.isEmbeddedStage ? (
-          /* The room the fixed stage occupies while the sheet is open. The
-             player itself is a sibling of this sheet, above it in the stacking
-             order, so no part of this component is ever in front of it. */
-          <div className="now-playing-stage-slot" data-stage-slot="sheet" aria-hidden="true" />
+        {snapshot.isEmbeddedStage && snapshot.stageItem ? (
+          /* The live player, in the slot a track's cover occupies — full width,
+             16:9, and the only place in the application an embed is ever
+             mounted. Every control is a sibling *below* it, never an overlay
+             over it, which is the rule the whole layout answers to. */
+          <div className="now-playing-stage">
+            <YouTubeStageHost item={snapshot.stageItem} />
+          </div>
         ) : (
           <div className="now-playing-art">
             {/* The same component and the same mirror failover every other cover

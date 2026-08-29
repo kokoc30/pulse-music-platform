@@ -954,7 +954,13 @@ input:focus-visible,
   width: var(--control-size);
   height: var(--control-size);
   border-radius: var(--radius-art-sm);
-  object-fit: cover;
+  /* `contain`, not `cover`, and the box is identical either way.
+     Audius and Jamendo covers are square, so the two fits are pixel-identical
+     for them. A YouTube thumbnail is 16:9, and `cover` would crop it into
+     square album art — which agents/25 forbids outright. One declaration keeps
+     the slot the same size for every provider *and* keeps the frame whole,
+     which is why the bar needs no branch to show a video's artwork. */
+  object-fit: contain;
   background: var(--color-art-placeholder);
   flex: 0 0 auto;
 }

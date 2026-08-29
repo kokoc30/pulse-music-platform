@@ -250,8 +250,8 @@ test.describe('navigation and playback', () => {
   })
 })
 
-test.describe('it never covers the video player', () => {
-  test('stands down while a YouTube video is on screen', async ({ page }) => {
+test.describe('it is the video player’s own view', () => {
+  test('hosts the player, and never draws over it', async ({ page }) => {
     await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
     await page.goto('/search?q=night')
     await page.getByTestId('youtube-fallback').click()
@@ -259,12 +259,53 @@ test.describe('it never covers the video player', () => {
       .getByTestId('youtube-result')
       .filter({ hasText: 'Night Signal (Official Video)' })
       .click()
-    await expect(page.getByTestId('youtube-stage')).toBeVisible()
 
-    // No audio track is loaded, so there is no mini-player to expand from — and
-    // the sheet must not appear over the iframe under any circumstance.
-    await expect(sheet(page)).toHaveCount(0)
-    await expect(page.getByTestId('youtube-stage')).toBeVisible()
+    // The view opens with the video, because that is where the player is
+    // mounted — the surface is on screen before anything is asked to play.
+    await expect(sheet(page)).toBeVisible()
+    const stage = page.getByTestId('youtube-stage')
+    await expect(stage).toBeVisible()
+    await expect(sheet(page).getByTestId('youtube-stage')).toBeVisible()
+
+    // Above the documented minimum, in the rendered layout rather than in a
+    // stylesheet, and with nothing of ours painted in front of it.
+    const box = (await stage.boundingBox())!
+    expect(box.width).toBeGreaterThanOrEqual(200)
+    expect(box.height).toBeGreaterThanOrEqual(200)
+
+    const covering = await page.evaluate(({ x, y, width, height }) => {
+      const points: [number, number][] = [
+        [x + width / 2, y + height / 2],
+        [x + 4, y + 4],
+        [x + width - 4, y + height - 4],
+      ]
+      return points.map((point) =>
+        document.elementFromPoint(point[0], point[1])?.closest('[data-testid="youtube-stage"]')
+          ? 'stage'
+          : 'covered',
+      )
+    }, box)
+    expect(covering).toEqual(['stage', 'stage', 'stage'])
+  })
+
+  test('is a panel, not a modal — the page behind stays usable', async ({ page }) => {
+    await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
+    await page.goto('/search?q=night')
+    await page.getByTestId('youtube-fallback').click()
+    await page
+      .getByTestId('youtube-result')
+      .filter({ hasText: 'Night Signal (Official Video)' })
+      .click()
+    await expect(sheet(page)).toBeVisible()
+
+    // Not announced as modal, and not blocking: a visitor can keep browsing
+    // while a video plays, which is the whole reason this is a panel.
+    await expect(sheet(page)).not.toHaveAttribute('aria-modal', 'true')
+    // The brand link, because the header's Home button is hidden below 560px.
+    await page.getByRole('link', { name: 'Pulse home' }).click()
+    await expect(page.getByRole('heading', { name: 'Trending songs' })).toBeVisible()
+    // And navigating did not unmount the player.
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
   })
 })
 

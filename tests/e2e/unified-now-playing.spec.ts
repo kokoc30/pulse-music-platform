@@ -214,16 +214,24 @@ test.describe('the bar follows the engine that is playing', () => {
     await expect(barTitle(page)).toHaveText('Sourp Sarkis')
 
     // The sheet used to be withheld outright while a video was on screen. It is
-    // the video's expanded view now, and it names the video rather than the
-    // Audius track still paused underneath.
-    await page.getByRole('button', { name: 'Open Now Playing' }).click()
+    // the video's own view now, and starting a video opens it — that is where
+    // the player is mounted, so the surface is on screen before anything plays.
     const dialog = page.getByRole('dialog', { name: 'Now playing' })
     await expect(dialog).toBeVisible()
     await expect(dialog.getByRole('heading', { name: 'Sourp Sarkis' })).toBeVisible()
     await expect(dialog).not.toContainText('Night Signal')
 
-    // The stage moved with it, and is still the same single element.
+    // Exactly one player, and it is inside that view rather than in the bar.
     await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
-    await expect(page.getByTestId('youtube-stage')).toHaveAttribute('data-placement', 'sheet')
+    await expect(dialog.getByTestId('youtube-stage')).toBeVisible()
+    await expect(bar(page).locator('iframe')).toHaveCount(0)
+
+    // It is a panel, not a modal: the page behind it is still reachable, which
+    // is what lets a visitor keep browsing while a video plays.
+    await expect(dialog).not.toHaveAttribute('aria-modal', 'true')
+    // The brand link, because the header's Home button is hidden below 560px.
+    await page.getByRole('link', { name: 'Pulse home' }).click()
+    await expect(page.getByRole('heading', { name: 'Trending songs' })).toBeVisible()
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
   })
 })

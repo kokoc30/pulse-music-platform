@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import { normalizeYouTubeVideo } from '@/music/youtube'
 import { initialPlayerState } from '@/player/player-store'
@@ -18,12 +18,6 @@ import { PlayerBar } from './PlayerBar'
  * genuinely must. So most of these tests are the *same assertion* run against
  * two snapshots.
  */
-
-// The stage is a fixed-position element with an imperative iframe lifecycle;
-// this file is about the bar's own markup, so it stands in for one.
-vi.mock('@/components/youtube/YouTubeStageHost', () => ({
-  YouTubeStageHost: () => null,
-}))
 
 const VIDEO = normalizeYouTubeVideo(
   youtubePayload({
@@ -66,25 +60,51 @@ describe('nothing loaded', () => {
   })
 })
 
+/**
+ * The bar is the same bar for every provider — same slot, same element, same
+ * size. The live player is not here at all: it belongs to the expanded sheet,
+ * and the bar shows YouTube's own thumbnail like any other cover.
+ */
 describe('the artwork slot', () => {
   it('holds a still image for a catalogue track', () => {
     const { container } = renderBar(audioSnapshot())
-    expect(container.querySelector('.player-track img')).not.toBeNull()
-    expect(container.querySelector('[data-stage-slot]')).toBeNull()
+    const img = container.querySelector('.player-track img')
+    expect(img).not.toBeNull()
+    expect(img).toHaveAttribute('src', 'https://art.example/t1.jpg')
   })
 
-  it('holds the room for a live player for a video, and no image', () => {
+  it('holds YouTube’s own thumbnail for a video — no iframe, no reserved box', () => {
     const { container } = renderBar(videoSnapshot())
-    expect(container.querySelector('[data-stage-slot="bar"]')).not.toBeNull()
-    expect(container.querySelector('.player-track img')).toBeNull()
+    const img = container.querySelector('.player-track img')
+    expect(img).not.toBeNull()
+    expect(img).toHaveAttribute('src', 'https://i.ytimg.com/vi/aram0000001/mqdefault.jpg')
+
+    expect(container.querySelector('iframe')).toBeNull()
+    expect(container.querySelector('[data-testid="youtube-stage"]')).toBeNull()
   })
 
-  it('reserves at least the documented minimum for the player', () => {
+  it('renders the identical DOM shape whichever provider is playing', () => {
+    const shapeOf = (snapshot: PlaybackSnapshot) => {
+      const { container, unmount } = renderBar(snapshot)
+      const shape = [...container.querySelectorAll<HTMLElement>('.player-track > *')].map(
+        (node) => `${node.tagName}.${node.className}`,
+      )
+      unmount()
+      return shape
+    }
+
+    // Same children, in the same order, with the same classes. The only thing
+    // that differs between an Audius track and a YouTube video in this bar is
+    // the text and the image URL.
+    expect(shapeOf(videoSnapshot())).toEqual(shapeOf(audioSnapshot(jamendoTrackFixture())))
+  })
+
+  it('adds no height-changing marker for a video', () => {
     const { container } = renderBar(videoSnapshot())
-    const slot = container.querySelector<HTMLElement>('[data-stage-slot="bar"]')!
-    // The pixel values live in the stylesheet, which jsdom does not apply, so
-    // the class is the contract here and `youtube.css` carries the 200px floor.
-    expect(slot.className).toContain('player-stage-slot')
+    const section = container.querySelector<HTMLElement>('.music-player')!
+    // The bar must not be able to style itself taller for one provider.
+    expect(section.getAttribute('data-stage')).toBeNull()
+    expect(section.className).toBe('music-player')
   })
 })
 

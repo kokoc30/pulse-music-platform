@@ -33,11 +33,15 @@ import { isInteractiveTarget, useVerticalSwipe } from './swipe'
  * The bottom bar. **One component, every provider.**
  *
  * An Audius track, a Jamendo track and a YouTube video render the same DOM tree
- * through the same code path here: the same title cluster, the same heart, the
- * same seek rail, the same transport, the same expand affordance. The only
- * difference a visitor can see is that the artwork slot may hold a live player
- * instead of a still image — which is the one difference that cannot be removed,
- * because a video has to be watchable.
+ * through the same code path here — the same 56px artwork, the same title
+ * cluster, the same heart, the same seek rail, the same transport, the same
+ * expand affordance, at the same height. A visitor cannot tell which provider a
+ * track came from by looking at this bar, and that is the point.
+ *
+ * **The live player is not here.** It lives in the expanded sheet, and the bar
+ * shows YouTube's own thumbnail in the ordinary artwork slot like any other
+ * cover. So there is no stage, no iframe, no reserved 200px box and no taller
+ * variant in this file, and nothing here asks whether the item is a video.
  *
  * **Nothing here knows which engine is playing.** There is no `engine ===
  * 'youtube'` in this file. Every control asks the snapshot's `capabilities`
@@ -77,10 +81,10 @@ export function PlayerBar({ snapshot }: { snapshot: PlaybackSnapshot }) {
     <section
       className="music-player"
       aria-label="Now playing"
-      // Presentational hooks only — styling and test targeting. Nothing in this
-      // component branches on them.
+      // A presentational hook for styling and test targeting only. Nothing in
+      // this component branches on it, and nothing in the stylesheet changes the
+      // bar's size, layout or artwork slot because of it.
       data-engine={snapshot.engine}
-      data-stage={snapshot.isEmbeddedStage ? 'true' : 'false'}
     >
       <div className="player-track" {...swipe}>
         {can.expand ? (
@@ -97,14 +101,7 @@ export function PlayerBar({ snapshot }: { snapshot: PlaybackSnapshot }) {
           </button>
         ) : null}
 
-        {snapshot.isEmbeddedStage && snapshot.stageItem ? (
-          /* The docked player. The stage element itself is fixed-position and
-             mounted once by `GlobalPlayer`; this is the space the bar layout
-             reserves for it, so the two never fight over the same pixels. */
-          <div className="player-stage-slot" data-stage-slot="bar" aria-hidden="true" />
-        ) : (
-          <Artwork artwork={snapshot.artwork ?? {}} size="small" loading="eager" />
-        )}
+        <Artwork artwork={snapshot.artwork ?? {}} size="small" loading="eager" />
 
         {/* Mouse convenience only, the same arrangement `TrackRow` uses: the
             keyboard and assistive-technology route is the real button above, so
@@ -221,12 +218,13 @@ export function PlayerBar({ snapshot }: { snapshot: PlaybackSnapshot }) {
         ) : null}
       </div>
 
-      {/* Only an embedded player has a background-pause rule to explain, so
-          this is gated on the stage rather than on the engine. It lives on the
-          bar rather than in the expanded sheet because the visitor comes back to
-          a paused video without necessarily expanding anything, and an
-          explanation they have to go looking for is not an explanation. */}
-      {snapshot.isEmbeddedStage ? <BackgroundPolicyNotice /> : null}
+      {/* Self-gating, and therefore not a branch: it draws nothing unless the
+          hidden-document rule actually paused something, and only an embedded
+          player is ever paused by that rule. It lives on the bar rather than in
+          the expanded sheet because the visitor comes back to a paused video
+          without necessarily expanding anything, and an explanation they have to
+          go looking for is not an explanation. */}
+      <BackgroundPolicyNotice />
     </section>
   )
 }

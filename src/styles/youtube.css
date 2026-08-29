@@ -280,42 +280,41 @@
 /* ==========================================================================
    The embedded stage
 
-   The one place a YouTube player is ever mounted, and the one element in the
-   application whose geometry answers to an external policy rather than to the
-   design.
-
-   It is `position: fixed` and positioned from a *measurement* of whichever slot
-   the current placement rendered — see `YouTubeStageHost`. That indirection is
-   what lets a single never-reparented element appear to live inside both the
-   bottom bar and the expanded sheet: re-parenting an iframe reloads it, so the
-   element must never move in the DOM, only on the screen.
+   The one place a YouTube player is ever mounted: the artwork slot of the
+   expanded sheet, and nowhere else. It is an ordinary in-flow element — not
+   fixed, not measured against anything, not moved between parents — because the
+   bottom bar shows YouTube's own thumbnail in its ordinary 56px cover slot like
+   any other album art. The bar has no stage, no reserved box and no taller
+   variant, which is what makes it identical for all three providers.
 
    Policy rules encoded here, not preferences:
 
-   · A hard 200 x 200 floor, in both placements and at every breakpoint
-     (Required Minimum Functionality; the IFrame API reference).
-   · It holds the API-created iframe and nothing else. Every control is a
-     sibling elsewhere in the tree, so nothing is ever drawn over the player or
+   · A hard 200 x 200 floor at every breakpoint (Required Minimum Functionality;
+     the IFrame API reference).
+   · The stage holds the API-created iframe and nothing else. Every control in
+     the sheet is a sibling *below* it, so nothing is drawn over the player or
      over its native controls.
-   · It sits *above* the expanded sheet in the stacking order. The sheet is a
-     full-screen overlay, and an overlay in front of an embedded player is
-     exactly what the rules forbid — so the player wins the stack, always.
    · There is no `display: none`, no zero opacity and no offscreen parking
-     anywhere in this file. When there is no video the element is not rendered.
+     anywhere in this file. When the sheet is closed the element is not rendered
+     and playback has already been paused on the way down.
    ========================================================================== */
 
+.now-playing-stage {
+  flex: none;
+  align-self: center;
+  width: min(456px, 100%);
+  min-width: 200px;
+}
+
 .yt-stage {
-  position: fixed;
-  /* Above the sheet (`--z-overlay`) and above the notice, because nothing at
-     all may be painted in front of the player. */
-  z-index: calc(var(--z-notice) + 1);
-  overflow: hidden;
-  border-radius: var(--radius-art-md);
-  background: #000;
-  box-shadow: var(--shadow-bar);
+  width: 100%;
+  aspect-ratio: 16 / 9;
   /* Restated from the component's inline style so neither can be lost alone. */
   min-width: 200px;
   min-height: 200px;
+  overflow: hidden;
+  border-radius: var(--radius-art-md);
+  background: #000;
 }
 
 .yt-stage-mount,
@@ -324,80 +323,6 @@
   width: 100%;
   height: 100%;
   border: 0;
-}
-
-/* --------------------------------------------------------------------------
-   The room each surface reserves for it
-
-   Empty, `aria-hidden` boxes. They paint nothing: they exist so the bar and the
-   sheet each lay out around the player in their own normal flow, and so the
-   stage has something real to measure rather than coordinates to guess at.
-   -------------------------------------------------------------------------- */
-
-.player-stage-slot {
-  flex: none;
-  width: min(356px, 42vw);
-  height: 200px;
-  min-width: 200px;
-  min-height: 200px;
-  border-radius: var(--radius-art-md);
-  background: var(--color-art-placeholder);
-}
-
-/* The docked player is 200px tall, so the bar grows to hold it. `min-height` on
-   `.music-player` is a floor rather than a fixed height, so this needs no
-   override — only the extra breathing room the taller bar wants. */
-.music-player[data-stage='true'] {
-  padding-top: 12px;
-  padding-bottom: 12px;
-}
-
-.now-playing-stage-slot {
-  flex: none;
-  align-self: center;
-  width: min(456px, 100%);
-  aspect-ratio: 16 / 9;
-  min-width: 200px;
-  min-height: 200px;
-  border-radius: var(--radius-art-md);
-  background: var(--color-art-placeholder);
-}
-
-@media (max-width: 560px) {
-  /* Still comfortably over the floor, and narrow enough to leave the title and
-     transport beside it on a phone. */
-  .player-stage-slot {
-    width: min(300px, 52vw);
-  }
-
-  /* The reference collapses the bar to a round play button below 560px, and
-     that rule assumes a 76px bar. A docked player makes the bar roughly three
-     times that, so the room the rule was economising on is there — and the
-     controls it hides are the only stepping and scrubbing a phone has, now that
-     the floating player with its own footer is gone. Restored for this case
-     only; the audio mini-player is untouched. */
-  .music-player[data-stage='true'] {
-    grid-template-columns: 1fr;
-  }
-
-  .music-player[data-stage='true'] .player-controls .progress,
-  .music-player[data-stage='true'] .player-controls button:not(.round-play),
-  .music-player[data-stage='true'] .player-track > button {
-    display: flex;
-  }
-
-  .music-player[data-stage='true'] .player-controls .progress {
-    display: grid;
-  }
-}
-
-/* Room to scroll out from under the docked player.
-
-   The bar is fixed and, with a stage in it, roughly three times its usual
-   height. Without this the last screenful of a results list is not merely
-   hidden but unclickable, because the bar takes the pointer. */
-body[data-yt-stage='bar'] .pulse-app {
-  padding-bottom: calc(var(--app-bottom-space-sm) + 200px);
 }
 
 /* ==========================================================================
@@ -438,11 +363,8 @@ body[data-yt-stage='bar'] .pulse-app {
   color: var(--color-text-muted);
   font-size: 11.5px;
   line-height: 1.45;
-}
-
-/* The bar is a three-column grid; the explanation takes a row of its own
-   underneath rather than squeezing into one of them. */
-.player-policy {
+  /* The bar is a three-column grid; the explanation takes a row of its own
+     underneath rather than squeezing into one of them. */
   grid-column: 1 / -1;
   margin-top: 8px;
 }

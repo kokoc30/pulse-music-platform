@@ -18,6 +18,8 @@ import { usePlayerStore } from './player-store'
 import { selectSnapshotState } from './use-playback-snapshot'
 import {
   closeYouTubeSurface,
+  hasLiveYouTubePlayer,
+  requestYouTubeResume,
   playYouTubeSessionStep,
   playYouTubeVideo,
   seekYouTube,
@@ -51,13 +53,31 @@ import { useYouTubeStore } from './youtube-store'
  */
 export { SEEK_STEP_SECONDS }
 
-/** Play or pause whatever currently holds the engine claim. */
+/**
+ * Play or pause whatever currently holds the engine claim.
+ *
+ * The YouTube branch has one extra case, and it follows from where the embed
+ * lives: the player exists only while the expanded sheet is open, so a video
+ * paused by collapsing has no player behind it. Pressing play then means
+ * *make it visible again* — the sheet opens, the stage mounts, restores the
+ * position, and resumes. Anything else would press play against nothing, and
+ * playing a video whose player is not on screen is the one thing the developer
+ * policies flatly prohibit.
+ */
 export function unifiedPlayPause(): void {
-  if (activeEngine() === 'youtube') {
-    toggleYouTubePlayback()
+  if (activeEngine() !== 'youtube') {
+    void togglePlay()
     return
   }
-  void togglePlay()
+
+  const youtube = useYouTubeStore.getState()
+  if (youtube.item && youtube.status !== 'playing' && !hasLiveYouTubePlayer()) {
+    requestYouTubeResume()
+    useUiStore.getState().setNowPlayingOpen(true)
+    return
+  }
+
+  toggleYouTubePlayback()
 }
 
 /**
@@ -148,11 +168,11 @@ export function unifiedLikeToggle(): void {
  * Opens or closes the expanded Now Playing view.
  *
  * **Collapsing while a video is playing pauses it**, and that is a policy
- * decision rather than a UX one. The developer policies prohibit a player "not
- * displayed in the page, tab, or screen that the user is viewing", and the
- * docked stage in the bar is small and easily scrolled past on a phone. Pausing
- * on the way down means playback never continues into a state this application
- * cannot guarantee is visible.
+ * requirement rather than a preference. The embed is mounted by the expanded
+ * view and by nothing else, so collapsing removes the player from the page — and
+ * the developer policies prohibit content continuing in a player "not displayed
+ * in the page, tab, or screen that the user is viewing". Pausing on the way down
+ * is what makes that impossible rather than merely unlikely.
  *
  * Audio is untouched by this: collapsing the sheet is a change of view over a
  * running `HTMLAudioElement`, exactly as it was before.

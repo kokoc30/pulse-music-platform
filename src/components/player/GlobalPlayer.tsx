@@ -1,5 +1,3 @@
-import { useUiStore } from '@/app/ui-store'
-import { YouTubeStageHost } from '@/components/youtube/YouTubeStageHost'
 import { usePlaybackSnapshot } from '@/player/use-playback-snapshot'
 import { JoinStrip } from './JoinStrip'
 import { NowPlayingSheet } from './NowPlayingSheet'
@@ -22,29 +20,17 @@ import { PlayerBar } from './PlayerBar'
  * once and so existed for audio only.
  *
  * Now it reads one snapshot and renders one bar. There is no engine branch here
- * beyond "is anything loaded at all", and none in `PlayerBar` or
- * `NowPlayingSheet` either — they ask the snapshot's capabilities instead.
- *
- * The stage is mounted **here** rather than inside the bar or the sheet, and
- * that placement is load-bearing: re-parenting an `<iframe>` reloads it, so a
- * stage rendered by whichever surface happened to be open would restart the
- * video every time the sheet opened or closed. One element, never re-parented,
- * repositioned by an attribute (`YouTubeStageHost`).
+ * beyond "is anything loaded at all", and none in `PlayerBar` either — it asks
+ * the snapshot's capabilities instead. The embedded player is not mounted here:
+ * it belongs to the expanded sheet and to nothing else.
  */
 export function GlobalPlayer() {
   const snapshot = usePlaybackSnapshot()
-  const nowPlayingOpen = useUiStore((state) => state.nowPlayingOpen)
 
   if (snapshot.engine === 'none') return <JoinStrip />
 
   return (
     <>
-      {snapshot.stageItem ? (
-        <YouTubeStageHost
-          item={snapshot.stageItem}
-          placement={nowPlayingOpen ? 'sheet' : 'bar'}
-        />
-      ) : null}
       <PlayerBar snapshot={snapshot} />
       <NowPlayingSheet snapshot={snapshot} />
     </>

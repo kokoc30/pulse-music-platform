@@ -442,13 +442,31 @@ describe('it is the expanded view for the video player too', () => {
 
     await waitFor(() => expect(within(sheet()!).getByText('Barov Ari')).toBeInTheDocument())
 
-    // The stage is a sibling of the sheet, never a child of it: an overlay in
-    // front of an embedded player is exactly what the policies forbid.
+    // The player sits in the sheet's artwork slot, in normal flow.
     const stage = screen.getByTestId('youtube-stage')
-    expect(stage).toBeInTheDocument()
-    expect(sheet()!.contains(stage)).toBe(false)
+    expect(sheet()!.contains(stage)).toBe(true)
+    // It holds the API-created node and nothing else, so nothing of ours is
+    // ever drawn over the player or over its native controls.
+    expect(stage.children).toHaveLength(1)
+    expect(stage.firstElementChild).toHaveClass('yt-stage-mount')
     // And the sheet shows no still artwork where the player is.
     expect(sheet()!.querySelector('.now-playing-art')).toBeNull()
+  })
+
+  it('keeps every control a sibling below the player, never on top of it', async () => {
+    const { user } = await playFirstSearchResult()
+    await openSheet(user)
+    await playYouTubeVideo(
+      normalizeYouTubeVideo(youtubePayload({ videoId: 'vid0000005', title: 'Yars Ari' })),
+      { userInitiated: true },
+    )
+    await waitFor(() => expect(within(sheet()!).getByText('Yars Ari')).toBeInTheDocument())
+
+    const stage = screen.getByTestId('youtube-stage')
+    for (const control of within(sheet()!).getAllByRole('button')) {
+      expect(stage.contains(control)).toBe(false)
+    }
+    expect(stage.contains(within(sheet()!).getByRole('slider', { name: 'Seek' }))).toBe(false)
   })
 
   it('withholds the queue-shaped controls a video has no answer for', async () => {

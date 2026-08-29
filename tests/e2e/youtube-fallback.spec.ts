@@ -16,6 +16,30 @@ const stage = '[data-testid="youtube-stage"]'
 const rows = '[data-testid="youtube-result"]'
 
 /**
+ * Clicks a row that the video panel may be standing over.
+ *
+ * The panel is bottom-anchored and, on a phone, tall. A row inside the viewport
+ * but underneath it is one a visitor scrolls up to before tapping — Playwright's
+ * own `scrollIntoViewIfNeeded` will not, because the element is technically
+ * already in view. Scrolling it to the top of the viewport is what a finger
+ * does, and it is the only thing this helper adds.
+ */
+async function clickClearOfPanel(locator: import('@playwright/test').Locator) {
+  await locator.evaluate((node) => {
+    // Instant, not the page's smooth default: a still-animating row is one
+    // Playwright refuses to click as "not stable".
+    node.scrollIntoView({ block: 'start', behavior: 'instant' })
+    // `start` puts the row flush against the top of the viewport, which on this
+    // layout is underneath the sticky header. Backing off by the header's own
+    // height lands it in the clear strip between header and panel.
+    const header = document.querySelector('.site-header')
+    const offset = header ? header.getBoundingClientRect().height + 8 : 0
+    window.scrollBy({ top: -offset, behavior: 'instant' })
+  })
+  await locator.click()
+}
+
+/**
  * What the fake IFrame API recorded, read from inside the page.
  *
  * Every one of these is written as a self-contained browser expression rather
@@ -268,7 +292,7 @@ test.describe('provider transitions', () => {
     await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(true)
 
     // Back to audio: the embedded player must stop.
-    await page.locator('.song-row').first().click()
+    await clickClearOfPanel(page.locator('.song-row').first())
     await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(false)
     await expect.poll(() => page.evaluate(audioState).then((state) => state.paused)).toBe(false)
   })
@@ -291,7 +315,7 @@ test.describe('provider transitions', () => {
 
     await page.locator(rows).nth(0).click()
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
-    await page.locator(rows).nth(1).click()
+    await clickClearOfPanel(page.locator(rows).nth(1))
 
     await expect
       .poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.lastVideoId))

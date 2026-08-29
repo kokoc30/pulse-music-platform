@@ -119,22 +119,44 @@ describe('the bar follows whichever engine is playing', () => {
     expect(within(dialog).getByRole('heading', { name: 'Sourp Sarkis' })).toBeInTheDocument()
   })
 
-  it('mounts exactly one stage, and never inside a surface that could move it', async () => {
+  it('mounts exactly one player, and only inside the expanded view', async () => {
     const { user } = await playAudioTrack()
     await playYouTubeResult([SOURP, BAROV], SOURP, 'aram asatryan')
     await waitFor(() => expect(within(bar()).getByText('Sourp Sarkis')).toBeInTheDocument())
 
-    expect(screen.getAllByTestId('youtube-stage')).toHaveLength(1)
-    const before = screen.getByTestId('youtube-stage')
+    // Starting a video expands the view, because that is where the player is —
+    // the surface is on screen before anything is asked to play.
+    const dialog = await screen.findByRole('dialog', { name: 'Now playing' })
+    const stages = screen.getAllByTestId('youtube-stage')
+    expect(stages).toHaveLength(1)
+    expect(dialog.contains(stages[0])).toBe(true)
 
-    await user.click(within(bar()).getByRole('button', { name: 'Open Now Playing' }))
-    await screen.findByRole('dialog', { name: 'Now playing' })
+    // And never in the bar, which shows the thumbnail like any other cover.
+    expect(within(bar()).queryByTestId('youtube-stage')).not.toBeInTheDocument()
+    expect(bar().querySelector('iframe')).toBeNull()
 
-    // The same element, not a second one and not a re-created one: re-parenting
-    // an iframe reloads it, so expanding must move the stage, never remount it.
-    expect(screen.getAllByTestId('youtube-stage')).toHaveLength(1)
-    expect(screen.getByTestId('youtube-stage')).toBe(before)
-    expect(before.dataset.placement).toBe('sheet')
+    // Collapsing takes the player away *and pauses it*, so there is no state in
+    // which a video is playing without its player on screen.
+    await user.click(within(dialog).getByRole('button', { name: 'Collapse Now Playing' }))
+    await waitFor(() => expect(screen.queryByTestId('youtube-stage')).not.toBeInTheDocument())
+    expect(useYouTubeStore.getState().status).not.toBe('playing')
+  })
+
+  it('shows the same 56px cover for a video that it shows for a track', async () => {
+    await playAudioTrack()
+    const audioArt = bar().querySelector<HTMLImageElement>('.player-track img')!
+    expect(audioArt).toBeInTheDocument()
+
+    await playYouTubeResult([SOURP], SOURP, 'aram asatryan')
+    await waitFor(() => expect(within(bar()).getByText('Sourp Sarkis')).toBeInTheDocument())
+
+    const videoArt = bar().querySelector<HTMLImageElement>('.player-track img')!
+    // The same element in the same slot — YouTube's own thumbnail, unmodified
+    // and served from its own CDN, presented exactly as a cover is.
+    expect(videoArt).toBeInTheDocument()
+    expect(videoArt.getAttribute('src')).toBe(
+      'https://i.ytimg.com/vi/aram0000001/mqdefault.jpg',
+    )
   })
 })
 

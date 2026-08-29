@@ -1,3 +1,4 @@
+import { useUiStore } from '@/app/ui-store'
 import { canEmbedYouTubeItem, embedBlockReason } from '@/music/youtube/normalize'
 import type { YouTubeVideoItem } from '@/music/types'
 import { activateYouTube, releasePlayback } from './playback-coordinator'
@@ -20,6 +21,24 @@ import type { YouTubePlaybackState, YouTubeStatus } from './youtube-store'
  */
 
 type Store = typeof useYouTubeStore
+
+/**
+ * Puts the player on screen, before anything is asked to load or play.
+ *
+ * The embed is mounted by the expanded Now Playing view and by nothing else, so
+ * "reveal the player" and "expand the sheet" are now the same act. Every
+ * function below that loads a video calls this *first*, which is the ordering
+ * agents/24 has always specified — render the visible surface, then wait for
+ * player readiness, then load — and which the Required Minimum Functionality
+ * visibility rule depends on.
+ *
+ * It is also what makes the deferral in `youtube-engine` resolve: a video asked
+ * to play before its container exists is held, and flushed the moment the stage
+ * attaches. Without this the request would be held forever.
+ */
+function revealYouTubePlayer(): void {
+  useUiStore.getState().setNowPlayingOpen(true)
+}
 
 /**
  * How visible the player must be before *scripted* playback may begin.
@@ -98,6 +117,7 @@ export async function playYouTubeVideo(
   // The surface is opened *first*, so the player is on screen before anything
   // is asked to play. `agents/24` → "Audio -> YouTube" step 2.
   store.getState().openWith(item, autoplay ? 'loading' : 'cued')
+  revealYouTubePlayer()
   activateYouTube()
 
   try {
@@ -128,6 +148,7 @@ export async function cueYouTubeVideo(
     return false
   }
   store.getState().openWith(item, 'cued')
+  revealYouTubePlayer()
   activateYouTube()
   try {
     await getYouTubeEngine().cue(item)
@@ -201,6 +222,42 @@ export function getYouTubeSnapshot(
   }
 }
 
+/**
+ * Whether a player actually exists behind the store's item.
+ *
+ * The embed is destroyed whenever the expanded sheet closes, because that sheet
+ * is the only place it is ever mounted. The store keeps the item, the position
+ * and the session across that, so "there is a video loaded" and "there is a
+ * player to talk to" became two different questions, and a transport that
+ * confused them would press play against nothing.
+ */
+export function hasLiveYouTubePlayer(): boolean {
+  return getYouTubeEngine().getCurrentItem() !== null
+}
+
+/**
+ * One-shot intent: the visitor pressed play while the player did not exist.
+ *
+ * Lives outside React and outside the store — the store's shape is a public
+ * contract and this is a message between two moments of one gesture, not state
+ * anybody renders. The bar sets it and expands the sheet; the stage consumes it
+ * once it has mounted, cued and restored the position.
+ *
+ * It is only ever set from a real press, which is what makes the play that
+ * follows a user-initiated one rather than a scripted autoplay.
+ */
+let resumeOnAttach = false
+
+export function requestYouTubeResume(): void {
+  resumeOnAttach = true
+}
+
+export function consumeYouTubeResume(): boolean {
+  const requested = resumeOnAttach
+  resumeOnAttach = false
+  return requested
+}
+
 /** The surface's own play/pause control. Always a direct user gesture. */
 export function toggleYouTubePlayback(store: Store = useYouTubeStore): void {
   const state = store.getState()
@@ -229,6 +286,10 @@ export function closeYouTubeSurface(store: Store = useYouTubeStore): void {
   engine.stop()
   releasePlayback('youtube')
   store.getState().close()
+  // The expanded view *is* the player's surface, so dismissing the video closes
+  // it too. Leaving it open would strand the visitor in a full-screen sheet that
+  // has silently become a view of the audio track underneath.
+  useUiStore.getState().setNowPlayingOpen(false)
 }
 
 /**
@@ -321,6 +382,7 @@ async function playSessionItem(
   const autoplay = mayAutoplay({ ...options, documentHidden: hidden })
 
   store.getState().openWith(item, autoplay ? 'loading' : 'cued')
+  revealYouTubePlayer()
   if (index >= 0) store.getState().setSessionIndex(index)
   activateYouTube()
 
@@ -345,6 +407,7 @@ async function cueSessionItem(
   store: Store,
 ): Promise<boolean> {
   store.getState().openWith(item, 'cued')
+  revealYouTubePlayer()
   store.getState().setSessionIndex(index)
   activateYouTube()
   try {

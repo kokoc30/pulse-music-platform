@@ -219,8 +219,9 @@ test.describe('YouTube continues through the results it already has', () => {
 
     // The setting moved into the expanded view when the floating player was
     // removed — it is the visitor's own preference, and that is where a
-    // preference belongs now that there is one player.
-    await page.getByRole('button', { name: 'Open Now Playing' }).click()
+    // preference belongs now that there is one player. The view is already open:
+    // starting a video opens it, because that is where the player is mounted.
+    await expect(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible()
     await page.getByLabel('Continuous play').uncheck()
 
     await endCurrent(page)
@@ -233,9 +234,17 @@ test.describe('YouTube continues through the results it already has', () => {
     await startFirstResult(page)
     const calls = recordYouTubeApiTraffic(page)
 
-    // The unified bar carries them now. There is exactly one pair of these
-    // controls in the application, and they drive whichever engine is live.
-    const controls = page.getByRole('region', { name: 'Now playing' })
+    /**
+     * The unified transport carries them now, and it is the same pair of
+     * controls whichever engine is live. Which *surface* they are reached from
+     * is a breakpoint detail: the reference collapses the bar to a round play
+     * button below 560px, so a phone reaches Next and Previous through the
+     * expanded view — the same store, the same actions, the same rules.
+     */
+    const bar = page.getByRole('region', { name: 'Now playing' })
+    const controls = (await bar.getByRole('button', { name: 'Next track' }).isVisible())
+      ? bar
+      : page.getByRole('dialog', { name: 'Now playing' })
 
     await controls.getByRole('button', { name: 'Next track' }).click()
     await expect.poll(() => currentVideoId(page)).toBe('bbbbbbbbbbb')

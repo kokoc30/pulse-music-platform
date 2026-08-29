@@ -171,6 +171,18 @@ export const EMPTY_SNAPSHOT: PlaybackSnapshot = {
   queueableTrack: null,
 }
 
+/**
+ * YouTube's documented medium-quality thumbnail, 320 x 180.
+ *
+ * Built from the video id rather than taken from the search payload because the
+ * payload's key varies — `maxresdefault` is 1280 wide, which is twenty times the
+ * width the bar draws it at. This is the same host, the same image and the same
+ * unmodified frame, at the size actually being displayed.
+ */
+export function youTubeThumbnail(videoId: string): string {
+  return `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
+}
+
 export interface SnapshotInput {
   engine: EngineKind
   audio: PlayerState
@@ -201,8 +213,18 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
       engine: 'youtube',
       title: item.title,
       subtitle: item.channelTitle,
-      artwork: null,
-      artworkUrl: item.thumbnailUrl,
+      // A real artwork object, not null, so the bar renders a video through the
+      // exact same component and the exact same slot as a track. `small` is
+      // YouTube's 320x180 key, which is the right weight for a 56px box; the
+      // larger keys keep the item's own published thumbnail for anywhere that
+      // asks for one. Both are YouTube's own CDN, unmodified and never
+      // re-hosted (agents/25; docs/youtube-policy-audit.md §3).
+      artwork: {
+        small: youTubeThumbnail(item.videoId),
+        medium: item.thumbnailUrl,
+        large: item.thumbnailUrl,
+      },
+      artworkUrl: youTubeThumbnail(item.videoId),
       artworkAspect: '16:9',
       sourceUrl: item.sourceUrl,
       providerLabel: 'YouTube',
