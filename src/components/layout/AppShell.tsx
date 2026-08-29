@@ -4,7 +4,6 @@ import { LibrarySidebar } from '@/components/navigation/LibrarySidebar'
 import { MobileNavDrawer } from '@/components/navigation/MobileNavDrawer'
 import { GlobalPlayer } from '@/components/player/GlobalPlayer'
 import { QueuePanel } from '@/components/queue/QueuePanel'
-import { YouTubePlayerSurface } from '@/components/youtube/YouTubePlayerSurface'
 import { LibraryHost } from '@/features/library/LibraryHost'
 import { PersonalizationHost } from '@/features/personalization/PersonalizationHost'
 import { MediaSessionHost } from '@/features/playback/MediaSessionHost'
@@ -58,11 +57,11 @@ export function AppShell() {
       <MobileNavDrawer />
       <QueuePanel />
       <NoticeToast />
-      {/* Above the router, like the audio engine and the bottom player: a
-          YouTube embed must stay visible while it plays, so navigation may not
-          unmount it (agents/25 → "Visible Player Surface"). It renders nothing
-          until a YouTube item is actually opened. */}
-      <YouTubePlayerSurface />
+      {/* One player for all three providers — bar, expanded sheet, and the
+          embedded YouTube stage when a video holds the engine. Above the
+          router, like the audio engine: a YouTube embed must stay visible while
+          it plays, so navigation may not unmount it (agents/25 → "Visible
+          Player Surface"). */}
       <GlobalPlayer />
     </div>
   )

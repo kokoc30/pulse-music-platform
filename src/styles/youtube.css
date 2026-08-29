@@ -278,152 +278,171 @@
 }
 
 /* ==========================================================================
-   The visible player surface
-   Sits above the bottom player and stays on screen for as long as a video is
-   loaded. `.yt-surface-stage` holds the API-created iframe and nothing else:
-   no overlay, no gradient, no click interceptor, at any breakpoint.
+   The embedded stage
+
+   The one place a YouTube player is ever mounted, and the one element in the
+   application whose geometry answers to an external policy rather than to the
+   design.
+
+   It is `position: fixed` and positioned from a *measurement* of whichever slot
+   the current placement rendered — see `YouTubeStageHost`. That indirection is
+   what lets a single never-reparented element appear to live inside both the
+   bottom bar and the expanded sheet: re-parenting an iframe reloads it, so the
+   element must never move in the DOM, only on the screen.
+
+   Policy rules encoded here, not preferences:
+
+   · A hard 200 x 200 floor, in both placements and at every breakpoint
+     (Required Minimum Functionality; the IFrame API reference).
+   · It holds the API-created iframe and nothing else. Every control is a
+     sibling elsewhere in the tree, so nothing is ever drawn over the player or
+     over its native controls.
+   · It sits *above* the expanded sheet in the stacking order. The sheet is a
+     full-screen overlay, and an overlay in front of an embedded player is
+     exactly what the rules forbid — so the player wins the stack, always.
+   · There is no `display: none`, no zero opacity and no offscreen parking
+     anywhere in this file. When there is no video the element is not rendered.
    ========================================================================== */
 
-.yt-surface {
+.yt-stage {
   position: fixed;
-  right: 16px;
-  bottom: calc(var(--player-height) + 16px);
-  z-index: var(--z-overlay);
-  display: flex;
-  flex-direction: column;
-  width: 480px;
-  max-width: calc(100vw - 32px);
-  padding: 10px;
-  border: 1px solid var(--color-player-border);
-  border-radius: var(--radius-surface);
-  background: var(--color-player-bg);
-  box-shadow: var(--shadow-bar);
-}
-
-.yt-surface-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  padding-bottom: 8px;
-}
-
-.yt-surface-title {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.yt-surface-title b {
-  overflow: hidden;
-  color: var(--color-text-strong);
-  font-size: 13px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.yt-surface-title small {
-  overflow: hidden;
-  color: var(--color-text-dim);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.yt-surface-close {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--color-control);
-  color: var(--color-text);
-  cursor: pointer;
-  transition: background var(--dur-fast) ease;
-}
-
-.yt-surface-close:hover,
-.yt-surface-close:focus-visible {
-  background: var(--color-control-hover);
-}
-
-/* 480x270 is the size the IFrame API reference recommends for 16:9; the
-   min-width / min-height floor is the documented 200x200 hard minimum. */
-.yt-surface-stage {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  min-width: 200px;
-  min-height: 200px;
+  /* Above the sheet (`--z-overlay`) and above the notice, because nothing at
+     all may be painted in front of the player. */
+  z-index: calc(var(--z-notice) + 1);
   overflow: hidden;
   border-radius: var(--radius-art-md);
   background: #000;
+  box-shadow: var(--shadow-bar);
+  /* Restated from the component's inline style so neither can be lost alone. */
+  min-width: 200px;
+  min-height: 200px;
 }
 
-.yt-surface-stage > *,
-.yt-surface-stage iframe {
+.yt-stage-mount,
+.yt-stage iframe {
   display: block;
   width: 100%;
   height: 100%;
   border: 0;
 }
 
-.yt-surface-foot {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding-top: 8px;
+/* --------------------------------------------------------------------------
+   The room each surface reserves for it
+
+   Empty, `aria-hidden` boxes. They paint nothing: they exist so the bar and the
+   sheet each lay out around the player in their own normal flow, and so the
+   stage has something real to measure rather than coordinates to guess at.
+   -------------------------------------------------------------------------- */
+
+.player-stage-slot {
+  flex: none;
+  width: min(356px, 42vw);
+  height: 200px;
+  min-width: 200px;
+  min-height: 200px;
+  border-radius: var(--radius-art-md);
+  background: var(--color-art-placeholder);
 }
 
-.yt-surface-toggle {
+/* The docked player is 200px tall, so the bar grows to hold it. `min-height` on
+   `.music-player` is a floor rather than a fixed height, so this needs no
+   override — only the extra breathing room the taller bar wants. */
+.music-player[data-stage='true'] {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.now-playing-stage-slot {
+  flex: none;
+  align-self: center;
+  width: min(456px, 100%);
+  aspect-ratio: 16 / 9;
+  min-width: 200px;
+  min-height: 200px;
+  border-radius: var(--radius-art-md);
+  background: var(--color-art-placeholder);
+}
+
+@media (max-width: 560px) {
+  /* Still comfortably over the floor, and narrow enough to leave the title and
+     transport beside it on a phone. */
+  .player-stage-slot {
+    width: min(300px, 52vw);
+  }
+}
+
+/* Room to scroll out from under the docked player.
+
+   The bar is fixed and, with a stage in it, roughly three times its usual
+   height. Without this the last screenful of a results list is not merely
+   hidden but unclickable, because the bar takes the pointer. */
+body[data-yt-stage='bar'] .pulse-app {
+  padding-bottom: calc(var(--app-bottom-space-sm) + 200px);
+}
+
+/* ==========================================================================
+   Continuous play, in the expanded sheet
+
+   It governs one thing only: moving to the next result the search already
+   returned, while the player is on screen. It grants nothing in the background
+   and causes no request.
+   ========================================================================== */
+
+.now-playing-continuous {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-player);
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.now-playing-continuous input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* The background-pause explanation. Stated once, dismissible, and never over
+   the player. */
+.now-playing-policy {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-bar);
+  background: var(--color-control);
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.now-playing-policy button {
   flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 20px;
+  height: 20px;
   border: 0;
   border-radius: var(--radius-pill);
-  background: var(--color-track-fill);
-  color: #111;
+  background: transparent;
+  color: var(--color-text-dim);
   cursor: pointer;
 }
 
-.yt-surface-toggle:disabled {
-  opacity: 0.55;
-  cursor: default;
+.now-playing-policy button:hover {
+  color: var(--color-text-strong);
 }
 
-.yt-surface-time {
-  color: var(--color-text-player);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.yt-surface-status {
+/* Keeps the bar's three-column grid intact when the volume control is withheld
+   for an item that has no volume of ours to set. */
+.player-volume-spacer {
   min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-dim);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-
-@media (max-width: 560px) {
-  .yt-surface {
-    right: 8px;
-    left: 8px;
-    bottom: calc(var(--player-height-sm) + 10px);
-    width: auto;
-    max-width: none;
-  }
-}
-
 /* ==========================================================================
    The privacy page
    ========================================================================== */
@@ -473,202 +492,4 @@
   margin-top: 26px;
   padding-top: 14px;
   border-top: 1px solid var(--color-divider);
-}
-
-/* ==========================================================================
-   Result-session controls (Phase 8)
-
-   Every control here is a sibling of `.yt-surface-stage`, never an overlay on
-   it: the iframe and YouTube's own native controls stay completely unobscured,
-   which is the same rule the play/pause button above already follows
-   (docs/youtube-policy-audit.md §8).
-   ========================================================================== */
-
-.yt-surface-step {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--color-text-player);
-  cursor: pointer;
-  transition:
-    background-color var(--dur-fast) ease,
-    color var(--dur-fast) ease;
-}
-
-.yt-surface-step:hover:not(:disabled) {
-  background: var(--overlay-row-hover);
-  color: var(--color-text-strong);
-}
-
-.yt-surface-step:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-/* In the footer row, not on a row of its own — see YouTubePlayerSurface. */
-.yt-surface-continuous {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  color: var(--color-text-player);
-  font-size: 11.5px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.yt-surface-continuous input {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
-/* The background-pause explanation. Stated once, dismissible, and never over
-   the player. */
-.yt-surface-policy {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  border-radius: var(--radius-bar);
-  background: var(--color-control);
-  color: var(--color-text-muted);
-  font-size: 11.5px;
-  line-height: 1.45;
-}
-
-.yt-surface-policy button {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--color-text-dim);
-  cursor: pointer;
-}
-
-.yt-surface-policy button:hover {
-  color: var(--color-text-strong);
-}
-
-/* On a phone the surface is a fixed overlay and the viewport is short, so every
-   row it does not need is a row of the results list it stops covering. The
-   elapsed-time readout goes first: YouTube's own controls already show it,
-   inside the player, where the visitor is looking. */
-@media (max-width: 560px) {
-  .yt-surface-time {
-    display: none;
-  }
-
-  .yt-surface-foot {
-    gap: 8px;
-  }
-
-  /* The words go, the control stays: on a phone the checkbox is the whole
-     affordance and its accessible name carries the meaning. */
-  .yt-surface-continuous span {
-    display: none;
-  }
-}
-
-/* Room to scroll out from under the fixed player.
-
-   Below 830px the surface spans the full width and covers the bottom of the
-   page, so without this the last screenful of results is not merely hidden but
-   unclickable — the overlay takes the pointer. The extra space is only present
-   while the player is actually open. */
-@media (max-width: 830px) {
-  body[data-yt-surface='open'] .pulse-app {
-    padding-bottom: calc(var(--app-bottom-space-sm) + 340px);
-  }
-}
-
-/* ==========================================================================
-   The bottom bar, while YouTube owns playback
-
-   Deliberately the same shell as the audio bar — `.music-player`, the same
-   grid, the same control shapes — because it is the same bar showing a
-   different engine, not a second bar. What differs is only what a YouTube item
-   can honestly offer: no scrubber, since seeking belongs to the official
-   player's own controls, and no volume, since that is the visitor's business
-   inside the embed.
-   ========================================================================== */
-
-.yt-mini-source {
-  color: var(--color-text-dim);
-}
-
-.yt-mini-text {
-  min-width: 0;
-  flex: 1;
-  cursor: pointer;
-}
-
-/* Informational, and marked as such: a bar with no thumb, because there is
-   nothing here to drag. */
-.yt-mini-progress {
-  align-items: center;
-}
-
-.yt-mini-rail {
-  flex: 1;
-  height: 4px;
-  min-width: 60px;
-  border-radius: var(--radius-pill);
-  background: var(--color-track-rail);
-  overflow: hidden;
-}
-
-.yt-mini-rail > i {
-  display: block;
-  height: 100%;
-  border-radius: var(--radius-pill);
-  background: var(--color-track-fill);
-}
-
-.yt-mini-art {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.yt-mini-art button {
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-bar);
-  background: transparent;
-  cursor: pointer;
-  line-height: 0;
-}
-
-/* The thumbnail is the visitor's route back to the player, so it needs a
-   visible focus ring like any other control. */
-.yt-mini-art button:focus-visible {
-  outline: 2px solid var(--color-track-fill);
-  outline-offset: 2px;
-}
-
-@media (max-width: 560px) {
-  /* The artwork shortcut is redundant on a phone, where the player fills the
-     screen already and the row itself is tappable. */
-  .yt-mini-art {
-    display: none;
-  }
-
-  .yt-mini-progress {
-    display: none;
-  }
 }

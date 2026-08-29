@@ -1,6 +1,6 @@
 import { pickArtwork } from '@/music/normalize'
 import { providerLabel } from '@/music/provider-labels'
-import type { Artwork, YouTubeVideoItem } from '@/music/types'
+import type { Artwork, Track, YouTubeVideoItem } from '@/music/types'
 import { trackRefFromTrack, trackRefFromYouTube } from '@/library/track-ref'
 import type { LibraryTrackRef } from '@/library/types'
 import type { EngineKind } from './playback-coordinator'
@@ -47,6 +47,15 @@ export interface PlaybackCapabilities {
   volume: boolean
   queue: boolean
   expand: boolean
+  /**
+   * The item can continue into an already-fetched result list when it ends.
+   *
+   * YouTube only, and it is a *setting* rather than a control: the visitor's
+   * answer to "should the next search result follow this one". The audio side
+   * expresses the same idea as `autoplaySimilar`, which lives in Settings, so
+   * there is no second switch for it here.
+   */
+  continuous: boolean
 }
 
 export interface PlaybackSnapshot {
@@ -93,6 +102,16 @@ export interface PlaybackSnapshot {
    * store — which is the rule that keeps the engine branch out of components.
    */
   stageItem: YouTubeVideoItem | null
+  /**
+   * The loaded item as something the audio queue could accept, or null.
+   *
+   * Only the *Add to queue* menu entry needs this, and only that entry is
+   * withheld for a video — a YouTube item has no place in an audio queue, by
+   * type as well as by policy. Everything else the track menu offers (playlists,
+   * hiding a recommendation) works from the library reference and is offered for
+   * both.
+   */
+  queueableTrack: Track | null
 }
 
 const NO_CAPABILITIES: PlaybackCapabilities = {
@@ -103,6 +122,7 @@ const NO_CAPABILITIES: PlaybackCapabilities = {
   volume: false,
   queue: false,
   expand: false,
+  continuous: false,
 }
 
 /** Frozen and shared: an identity a memo can compare against cheaply. */
@@ -127,6 +147,7 @@ export const EMPTY_SNAPSHOT: PlaybackSnapshot = {
   capabilities: NO_CAPABILITIES,
   isEmbeddedStage: false,
   stageItem: null,
+  queueableTrack: null,
 }
 
 export interface SnapshotInput {
@@ -178,9 +199,11 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
         volume: false,
         queue: false,
         expand: true,
+        continuous: true,
       },
       isEmbeddedStage: true,
       stageItem: item,
+      queueableTrack: null,
     }
   }
 
@@ -214,9 +237,11 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
         volume: true,
         queue: true,
         expand: true,
+        continuous: false,
       },
       isEmbeddedStage: false,
       stageItem: null,
+      queueableTrack: track,
     }
   }
 

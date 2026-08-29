@@ -2,7 +2,6 @@ import type { Track } from '@/music/types'
 import { usePlayerStore } from './player-store'
 import type { PlayerState } from './player-store'
 import { nextQueueIndex, previousQueueIndex } from './queue-order'
-import { useYouTubeStore } from './youtube-store'
 import type { RepeatMode } from './queue-order'
 
 /**
@@ -88,15 +87,13 @@ export const useHasPrevious = (): boolean => usePlayerStore(selectHasPrevious)
 export const useRepeatMode = (): RepeatMode => usePlayerStore((s) => s.repeatMode)
 export const useShuffle = (): boolean => usePlayerStore((s) => s.shuffle)
 
-/**
- * True while the embedded video player is on screen.
- *
- * Audio surfaces read this so they never draw over it. The video player carries
- * policy obligations about being visible and unobscured that the audio player
- * does not, so when the two would collide the video wins — and the audio side
- * asks that question here rather than reaching into the video store itself.
+/*
+ * `useVideoSurfaceOpen` was deleted here rather than left beside its
+ * replacement. It existed so the audio sheet could stand down while the floating
+ * video player was on screen — a question that no longer has a meaning, because
+ * there is one player and it renders both. A dead selector with a plausible name
+ * is what let `useHasNext` and `playNext` disagree for a whole phase.
  */
-export const useVideoSurfaceOpen = (): boolean => useYouTubeStore((s) => s.surfaceOpen)
 
 /** True while this exact track is the loaded one — drives row highlighting. */
 export const useIsCurrentTrack = (trackId: string): boolean =>

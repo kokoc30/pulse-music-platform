@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import { TopResultCard } from '@/components/search/TopResultCard'
-import { PlayerTrackInfo } from '@/components/player/PlayerTrackInfo'
+import { PlayerBar } from '@/components/player/PlayerBar'
 import { TrackCard } from '@/components/track/TrackCard'
 import { TrackList } from '@/components/track/TrackList'
 import type { Track } from '@/music/types'
+import { initialPlayerState } from '@/player/player-store'
+import { selectSnapshotState } from '@/player/use-playback-snapshot'
+import { initialYouTubeState } from '@/player/youtube-store'
 import { ProviderCredit } from './ProviderCredit'
 
 /**
@@ -245,9 +248,24 @@ describe('attribution in the top result', () => {
   })
 })
 
+/**
+ * The now-playing cluster is now `PlayerBar`, rendering from a snapshot rather
+ * than from a `Track` — the same one component every provider goes through. The
+ * obligations it has to satisfy are unchanged, so these assertions are too: only
+ * the component under test moved.
+ */
+function playingBar(track: Track) {
+  const snapshot = selectSnapshotState({
+    engine: 'audio',
+    audio: { ...initialPlayerState, currentTrack: track, status: 'playing' },
+    youtube: initialYouTubeState,
+  })
+  return render(<PlayerBar snapshot={snapshot} />)
+}
+
 describe('attribution in the now-playing cluster', () => {
   it('links a playing Jamendo track back to its Jamendo page', () => {
-    render(<PlayerTrackInfo track={jamendoTrack()} />)
+    playingBar(jamendoTrack())
     // The credit itself is the anchor: the reference hides the icon link below
     // 560px, and a licence-required backlink may not vanish on a phone.
     const link = screen.getByRole('link', { name: /View “Reverie” on Jamendo/i })
@@ -258,26 +276,26 @@ describe('attribution in the now-playing cluster', () => {
   })
 
   it('keeps the Audius link and its wording unchanged', () => {
-    render(<PlayerTrackInfo track={audiusTrack()} />)
+    playingBar(audiusTrack())
     const link = screen.getByRole('link', { name: /Open Midnight Signal on Audius/i })
     expect(link).toHaveAttribute('href', 'https://audius.co/novasound/midnight-signal')
     expect(screen.queryByText('Jamendo')).not.toBeInTheDocument()
   })
 
   it('carries exactly one backlink, not a duplicate of the icon link', () => {
-    render(<PlayerTrackInfo track={jamendoTrack()} />)
+    playingBar(jamendoTrack())
     expect(screen.getAllByRole('link')).toHaveLength(1)
   })
 
   it('renders without a link when the provider gave no page for the track', () => {
-    render(<PlayerTrackInfo track={jamendoTrack({ sourceUrl: undefined, permalink: undefined })} />)
+    playingBar(jamendoTrack({ sourceUrl: undefined, permalink: undefined }))
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
     // The provider credit still stands.
     expect(screen.getByText('Jamendo')).toBeInTheDocument()
   })
 
   it('exposes no download affordance for a Jamendo track', () => {
-    const { container } = render(<PlayerTrackInfo track={jamendoTrack()} />)
+    const { container } = playingBar(jamendoTrack())
     expect(container.querySelector('[download]')).toBeNull()
     expect(container.innerHTML).not.toContain('audiodownload')
     expect(container.innerHTML).not.toContain('/download/')

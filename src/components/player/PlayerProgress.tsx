@@ -1,18 +1,21 @@
 import { useCallback, useRef, useState } from 'react'
 import { formatDuration, formatTimeAnnouncement } from '@/lib/format'
-import { seek } from '@/player/player-actions'
-import { useCurrentTime, useDuration } from '@/player/player-selectors'
+import { unifiedSeek } from '@/player/unified-actions'
 import { RangeRail } from './RangeRail'
 
 /**
  * The reference's `.progress` row, and the Now Playing sheet's scrubber.
  *
- * **One implementation, two sizes.** The bar and the sheet differ by a class
- * name, not by a second component: a fork would mean two seek paths, two sets of
- * clamping and two chances for the displayed position to disagree with the audio
- * element. `variant` changes the wrapper and nothing else.
+ * **One implementation, two sizes, two engines.** The bar and the sheet differ
+ * by a class name, not by a second component, and an Audius track and a YouTube
+ * video differ by nothing at all here: both report a position and a duration,
+ * and both accept an absolute seek through `unifiedSeek`. A fork would mean two
+ * seek paths, two sets of clamping and two chances for the displayed position to
+ * disagree with the thing actually playing.
  *
- * Time and fill come from the real audio element — nothing here fakes progress.
+ * Position and duration arrive as props from the playback snapshot rather than
+ * being read from a store, which is what lets the same rail scrub a video: the
+ * component has no idea which engine it is driving, and does not need one.
  */
 
 /**
@@ -29,56 +32,63 @@ export const SEEK_ARROW_SECONDS = 1
 export const SEEK_PAGE_SECONDS = 10
 
 /**
- * Minimum gap between real `currentTime` writes while dragging.
+ * Minimum gap between real position writes while dragging.
  *
- * A pointer drag fires far faster than an audio element wants to be re-seeked,
- * and every write restarts buffering. The thumb still follows the finger exactly
- * — that is local state — while the engine is asked at a sane rate, and the
- * final position is always committed on release, so where the drag *ends* is
- * never approximate.
+ * A pointer drag fires far faster than either engine wants to be re-seeked, and
+ * every write restarts buffering. The thumb still follows the finger exactly —
+ * that is local state — while the engine is asked at a sane rate, and the final
+ * position is always committed on release, so where the drag *ends* is never
+ * approximate.
  */
 export const SEEK_DRAG_THROTTLE_MS = 120
 
 interface PlayerProgressProps {
+  currentTime: number
+  duration: number
+  /** False when the loaded item cannot be scrubbed — an unknown duration. */
+  seekable?: boolean
   /** `bar` is the bottom player; `sheet` is the expanded Now Playing view. */
   variant?: 'bar' | 'sheet'
 }
 
-export function PlayerProgress({ variant = 'bar' }: PlayerProgressProps) {
-  const currentTime = useCurrentTime()
-  const duration = useDuration()
-  const seekable = duration > 0
+export function PlayerProgress({
+  currentTime,
+  duration,
+  seekable = true,
+  variant = 'bar',
+}: PlayerProgressProps) {
+  const canSeek = seekable && duration > 0
 
   /** Where the thumb is while a drag is in progress, in seconds. */
   const [preview, setPreview] = useState<number | null>(null)
   const lastWriteRef = useRef(0)
 
   const displayed = preview ?? currentTime
-  const ratio = seekable ? Math.min(Math.max(displayed / duration, 0), 1) : 0
+  const ratio = canSeek ? Math.min(Math.max(displayed / duration, 0), 1) : 0
 
   const handleChange = useCallback(
     (nextRatio: number) => {
-      if (!seekable) return
+      if (!canSeek) return
       const seconds = nextRatio * duration
       setPreview(seconds)
 
       const now = Date.now()
       if (now - lastWriteRef.current < SEEK_DRAG_THROTTLE_MS) return
       lastWriteRef.current = now
-      seek(seconds)
+      unifiedSeek(seconds)
     },
-    [duration, seekable],
+    [duration, canSeek],
   )
 
   const handleCommit = useCallback(
     (nextRatio: number) => {
-      if (!seekable) return
+      if (!canSeek) return
       // The exact release position, unthrottled and unconditional.
       lastWriteRef.current = Date.now()
-      seek(nextRatio * duration)
+      unifiedSeek(nextRatio * duration)
       setPreview(null)
     },
-    [duration, seekable],
+    [duration, canSeek],
   )
 
   return (
@@ -86,10 +96,10 @@ export function PlayerProgress({ variant = 'bar' }: PlayerProgressProps) {
       <span>{formatDuration(displayed)}</span>
       <RangeRail
         value={ratio}
-        disabled={!seekable}
-        // Seconds expressed as a share of this track's length.
-        step={seekable ? SEEK_ARROW_SECONDS / duration : 0.02}
-        pageStep={seekable ? SEEK_PAGE_SECONDS / duration : 0.1}
+        disabled={!canSeek}
+        // Seconds expressed as a share of this item's length.
+        step={canSeek ? SEEK_ARROW_SECONDS / duration : 0.02}
+        pageStep={canSeek ? SEEK_PAGE_SECONDS / duration : 0.1}
         className={variant === 'sheet' ? 'rail-seek' : undefined}
         ariaLabel="Seek"
         ariaValueText={formatTimeAnnouncement(displayed, duration)}

@@ -12,91 +12,63 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
+  X,
 } from 'lucide-react'
 import { useUiStore } from '@/app/ui-store'
 import { LikeButton } from '@/components/library/LikeButton'
 import { TrackMenu } from '@/components/library/TrackMenu'
 import { Artwork } from '@/components/track/Artwork'
-import { ProviderCredit } from '@/components/track/ProviderCredit'
-import { trackRefFromTrack } from '@/library/track-ref'
-import { providerLabel } from '@/music/provider-labels'
-import type { Track } from '@/music/types'
-import {
-  SEEK_STEP_SECONDS,
-  skipToNext,
-  playPrevious,
-  seekBy,
-  togglePlay,
-} from '@/player/player-actions'
-import {
-  useDuration,
-  useCanSkipNext,
-  useHasPrevious,
-  useIsLoading,
-  usePlayerError,
-  useIsPlaying,
-  useRepeatMode,
-  useShuffle,
-  useVideoSurfaceOpen,
-} from '@/player/player-selectors'
+import { SEEK_STEP_SECONDS, seekBy } from '@/player/player-actions'
 import { usePlayerStore } from '@/player/player-store'
 import { REPEAT_LABELS } from '@/player/queue-order'
+import { unifiedExpand, unifiedNext, unifiedPlayPause, unifiedPrev } from '@/player/unified-actions'
+import type { PlaybackSnapshot } from '@/player/use-playback-snapshot'
+import { useYouTubeStore } from '@/player/youtube-store'
+import { PlayerCredit } from './PlayerBar'
 import { PlayerProgress } from './PlayerProgress'
+import { VolumeControl } from './VolumeControl'
 import { useVerticalSwipe } from './swipe'
 
 /**
- * The expanded Now Playing view for Audius and Jamendo.
+ * The expanded Now Playing view. **One sheet, every provider.**
  *
- * **It owns no playback.** Every control here calls the same action the bottom
- * bar calls — `togglePlay`, `playPrevious`, `playNext`, `seekBy`, `setShuffle`,
- * `cycleRepeatMode` — and every value it shows comes from the same store. There
- * is no second `<audio>`, no second queue, no second progress state and no
- * second "next", which is what makes repeat, shuffle, playlist continuation and
- * Phase 6 autoplay behave identically whether the sheet is open or shut.
+ * It used to stand down entirely while a video was on screen — `return null` —
+ * because the video had its own floating surface with its own controls, and two
+ * full-screen surfaces would have fought for the screen. That surface is gone,
+ * and this sheet is now the expanded view for all three providers: same layout,
+ * same transport, same heart, same scrubber. A YouTube item differs in one
+ * visible way, that the artwork slot holds a live player.
  *
- * Expanding and collapsing are therefore *presentation only*. The track is never
- * reloaded, playback never pauses, and closing the sheet does nothing to the
- * engine — the same reason `GlobalPlayer` lives outside the router.
+ * **It owns no playback.** Every control calls the same `unified*` action the
+ * bottom bar calls, and every value it shows comes from the same snapshot. There
+ * is no second engine, no second queue, no second progress state and no second
+ * "next", which is what makes repeat, shuffle, playlist continuation and
+ * autoplay behave identically whether the sheet is open or shut.
  *
- * **Live by construction.** Because it reads the store rather than a snapshot,
- * an autoplay transition updates the artwork, title, artist, attribution, heart
- * and progress in place. Nothing has to be told the track changed.
- *
- * **Audio only.** YouTube has its own visible surface with its own policy rules,
- * and the two must never compete for the screen: while that surface is open this
- * component renders nothing at all.
+ * **The stage is not rendered here.** `GlobalPlayer` mounts it once and moves it
+ * by changing one attribute, because re-parenting an iframe reloads it — see
+ * `YouTubeStageHost`. What this component contributes is the *space* the stage
+ * occupies while expanded, and the guarantee that nothing is drawn over it: the
+ * stage sits above this sheet in the stacking order, so the sheet can never
+ * become an overlay in front of an embedded player.
  */
-export function NowPlayingSheet({ track }: { track: Track }) {
+export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
   const open = useUiStore((state) => state.nowPlayingOpen)
-  const setOpen = useUiStore((state) => state.setNowPlayingOpen)
   const toggleQueue = useUiStore((state) => state.toggleQueue)
-
-  const isPlaying = useIsPlaying()
-  const isLoading = useIsLoading()
-  const error = usePlayerError()
-  const duration = useDuration()
-  const canSkipNext = useCanSkipNext()
-  const hasPrevious = useHasPrevious()
-  const shuffle = useShuffle()
-  const repeatMode = useRepeatMode()
-  const setShuffle = usePlayerStore((state) => state.setShuffle)
-  const cycleRepeatMode = usePlayerStore((state) => state.cycleRepeatMode)
-
-  // Two full-screen surfaces must never compete. The embedded video player is
-  // the one with policy obligations about being visible and unobscured, so it
-  // wins and this sheet stands down.
-  const videoOpen = useVideoSurfaceOpen()
+  const { capabilities: can } = snapshot
 
   const sheetRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
 
-  const close = useCallback(() => setOpen(false), [setOpen])
+  /**
+   * Collapsing goes through the unified action rather than straight to the UI
+   * store, because for a video it is not only a change of view: a docked stage
+   * is small and easily scrolled past, and the developer policies prohibit a
+   * player that is not displayed in the screen the user is viewing. So the
+   * action pauses YouTube on the way down. Audio is untouched by it.
+   */
+  const close = useCallback(() => unifiedExpand(false), [])
   const swipe = useVerticalSwipe({ onSwipeDown: close })
-
-  /** A video taking the screen collapses this rather than stacking on top of it. */
-  useEffect(() => {
-    if (videoOpen && open) setOpen(false)
-  }, [videoOpen, open, setOpen])
 
   /**
    * Focus moves in on open and back out on close.
@@ -160,14 +132,14 @@ export function NowPlayingSheet({ track }: { track: Track }) {
     }
   }, [open])
 
-  if (!open || videoOpen) return null
+  if (!open || snapshot.engine === 'none') return null
 
-  const seekable = duration > 0
-  const label = providerLabel(track.provider)
-  const attributed = Boolean(track.attributionRequired && track.sourceUrl)
+  const playing = snapshot.status === 'playing'
+  const busy = snapshot.status === 'buffering'
+  const seekable = can.seek && snapshot.duration > 0
 
   return (
-    <div className="now-playing-scrim" data-testid="now-playing">
+    <div className="now-playing-scrim" data-testid="now-playing" data-engine={snapshot.engine}>
       <section
         className="now-playing"
         role="dialog"
@@ -179,9 +151,6 @@ export function NowPlayingSheet({ track }: { track: Track }) {
             it to its own strip is what stops a drag on the scrubber below from
             closing the sheet. */}
         <header className="now-playing-head">
-          {/* The grab strip is its own element rather than the whole header: a press
-              on the collapse button belongs to that button, so a header-wide swipe
-              zone would be mostly dead area. */}
           <div className="now-playing-grab" {...swipe}>
             <span className="now-playing-grip" aria-hidden="true" />
           </div>
@@ -196,75 +165,100 @@ export function NowPlayingSheet({ track }: { track: Track }) {
           </button>
         </header>
 
-        <div className="now-playing-art">
-          {/* The same component and the same mirror failover every other cover
-              uses, asked for the largest safe candidate. No second resolver. */}
-          <Artwork artwork={track.artwork} size="large" loading="eager" />
-        </div>
+        {snapshot.isEmbeddedStage ? (
+          /* The room the fixed stage occupies while the sheet is open. The
+             player itself is a sibling of this sheet, above it in the stacking
+             order, so no part of this component is ever in front of it. */
+          <div className="now-playing-stage-slot" data-stage-slot="sheet" aria-hidden="true" />
+        ) : (
+          <div className="now-playing-art">
+            {/* The same component and the same mirror failover every other cover
+                uses, asked for the largest safe candidate. No second resolver. */}
+            <Artwork artwork={snapshot.artwork ?? {}} size="large" loading="eager" />
+          </div>
+        )}
 
         <div className="now-playing-meta">
           <div className="now-playing-titles">
-            <h2 title={track.title}>{track.title}</h2>
-            <p title={track.artistName}>
-              {track.artistName}
-              {/* Jamendo's per-item backlink is a licence obligation and is as
-                  required here as anywhere else — it does not get dropped for
-                  want of room on a phone. */}
-              <ProviderCredit track={track} variant="link" />
+            <h2 title={snapshot.title}>{snapshot.title}</h2>
+            <p title={snapshot.subtitle}>
+              {snapshot.subtitle}
+              {/* The required per-item backlink rides on the credit itself, so
+                  it is present at every size — the same arrangement the bar
+                  uses, and the same one `ProviderCredit` gives every row. */}
+              <PlayerCredit snapshot={snapshot} />
             </p>
-            {attributed ? null : track.permalink ? (
+            {/* The convenience link, for a provider that requires none. An
+                attributed item already has its anchor above and does not link to
+                the same page twice. */}
+            {!snapshot.attributionRequired && snapshot.sourceUrl ? (
               <a
                 className="now-playing-source"
-                href={track.permalink}
+                href={snapshot.sourceUrl}
                 target="_blank"
-                rel="noopener"
+                rel="noopener noreferrer"
               >
-                Open on {label}
+                Open on {snapshot.providerLabel}
               </a>
             ) : null}
           </div>
 
           <div className="now-playing-actions">
-            <LikeButton
-              itemKey={track.id}
-              title={track.title}
-              toRef={() => trackRefFromTrack(track)}
-              variant="prominent"
-              size={22}
-            />
-            <TrackMenu
-              title={track.title}
-              itemKey={track.id}
-              toRef={() => trackRefFromTrack(track)}
-              queueableTrack={track}
-            />
+            {can.like && snapshot.toLibraryRef ? (
+              <LikeButton
+                itemKey={snapshot.libraryKey}
+                title={snapshot.title}
+                toRef={snapshot.toLibraryRef}
+                variant="prominent"
+                size={22}
+              />
+            ) : null}
+            {snapshot.toLibraryRef ? (
+              <TrackMenu
+                title={snapshot.title}
+                itemKey={snapshot.libraryKey}
+                toRef={snapshot.toLibraryRef}
+                {...(snapshot.queueableTrack ? { queueableTrack: snapshot.queueableTrack } : {})}
+              />
+            ) : null}
           </div>
         </div>
 
-        {error ? (
+        {snapshot.error ? (
           <p className="now-playing-error" role="alert">
-            {error}
+            {snapshot.error}
           </p>
         ) : null}
 
-        <PlayerProgress variant="sheet" />
+        <PlayerProgress
+          currentTime={snapshot.currentTime}
+          duration={snapshot.duration}
+          seekable={can.seek}
+          variant="sheet"
+        />
 
         <div className="now-playing-transport">
-          <button
-            type="button"
-            className="now-playing-skip"
-            onClick={() => seekBy(-SEEK_STEP_SECONDS)}
-            disabled={!seekable}
-            aria-label={`Seek back ${SEEK_STEP_SECONDS} seconds`}
-          >
-            <RotateCcw size={20} aria-hidden="true" />
-            <span aria-hidden="true">{SEEK_STEP_SECONDS}</span>
-          </button>
+          {/* Relative skip stays an audio affordance. It is the one control here
+              whose action is genuinely engine-specific — YouTube's own player
+              carries its own ±10s gestures, inside the frame, where a visitor
+              already reaches for them. */}
+          {can.queue ? (
+            <button
+              type="button"
+              className="now-playing-skip"
+              onClick={() => seekBy(-SEEK_STEP_SECONDS)}
+              disabled={!seekable}
+              aria-label={`Seek back ${SEEK_STEP_SECONDS} seconds`}
+            >
+              <RotateCcw size={20} aria-hidden="true" />
+              <span aria-hidden="true">{SEEK_STEP_SECONDS}</span>
+            </button>
+          ) : null}
 
           <button
             type="button"
-            onClick={() => void playPrevious()}
-            disabled={!hasPrevious}
+            onClick={unifiedPrev}
+            disabled={!snapshot.canPrevious}
             aria-label="Previous track"
           >
             <SkipBack size={22} fill="currentColor" aria-hidden="true" />
@@ -273,12 +267,13 @@ export function NowPlayingSheet({ track }: { track: Track }) {
           <button
             type="button"
             className="now-playing-play"
-            onClick={() => void togglePlay()}
-            aria-label={isPlaying ? 'Pause' : 'Play'}
+            onClick={unifiedPlayPause}
+            disabled={busy}
+            aria-label={playing ? 'Pause' : 'Play'}
           >
-            {isLoading ? (
+            {busy ? (
               <Loader2 size={26} className="spin" aria-hidden="true" />
-            ) : isPlaying ? (
+            ) : playing ? (
               <Pause size={26} fill="currentColor" aria-hidden="true" />
             ) : (
               <Play size={26} fill="currentColor" aria-hidden="true" />
@@ -287,61 +282,163 @@ export function NowPlayingSheet({ track }: { track: Track }) {
 
           <button
             type="button"
-            onClick={() => void skipToNext()}
-            disabled={!canSkipNext}
+            onClick={unifiedNext}
+            disabled={!snapshot.canNext}
             aria-label="Next track"
           >
             <SkipForward size={22} fill="currentColor" aria-hidden="true" />
           </button>
 
-          <button
-            type="button"
-            className="now-playing-skip"
-            onClick={() => seekBy(SEEK_STEP_SECONDS)}
-            disabled={!seekable}
-            aria-label={`Seek forward ${SEEK_STEP_SECONDS} seconds`}
-          >
-            <RotateCw size={20} aria-hidden="true" />
-            <span aria-hidden="true">{SEEK_STEP_SECONDS}</span>
-          </button>
+          {can.queue ? (
+            <button
+              type="button"
+              className="now-playing-skip"
+              onClick={() => seekBy(SEEK_STEP_SECONDS)}
+              disabled={!seekable}
+              aria-label={`Seek forward ${SEEK_STEP_SECONDS} seconds`}
+            >
+              <RotateCw size={20} aria-hidden="true" />
+              <span aria-hidden="true">{SEEK_STEP_SECONDS}</span>
+            </button>
+          ) : null}
         </div>
 
-        <div className="now-playing-secondary">
-          <button
-            type="button"
-            className="player-toggle"
-            data-active={shuffle ? 'true' : 'false'}
-            aria-pressed={shuffle}
-            aria-label={shuffle ? 'Shuffle on' : 'Shuffle off'}
-            onClick={() => setShuffle(!shuffle)}
-          >
-            <Shuffle size={17} aria-hidden="true" />
-          </button>
+        {can.shuffle || can.queue || can.repeat || can.volume ? (
+          <div className="now-playing-secondary">
+            {can.shuffle ? <SheetShuffleToggle /> : null}
 
-          {/* Reuses the existing panel rather than drawing a second queue: the
-              explicit queue and the autoplay buffer stay distinct, and nothing
-              here presents a generated candidate as something the visitor
-              queued. */}
-          <button type="button" className="now-playing-queue" onClick={toggleQueue}>
-            <ListMusic size={16} aria-hidden="true" /> Up next
-          </button>
+            {/* Reuses the existing panel rather than drawing a second queue: the
+                explicit queue and the autoplay buffer stay distinct, and nothing
+                here presents a generated candidate as something the visitor
+                queued. */}
+            {can.queue ? (
+              <button type="button" className="now-playing-queue" onClick={toggleQueue}>
+                <ListMusic size={16} aria-hidden="true" /> Up next
+              </button>
+            ) : null}
 
-          <button
-            type="button"
-            className="player-toggle"
-            data-active={repeatMode === 'off' ? 'false' : 'true'}
-            aria-pressed={repeatMode !== 'off'}
-            aria-label={REPEAT_LABELS[repeatMode]}
-            onClick={cycleRepeatMode}
-          >
-            {repeatMode === 'one' ? (
-              <Repeat1 size={17} aria-hidden="true" />
-            ) : (
-              <Repeat size={17} aria-hidden="true" />
-            )}
-          </button>
-        </div>
+            {can.repeat ? <SheetRepeatToggle /> : null}
+            {can.volume ? <VolumeControl /> : null}
+            {can.continuous ? <ContinuousPlayToggle /> : null}
+          </div>
+        ) : null}
+
+        {can.continuous ? <BackgroundPolicyNotice /> : null}
       </section>
     </div>
+  )
+}
+
+/**
+ * Continue into the next already-fetched result when this one ends.
+ *
+ * It governs that and nothing else: advancing through results the visitor
+ * already has, while the player is on screen. It grants nothing in the
+ * background and causes no request — no `search.list`, no `videos.list`, no
+ * related-video lookup.
+ *
+ * It lived on the floating player before that surface was removed, and it moved
+ * here rather than being dropped: it is the visitor's own setting, and the
+ * expanded view is where a setting belongs now that there is one player.
+ */
+function ContinuousPlayToggle() {
+  const continuousPlay = useYouTubeStore((state) => state.continuousPlay)
+  const setContinuousPlay = useYouTubeStore((state) => state.setContinuousPlay)
+  const sessionCount = useYouTubeStore((state) => state.sessionItems.length)
+
+  // A standalone video has nothing to continue into, so the switch would be
+  // decoration. The rule matches the one the step controls already follow.
+  if (sessionCount < 2) return null
+
+  return (
+    <label
+      className="now-playing-continuous"
+      title={`Plays the next of ${sessionCount} results while this player is visible. Never in the background.`}
+    >
+      <input
+        type="checkbox"
+        checked={continuousPlay}
+        aria-label="Continuous play"
+        onChange={(event) => setContinuousPlay(event.target.checked)}
+      />
+      <span aria-hidden="true">Continuous play</span>
+    </label>
+  )
+}
+
+/**
+ * Why the video stopped when the tab went away.
+ *
+ * Shown once, after the fact, and dismissible. Not a toast on every visibility
+ * change, and not framed as a fault: it is what the YouTube developer policies
+ * require of an embedded player, and saying so is more useful than letting the
+ * visitor conclude the app broke.
+ */
+function BackgroundPolicyNotice() {
+  const paused = useYouTubeStore((state) => state.pausedForBackgroundPolicy)
+  const status = useYouTubeStore((state) => state.status)
+  const dismiss = useYouTubeStore((state) => state.setPausedForBackgroundPolicy)
+
+  if (!paused || status === 'playing') return null
+
+  return (
+    <p className="now-playing-policy" role="status">
+      <span>
+        YouTube playback pauses when Pulse is in the background. Audius and Jamendo tracks keep
+        playing.
+      </span>
+      <button
+        type="button"
+        onClick={() => dismiss(false)}
+        aria-label="Dismiss the background playback explanation"
+      >
+        <X size={13} aria-hidden="true" />
+      </button>
+    </p>
+  )
+}
+
+/**
+ * Queue settings, not transport commands — mounted only once `capabilities` has
+ * said this item has a running order to reorder. See `PlayerBar` for the same
+ * pair and the same reasoning.
+ */
+function SheetShuffleToggle() {
+  const shuffle = usePlayerStore((state) => state.shuffle)
+  const setShuffle = usePlayerStore((state) => state.setShuffle)
+
+  return (
+    <button
+      type="button"
+      className="player-toggle"
+      data-active={shuffle ? 'true' : 'false'}
+      aria-pressed={shuffle}
+      aria-label={shuffle ? 'Shuffle on' : 'Shuffle off'}
+      onClick={() => setShuffle(!shuffle)}
+    >
+      <Shuffle size={17} aria-hidden="true" />
+    </button>
+  )
+}
+
+function SheetRepeatToggle() {
+  const repeatMode = usePlayerStore((state) => state.repeatMode)
+  const cycleRepeatMode = usePlayerStore((state) => state.cycleRepeatMode)
+
+  return (
+    <button
+      type="button"
+      className="player-toggle"
+      data-active={repeatMode === 'off' ? 'false' : 'true'}
+      aria-pressed={repeatMode !== 'off'}
+      aria-label={REPEAT_LABELS[repeatMode]}
+      onClick={cycleRepeatMode}
+    >
+      {repeatMode === 'one' ? (
+        <Repeat1 size={17} aria-hidden="true" />
+      ) : (
+        <Repeat size={17} aria-hidden="true" />
+      )}
+    </button>
   )
 }

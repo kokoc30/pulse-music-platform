@@ -171,11 +171,37 @@ describe('the Referer requirement', () => {
     expect(html).not.toMatch(/<meta[^>]+name=["']referrer["']/i)
   })
 
-  it('never writes rel="noreferrer" on a YouTube link in client source', () => {
-    for (const file of clientFiles) {
-      const code = codeOf(file)
-      if (!/youtube/i.test(code)) continue
-      expect(code).not.toContain('noreferrer')
+  /**
+   * The blanket file-level rule, kept for every file that is *only* about
+   * YouTube.
+   *
+   * It deliberately no longer covers files that serve the catalogues too. The
+   * unified player renders all three providers from one component, and Jamendo
+   * and Audius links must carry `noreferrer` while YouTube links must not — so a
+   * shared file legitimately contains the string, on the branch that is not
+   * YouTube's. A rule that failed on those files would be pushing the code
+   * towards re-splitting the very component this phase merged.
+   *
+   * What replaces the coverage is stronger, not weaker: `PlayerBar.test.tsx`
+   * asserts the rendered `rel` on a real YouTube link and on a real Jamendo one.
+   * A static string search cannot tell which branch emitted what; the DOM can.
+   */
+  it('never writes rel="noreferrer" in a YouTube-only client file', () => {
+    // Classified by path rather than by content. A shared component mentions
+    // `'youtube'` in a branch and names the catalogues only in prose, and
+    // `codeOf` strips prose — so a content test would read the one file that
+    // renders all three providers as YouTube-only and fail on its Jamendo
+    // branch. Where a file lives is not ambiguous in that way.
+    const youTubeOnly = clientFiles.filter((file) =>
+      /[\\/]youtube[\\/]|[\\/]YouTube[A-Za-z]*\.tsx?$/.test(file),
+    )
+
+    // Guards the guard: if the filter ever matches nothing, this test would
+    // silently stop checking anything at all.
+    expect(youTubeOnly.length).toBeGreaterThan(0)
+
+    for (const file of youTubeOnly) {
+      expect(codeOf(file)).not.toContain('noreferrer')
     }
   })
 })
