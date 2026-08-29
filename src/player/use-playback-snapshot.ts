@@ -240,9 +240,14 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
       // figure covers that gap so the rail is never dead on arrival.
       duration: youtube.duration || item.durationSeconds || 0,
       error: youtube.error,
-      // Stepping walks the already-fetched result list and can never spend
-      // quota. A standalone video has no session, so both answers are false.
-      canNext: nextEligibleIndex(youtube.sessionItems, youtube.sessionIndex, 1) >= 0,
+      // Next walks the already-fetched results and, once they run out, extends
+      // them with one related search — so it stays lit while continuous play is
+      // on, because the action behind it can still answer. Previous only ever
+      // walks backwards through what is already there; there is no such thing as
+      // searching for the video that came before.
+      canNext:
+        nextEligibleIndex(youtube.sessionItems, youtube.sessionIndex, 1) >= 0 ||
+        youtube.continuousPlay,
       canPrevious: nextEligibleIndex(youtube.sessionItems, youtube.sessionIndex, -1) >= 0,
       capabilities: {
         seek: true,

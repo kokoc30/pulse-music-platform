@@ -204,7 +204,10 @@ describe('source attribution, per provider rules', () => {
 
 describe('transport enablement follows the snapshot', () => {
   it('disables Next when the snapshot says there is nowhere to go', () => {
-    renderBar(videoSnapshot())
+    // A standalone video with continuous play off: no session to step through
+    // and no continuation allowed, which is the only combination that now
+    // genuinely has nowhere to go.
+    renderBar(videoSnapshot({ continuousPlay: false }))
     expect(within(bar()).getByRole('button', { name: 'Next track' })).toBeDisabled()
   })
 

@@ -1,7 +1,16 @@
 import { useUiStore } from '@/app/ui-store'
 import { canEmbedYouTubeItem, embedBlockReason } from '@/music/youtube/normalize'
+import { isYouTubeVideoItem } from '@/music/types'
 import type { YouTubeVideoItem } from '@/music/types'
 import { activateYouTube, releasePlayback } from './playback-coordinator'
+import {
+  MIN_QUEUE_DEPTH,
+  NO_MORE_TRACKS_MESSAGE,
+  RELATED_RETRY_DELAY_MS,
+  describeSeed,
+  fetchRelated,
+  notePlayed,
+} from './related-fetcher'
 import { getYouTubeEngine } from './youtube-engine'
 import { documentHidden as isDocumentHidden, youTubeVisibleRatio } from './youtube-visibility'
 import { useYouTubeStore } from './youtube-store'
@@ -119,6 +128,7 @@ export async function playYouTubeVideo(
   store.getState().openWith(item, autoplay ? 'loading' : 'cued')
   revealYouTubePlayer()
   activateYouTube()
+  notePlayed(item.id)
 
   try {
     const engine = getYouTubeEngine()
@@ -129,6 +139,7 @@ export async function playYouTubeVideo(
     // under way — the surface's own play/pause control reads it.
     if (!autoplay) store.getState().setAwaitingUserPlay(true)
     else if (engine.isPlaying()) store.getState().setStatus('playing')
+    void ensureYouTubeSessionDepth(store)
     return true
   } catch (error) {
     const message =
@@ -372,6 +383,7 @@ async function playSessionItem(
   store: Store,
 ): Promise<boolean> {
   if (index >= 0) store.getState().setSessionIndex(index)
+  notePlayed(item.id)
 
   if (!canEmbedYouTubeItem(item)) {
     store.getState().setError(embedBlockReason(item) ?? 'This video cannot be played here.')
@@ -391,6 +403,9 @@ async function playSessionItem(
     await engine.play(item, { userInitiated: autoplay })
     if (!autoplay) store.getState().setAwaitingUserPlay(true)
     else if (engine.isPlaying()) store.getState().setStatus('playing')
+    // Not awaited: the video is already running, and the session is topped up
+    // over it rather than in the silence after it.
+    void ensureYouTubeSessionDepth(store)
     return true
   } catch (error) {
     const message =
@@ -427,52 +442,212 @@ async function cueSessionItem(
  *
  * `userInitiated: true`, because it is — which is the one condition under which
  * `mayAutoplay` does not need a visibility measurement.
+ *
+ * A press of **Next** at the end of the session extends it rather than doing
+ * nothing, for the same reason `selectCanSkipNext` was written on the audio
+ * side: a control and the action behind it must agree about what is possible.
+ * Previous does not — there is no such thing as searching for the video that
+ * came before.
+ *
+ * No delayed retry here. Someone holding a button does not want a two-second
+ * pause; they can press it again.
  */
 export async function playYouTubeSessionStep(
   direction: 1 | -1,
   store: Store = useYouTubeStore,
 ): Promise<boolean> {
-  const { sessionItems, sessionIndex } = store.getState()
-  const next = nextEligibleIndex(sessionItems, sessionIndex, direction)
-  const item = sessionItems[next]
+  let next = nextEligibleIndex(store.getState().sessionItems, store.getState().sessionIndex, direction)
+
+  if (next < 0 && direction === 1) {
+    if ((await extendYouTubeSession(store)) === 0) {
+      useUiStore.getState().showNotice(NO_MORE_TRACKS_MESSAGE)
+      return false
+    }
+    next = nextEligibleIndex(store.getState().sessionItems, store.getState().sessionIndex, 1)
+  }
+
+  const item = store.getState().sessionItems[next]
   if (next < 0 || !item) return false
   return playSessionItem(next, item, { userInitiated: true }, store)
 }
 
-/** True when a press of Next or Previous would go somewhere. */
+/**
+ * True when a press of Next or Previous would go somewhere.
+ *
+ * Next also answers yes when the session could be *extended* — a video is
+ * loaded, continuous play is on, and the sitting has searches left. Anything
+ * else would grey out a control whose action is perfectly able to answer it,
+ * which is the exact defect `useHasNext` was deleted for on the audio side.
+ */
 export function hasYouTubeSessionStep(
   direction: 1 | -1,
   store: Store = useYouTubeStore,
 ): boolean {
-  const { sessionItems, sessionIndex } = store.getState()
-  return nextEligibleIndex(sessionItems, sessionIndex, direction) >= 0
+  const state = store.getState()
+  if (nextEligibleIndex(state.sessionItems, state.sessionIndex, direction) >= 0) return true
+  if (direction === -1) return false
+  return (
+    state.item !== null &&
+    state.continuousPlay &&
+    relatedSearchesSpent < MAX_SESSION_RELATED_SEARCHES
+  )
+}
+
+/* --------------------------------------------------------------------------
+   Keeping the session from running out
+
+   The one place in the application where next-track logic may cause a YouTube
+   search, and the constants below are what make that defensible.
+   -------------------------------------------------------------------------- */
+
+/**
+ * Related searches one sitting may spend.
+ *
+ * **This is a quota decision, not a UX one.** `search.list` costs 100 units and
+ * the whole deployment is allowed 10,000 units a day — one hundred searches for
+ * *every visitor combined* (agents/22 → "Quota Constraint"). Continuation is
+ * worth spending some of that on; letting a single tab left playing overnight
+ * spend all of it is not, because the next visitor's explicit search is what
+ * would fail.
+ *
+ * Six, with `MIN_QUEUE_DEPTH` triggering each one and ten results coming back,
+ * covers roughly sixty videos in a sitting before the bar has to say it is out.
+ * The cap is per page load and is not persisted: it bounds a runaway session,
+ * not a person.
+ */
+export const MAX_SESSION_RELATED_SEARCHES = 6
+
+let relatedSearchesSpent = 0
+
+/** How many related searches this sitting has spent. Tests and diagnostics. */
+export function youTubeRelatedSearchesSpent(): number {
+  return relatedSearchesSpent
+}
+
+/** Test seam, and the reset a fresh app instance performs. */
+export function resetYouTubeRelatedBudget(): void {
+  relatedSearchesSpent = 0
+}
+
+/** One extension in flight at a time: two would double the quota spend. */
+let extending: Promise<number> | null = null
+
+/**
+ * Asks YouTube for more videos like the one playing, and appends them.
+ *
+ * Returns how many genuinely new items were added, so the caller can tell
+ * "nothing came back" from "the session grew". Never throws: `fetchRelated`
+ * answers every failure — network, quota, an empty result — with an empty array.
+ *
+ * The query is the act and the language, never the video's title (see
+ * `relatedQuery`). It excludes the session's own ids and everything this sitting
+ * has already played, so an extension cannot hand back the video that just
+ * ended — the behaviour that made the replay screen look like a bug.
+ */
+export async function extendYouTubeSession(store: Store = useYouTubeStore): Promise<number> {
+  if (extending) return extending
+  const seedItem = store.getState().item
+  if (!seedItem) return 0
+  if (relatedSearchesSpent >= MAX_SESSION_RELATED_SEARCHES) return 0
+
+  relatedSearchesSpent += 1
+  extending = (async () => {
+    const { sessionItems } = store.getState()
+    const found = await fetchRelated(describeSeed(seedItem), {
+      exclude: sessionItems.map((item) => item.id),
+    })
+    // `fetchRelated` returns the union both engines share; only the video half
+    // can enter a YouTube session, and the guard is a real runtime check rather
+    // than a cast (agents/28 → "Audio providers never enter YouTube engine").
+    const videos = found.filter(isYouTubeVideoItem)
+    if (!videos.length) return 0
+
+    const before = store.getState().sessionItems.length
+    store.getState().appendSessionItems(videos)
+    return store.getState().sessionItems.length - before
+  })().finally(() => {
+    extending = null
+  })
+
+  return extending
 }
 
 /**
- * A video ended naturally. Continue through the results the visitor already has.
+ * Keeps three playable videos standing ahead of the listener.
  *
- * Three gates, all of which must pass, and each of which is someone else's rule
- * rather than this function's opinion:
+ * Called when a video *starts*, so the search runs over the video already
+ * playing and the quota is spent well before the moment it is needed. Counting
+ * only *eligible* items is what makes the depth honest: a session whose
+ * remaining three entries are all made-for-kids has nothing ahead of it at all.
+ */
+export async function ensureYouTubeSessionDepth(store: Store = useYouTubeStore): Promise<void> {
+  const state = store.getState()
+  if (!state.continuousPlay || !state.item) return
+
+  let ahead = 0
+  let index = state.sessionIndex
+  while (ahead < MIN_QUEUE_DEPTH) {
+    index = nextEligibleIndex(state.sessionItems, index, 1)
+    if (index < 0) break
+    ahead += 1
+  }
+  if (ahead >= MIN_QUEUE_DEPTH) return
+
+  await extendYouTubeSession(store)
+}
+
+/**
+ * A video ended naturally. Play the next one — from the session, or from a
+ * search when the session has run out.
+ *
+ * The gates that remain are the ones that are somebody else's rule rather than
+ * this function's opinion:
  *
  * 1. **Continuous play is on.** The visitor's own setting.
- * 2. **There is a next eligible result.** No request is made to find one; when
- *    the session runs out, playback simply ends and YouTube's replay screen
- *    stands.
- * 3. **`mayAutoplay` agrees.** The document is visible *and* more than half the
+ * 2. **`mayAutoplay` agrees.** The document is visible *and* more than half the
  *    player is on screen, measured by a real `IntersectionObserver`. This is
  *    Required Minimum Functionality, and it is checked through the same helper
- *    every other scripted transition uses.
+ *    every other scripted transition uses. Failing it is not failure: the next
+ *    item is **cued** and waits for a press, which is what the policy asks for
+ *    when visibility is insufficient or unknown.
  *
- * Failing (3) is not failure: the next item is **cued** and waits for a press,
- * which is exactly what the policy asks for when visibility is insufficient or
- * unknown. Failing (1) or (2) leaves the ended state alone.
+ * The gate that is gone is "there is a next eligible result". It used to end the
+ * story: the session ran out, playback stopped, and the visitor was left looking
+ * at YouTube's replay screen with no way onward but to search again. Now an
+ * exhausted session is extended — once per end, bounded by
+ * `MAX_SESSION_RELATED_SEARCHES`, with one delayed retry for a connection that
+ * dropped mid-video — and only when *that* comes back empty does the bar say so.
+ *
+ * What never happens, under any of these branches, is the video that just ended
+ * starting again.
  */
 export async function advanceYouTubeSession(store: Store = useYouTubeStore): Promise<boolean> {
-  const state = store.getState()
-  if (!state.continuousPlay) return false
+  if (!store.getState().continuousPlay) return false
+  // Nothing loaded means nothing to be related *to* — after the surface was
+  // closed, for instance. There is no continuation to attempt and no request to
+  // make for one.
+  if (!store.getState().item) return false
 
-  const next = nextEligibleIndex(state.sessionItems, state.sessionIndex, 1)
-  const item = state.sessionItems[next]
+  let next = nextEligibleIndex(store.getState().sessionItems, store.getState().sessionIndex, 1)
+
+  if (next < 0) {
+    // The prefetch on start should have covered this; arriving here means it
+    // failed, was blocked, or the session was a single video all along.
+    if ((await extendYouTubeSession(store)) === 0) {
+      // One delayed retry, and only while there is budget left to spend on it —
+      // waiting two seconds to re-discover that the allowance is gone helps
+      // nobody.
+      const retryable = relatedSearchesSpent < MAX_SESSION_RELATED_SEARCHES
+      if (retryable) await delay(RELATED_RETRY_DELAY_MS)
+      if (!retryable || (await extendYouTubeSession(store)) === 0) {
+        useUiStore.getState().showNotice(NO_MORE_TRACKS_MESSAGE)
+        return false
+      }
+    }
+    next = nextEligibleIndex(store.getState().sessionItems, store.getState().sessionIndex, 1)
+  }
+
+  const item = store.getState().sessionItems[next]
   if (next < 0 || !item) return false
 
   const hidden = isDocumentHidden()
@@ -487,6 +662,49 @@ export async function advanceYouTubeSession(store: Store = useYouTubeStore): Pro
   return playSessionItem(next, item, { userInitiated: false, visibleRatio }, store)
 }
 
+/** Isolated so tests can drive it with fake timers. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * One advance at a time.
+ *
+ * `ENDED` can arrive twice for one video, and a video that fails after ending
+ * would otherwise produce a second advance on top of the first — skipping an
+ * item, and spending a second search to do it. The concurrent call is dropped
+ * rather than queued: the advance already running answers the same question.
+ */
+let advancing: Promise<boolean> | null = null
+
+function advanceOnce(store: Store): void {
+  if (advancing) return
+  advancing = advanceYouTubeSession(store).finally(() => {
+    advancing = null
+  })
+}
+
+/** Test seam. */
+export function resetYouTubeAdvanceGuard(): void {
+  advancing = null
+}
+
+/**
+ * Consecutive videos that may fail before the session is allowed to stop.
+ *
+ * A video pulled down, made private or blocked in the region is a dead end, not
+ * the end of the music — so it is treated exactly as an ending and the next one
+ * plays. Bounded so a run of them stops cleanly instead of walking the session
+ * at speed.
+ */
+export const MAX_CONSECUTIVE_VIDEO_FAILURES = 3
+let consecutiveFailures = 0
+
+/** Test seam. */
+export function resetYouTubeFailureStreak(): void {
+  consecutiveFailures = 0
+}
+
 /** Engine → store bridge, wired once by the surface component. */
 export function bindYouTubeEngineEvents(store: Store = useYouTubeStore): () => void {
   return getYouTubeEngine().subscribe({
@@ -495,6 +713,9 @@ export function bindYouTubeEngineEvents(store: Store = useYouTubeStore): () => v
       switch (state) {
         case 'playing':
           current.setStatus('playing')
+          // Real playback is the only proof the embed is reachable, so it is the
+          // only thing that clears the streak the error branch counts.
+          consecutiveFailures = 0
           break
         case 'paused':
           current.setStatus('paused')
@@ -502,10 +723,10 @@ export function bindYouTubeEngineEvents(store: Store = useYouTubeStore): () => v
         case 'ended':
           current.setStatus('ended')
           // Previously the story stopped here, and the visitor was left looking
-          // at YouTube's replay screen. Continuation is bounded by the session
-          // the visitor already has and by the visibility rule; when either says
-          // no, the ended state above is what stands.
-          void advanceYouTubeSession(store)
+          // at YouTube's replay screen. Now an exhausted session is extended
+          // rather than ended; only the visibility rule and the visitor's own
+          // continuous-play setting can still say no.
+          advanceOnce(store)
           break
         case 'cued':
           current.setStatus('cued')
@@ -518,7 +739,21 @@ export function bindYouTubeEngineEvents(store: Store = useYouTubeStore): () => v
       }
     },
     onTimeUpdate: (currentTime, duration) => store.getState().setProgress(currentTime, duration),
-    onError: (message) => store.getState().setError(message),
+    /**
+     * A video that will not play is treated as one that ended.
+     *
+     * The IFrame API reports a removed, private or region-blocked video through
+     * this event, and in every one of those cases stopping the music is the
+     * wrong answer — the next video is. The error is still recorded, because
+     * something did go wrong; it simply no longer ends the sitting.
+     */
+    onError: (message) => {
+      store.getState().setError(message)
+      consecutiveFailures += 1
+      if (consecutiveFailures > MAX_CONSECUTIVE_VIDEO_FAILURES) return
+      if (!store.getState().continuousPlay) return
+      advanceOnce(store)
+    },
     onAutoplayBlocked: () => {
       // The browser refused; ask for a press rather than retrying, which would
       // be an attempt to work around the block.

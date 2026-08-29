@@ -48,11 +48,13 @@ export interface YouTubePlaybackState {
   /** The query the results came from, for the surface's caption. */
   sessionQuery: string | null
   /**
-   * Whether a *natural end* may advance to the next eligible result.
+   * Whether a *natural end* may advance to the next eligible video.
    *
-   * Governs only that: advancing through already-fetched results while the
-   * player is on screen. It grants nothing in the background, and it never
-   * causes a network request.
+   * Governs advancing through the session while the player is on screen, and —
+   * since the "playback never stops" rule — extending that session with one
+   * related search when it runs out. It still grants nothing in the background:
+   * a hidden document pauses, and a player that is not more than half visible
+   * cues rather than plays.
    */
   continuousPlay: boolean
   /**
@@ -73,6 +75,14 @@ export interface YouTubePlaybackActions {
 
   /** Adopts an already-fetched result list. Makes no request of any kind. */
   startSession: (items: YouTubeVideoItem[], index: number, query: string | null) => void
+  /**
+   * Extends the session with further results, keeping the current position.
+   *
+   * Appends rather than replaces, and drops anything already in the list, so a
+   * continuation that arrives while the listener is at item 9 cannot renumber
+   * what is playing or offer them a video they have just seen.
+   */
+  appendSessionItems: (items: readonly YouTubeVideoItem[]) => void
   setSessionIndex: (index: number) => void
   setContinuousPlay: (enabled: boolean) => void
   setPausedForBackgroundPolicy: (paused: boolean) => void
@@ -144,6 +154,14 @@ export const useYouTubeStore = create<YouTubePlaybackState & YouTubePlaybackActi
 
   startSession: (sessionItems, sessionIndex, sessionQuery) =>
     set({ sessionItems, sessionIndex, sessionQuery }),
+
+  appendSessionItems: (incoming) =>
+    set((state) => {
+      const known = new Set(state.sessionItems.map((item) => item.id))
+      const added = incoming.filter((item) => !known.has(item.id))
+      if (!added.length) return state
+      return { sessionItems: [...state.sessionItems, ...added] }
+    }),
 
   setSessionIndex: (sessionIndex) => set({ sessionIndex }),
 

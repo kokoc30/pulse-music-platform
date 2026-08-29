@@ -4,30 +4,40 @@ import { createFakeYouTubeFactory } from './youtube/fake-adapter'
 import type { FakeYouTubeFactory } from './youtube/fake-adapter'
 import { createYouTubeIframeEngine, getYouTubeEngine, setYouTubeEngine } from './youtube-engine'
 import { resetPlaybackCoordinator } from './playback-coordinator'
+import { useUiStore } from '@/app/ui-store'
+import { NO_MORE_TRACKS_MESSAGE, clearPlayedSession } from './related-fetcher'
 import {
+  MAX_SESSION_RELATED_SEARCHES,
   advanceYouTubeSession,
   bindYouTubeEngineEvents,
   closeYouTubeSurface,
+  extendYouTubeSession,
   handleDocumentVisibility,
   hasYouTubeSessionStep,
   nextEligibleIndex,
   playYouTubeResult,
   playYouTubeSessionStep,
   playYouTubeVideo,
+  resetYouTubeAdvanceGuard,
+  resetYouTubeRelatedBudget,
+  youTubeRelatedSearchesSpent,
 } from './youtube-actions'
 import { initialYouTubeState, useYouTubeStore } from './youtube-store'
 import { resetYouTubeVisibility, setYouTubeVisibleRatio } from './youtube-visibility'
 
 /**
- * Continuing through YouTube results the visitor already has.
+ * Continuing after a YouTube video ends.
  *
- * Two things are being protected at once, and they pull in opposite directions:
- * a video that ends should not dump the visitor on YouTube's replay screen, and
+ * Three things are being protected at once, and they pull against each other:
+ * a video that ends must not dump the visitor on YouTube's replay screen,
  * nothing may auto-play unless the policy's visibility condition is genuinely
- * met. Every test below pins one side or the other.
+ * met, and the day's hundred searches belong to every visitor rather than to
+ * whoever left a tab open. Every test below pins one of the three.
  *
- * **Zero quota, asserted.** `fetch` is spied on throughout: no continuation may
- * cause a `search.list`, a `videos.list`, or any request at all.
+ * **Bounded quota, asserted.** `fetch` is replaced throughout, so every request
+ * is both visible and refused. A continuation that can be answered from results
+ * already in hand must make none; only an *exhausted* session may spend one, and
+ * `MAX_SESSION_RELATED_SEARCHES` caps how many a sitting may spend in total.
  */
 
 let factory: FakeYouTubeFactory
@@ -56,6 +66,20 @@ function video(overrides: Partial<YouTubeVideoItem> = {}): YouTubeVideoItem {
 const A = video({ videoId: 'aaaaaaaaaaa', title: 'Arabic Song A' })
 const B = video({ videoId: 'bbbbbbbbbbb', title: 'Arabic Song B' })
 const C = video({ videoId: 'ccccccccccc', title: 'Arabic Song C' })
+const D = video({ videoId: 'ddddddddddd', title: 'Arabic Song D' })
+const E = video({ videoId: 'eeeeeeeeeee', title: 'Arabic Song E' })
+const F = video({ videoId: 'fffffffffff', title: 'Arabic Song F' })
+const G = video({ videoId: 'ggggggggggg', title: 'Arabic Song G' })
+
+/**
+ * A session long enough that the depth prefetch stays out of the way.
+ *
+ * Playing a video tops the session up to `MIN_QUEUE_DEPTH` playable items
+ * ahead, which is exactly what a real search of fifteen results makes invisible
+ * and a fixture of three would make constant. Tests about *advancing* use this;
+ * tests about *running out* deliberately use a short one.
+ */
+const DEEP = [A, B, C, D, E, F, G]
 
 const store = () => useYouTubeStore.getState()
 const currentId = () => store().item?.videoId ?? null
@@ -73,10 +97,14 @@ beforeEach(() => {
   useYouTubeStore.setState({ ...initialYouTubeState })
   resetPlaybackCoordinator()
   resetYouTubeVisibility()
+  resetYouTubeRelatedBudget()
+  resetYouTubeAdvanceGuard()
+  clearPlayedSession()
+  useUiStore.setState({ notice: null, noticeAction: null })
   factory = createFakeYouTubeFactory()
   setYouTubeEngine(createYouTubeIframeEngine({ factory, origin: 'http://localhost' }))
-  // Any request at all is a failure here, so the whole of `fetch` is replaced
-  // rather than merely observed — a continuation must never reach the network.
+  // Every request is both visible and refused: the spy records what was asked
+  // for, and the rejection proves no continuation depends on one succeeding.
   fetchSpy = vi.fn(() => Promise.reject(new Error('no request may be made')))
   globalThis.fetch = fetchSpy
 })
@@ -126,7 +154,7 @@ describe('choosing eligible items', () => {
 })
 
 describe('starting a session from already-fetched results', () => {
-  it('adopts the list without asking YouTube for anything', async () => {
+  it('adopts the list exactly as the search returned it', async () => {
     attach()
     await playYouTubeResult([A, B, C], B, 'arabic song')
 
@@ -134,7 +162,6 @@ describe('starting a session from already-fetched results', () => {
     expect(store().sessionIndex).toBe(1)
     expect(store().sessionQuery).toBe('arabic song')
     expect(currentId()).toBe('bbbbbbbbbbb')
-    expect(fetchSpy).not.toHaveBeenCalled()
   })
 
   it('preserves the relevance order the search returned', async () => {
@@ -168,7 +195,7 @@ describe('starting a session from already-fetched results', () => {
 describe('a natural end while the player is on screen', () => {
   beforeEach(async () => {
     attach()
-    await playYouTubeResult([A, B, C], A)
+    await playYouTubeResult(DEEP, A)
     setYouTubeVisibleRatio(0.75)
     bindYouTubeEngineEvents()
   })
@@ -181,15 +208,16 @@ describe('a natural end while the player is on screen', () => {
     expect(store().sessionIndex).toBe(1)
   })
 
-  it('spends no YouTube quota doing it', async () => {
+  it('spends no YouTube quota while the session can still answer', async () => {
     fetchSpy.mockClear()
     await advanceYouTubeSession()
     expect(fetchSpy).not.toHaveBeenCalled()
+    expect(youTubeRelatedSearchesSpent()).toBe(0)
   })
 
   it('skips an ineligible result on the way', async () => {
     const kids = video({ videoId: 'kkkkkkkkkkk', madeForKids: true })
-    await playYouTubeResult([A, kids, C], A)
+    await playYouTubeResult([A, kids, C, D, E], A)
     setYouTubeVisibleRatio(0.8)
 
     await advanceYouTubeSession()
@@ -199,7 +227,17 @@ describe('a natural end while the player is on screen', () => {
     expect(factory.players.some((player) => player.videoId === 'kkkkkkkkkkk')).toBe(false)
   })
 
-  it('stops at the end of the session rather than looping or searching', async () => {
+  /**
+   * The end of the session used to be the end of the story, and this assertion
+   * used to say so. It is the reported bug: the visitor was left looking at
+   * YouTube's replay screen with no way onward but to search again.
+   *
+   * Now the session is extended. Here the search is refused — `fetch` rejects —
+   * so the honest ending stands: the bar says it cannot find more, the video
+   * that just ended is *not* restarted, and the allowance is spent once rather
+   * than in a loop.
+   */
+  it('searches for more when the session runs out, and says so when that fails', async () => {
     await playYouTubeResult([A, B], B)
     setYouTubeVisibleRatio(0.9)
     fetchSpy.mockClear()
@@ -207,8 +245,19 @@ describe('a natural end while the player is on screen', () => {
     const advanced = await advanceYouTubeSession()
 
     expect(advanced).toBe(false)
+    expect(fetchSpy).toHaveBeenCalled()
+    // Above all: the video that just ended is not the one loaded next.
     expect(currentId()).toBe('bbbbbbbbbbb')
-    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(store().sessionIndex).toBe(1)
+    expect(useUiStore.getState().notice).toBe(NO_MORE_TRACKS_MESSAGE)
+  })
+
+  it('never spends more than the sitting is allowed', async () => {
+    for (let attempt = 0; attempt < MAX_SESSION_RELATED_SEARCHES + 4; attempt += 1) {
+      await extendYouTubeSession()
+    }
+
+    expect(youTubeRelatedSearchesSpent()).toBe(MAX_SESSION_RELATED_SEARCHES)
   })
 
   it('does nothing when continuous play is switched off', async () => {
@@ -229,7 +278,7 @@ describe('a natural end while the player is on screen', () => {
 describe('a natural end when the player is not visible enough', () => {
   beforeEach(async () => {
     attach()
-    await playYouTubeResult([A, B, C], A)
+    await playYouTubeResult(DEEP, A)
   })
 
   it('cues the next result and waits for a press', async () => {
@@ -275,7 +324,7 @@ describe('a natural end when the player is not visible enough', () => {
 describe('the background-playback rule is unchanged', () => {
   beforeEach(async () => {
     attach()
-    await playYouTubeResult([A, B, C], A)
+    await playYouTubeResult(DEEP, A)
     store().setStatus('playing')
   })
 
@@ -307,7 +356,7 @@ describe('the background-playback rule is unchanged', () => {
 
   it('keeps the session intact across the pause', () => {
     handleDocumentVisibility(true)
-    expect(store().sessionItems).toHaveLength(3)
+    expect(store().sessionItems).toHaveLength(DEEP.length)
     expect(store().sessionIndex).toBe(0)
   })
 })
@@ -315,7 +364,7 @@ describe('the background-playback rule is unchanged', () => {
 describe('stepping through the session by hand', () => {
   beforeEach(async () => {
     attach()
-    await playYouTubeResult([A, B, C], B)
+    await playYouTubeResult(DEEP, B)
   })
 
   it('moves forward on a real press, without needing visibility', async () => {
@@ -335,26 +384,52 @@ describe('stepping through the session by hand', () => {
     expect(currentId()).toBe('aaaaaaaaaaa')
   })
 
+  /**
+   * Previous disables itself at the start of the list; Next does not disable
+   * itself at the end of it, because the action behind Next can extend the
+   * session. A control that greys out over an action that would have answered is
+   * the exact defect `useHasNext` was deleted for on the audio side.
+   */
   it('reports what is reachable so the controls can disable themselves', async () => {
     expect(hasYouTubeSessionStep(1)).toBe(true)
     expect(hasYouTubeSessionStep(-1)).toBe(true)
 
-    await playYouTubeSessionStep(1)
-    expect(hasYouTubeSessionStep(1)).toBe(false)
+    await playYouTubeResult([A, B], B)
+    expect(hasYouTubeSessionStep(1)).toBe(true)
     expect(hasYouTubeSessionStep(-1)).toBe(true)
+
+    store().setContinuousPlay(false)
+    expect(hasYouTubeSessionStep(1)).toBe(false)
   })
 
-  it('spends no quota', async () => {
+  it('spends no quota while the session can still answer', async () => {
     fetchSpy.mockClear()
     await playYouTubeSessionStep(1)
     await playYouTubeSessionStep(-1)
     expect(fetchSpy).not.toHaveBeenCalled()
+    expect(youTubeRelatedSearchesSpent()).toBe(0)
   })
 
-  it('refuses to step past the ends', async () => {
+  it('refuses to step back past the start', async () => {
     await playYouTubeSessionStep(-1)
     expect(await playYouTubeSessionStep(-1)).toBe(false)
     expect(currentId()).toBe('aaaaaaaaaaa')
+  })
+
+  /**
+   * A press at the end of the list extends it rather than doing nothing — and
+   * when the search cannot answer, says so instead of replaying the video.
+   */
+  it('extends the list on a press past the end, and explains a failure', async () => {
+    await playYouTubeResult([A, B], B)
+
+    expect(await playYouTubeSessionStep(1)).toBe(false)
+
+    // A search was attempted — either the press's own, or the depth prefetch it
+    // joined, which is the point of sharing one extension between them.
+    expect(youTubeRelatedSearchesSpent()).toBeGreaterThan(0)
+    expect(currentId()).toBe('bbbbbbbbbbb')
+    expect(useUiStore.getState().notice).toBe(NO_MORE_TRACKS_MESSAGE)
   })
 })
 

@@ -180,14 +180,27 @@ describe('the YouTube bar drives YouTube, never the audio queue', () => {
     expect(usePlayerStore.getState().currentTrack?.title).toBe('Midnight Signal')
   })
 
-  it('disables both steps for a standalone video with no result session', async () => {
+  /**
+   * A standalone video has nothing *behind* it and something ahead of it.
+   *
+   * Previous can only walk backwards through results already in hand, so it is
+   * genuinely disabled. Next is not: with continuous play on, the action behind
+   * it extends the session with one related search, and greying it out would be
+   * the control disagreeing with the action again.
+   */
+  it('disables Previous for a standalone video, but not Next', async () => {
     await playAudioTrack()
     await playYouTubeVideo(SOURP, { userInitiated: true })
     await waitFor(() => expect(within(bar()).getByText('Sourp Sarkis')).toBeInTheDocument())
 
     expect(useYouTubeStore.getState().sessionItems).toHaveLength(0)
-    expect(within(bar()).getByRole('button', { name: 'Next track' })).toBeDisabled()
     expect(within(bar()).getByRole('button', { name: 'Previous track' })).toBeDisabled()
+    expect(within(bar()).getByRole('button', { name: 'Next track' })).toBeEnabled()
+
+    useYouTubeStore.getState().setContinuousPlay(false)
+    await waitFor(() =>
+      expect(within(bar()).getByRole('button', { name: 'Next track' })).toBeDisabled(),
+    )
   })
 
   it('reads its progress from the YouTube store, not the audio element', async () => {

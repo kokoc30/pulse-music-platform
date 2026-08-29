@@ -226,13 +226,25 @@ describe('attribution and identity', () => {
 })
 
 describe('transport availability', () => {
-  it('lets a video step only where its session actually reaches', () => {
+  /**
+   * Next and Previous stopped being symmetrical, and the asymmetry is real.
+   *
+   * Previous can only ever walk backwards through results already in hand, so a
+   * standalone video has nowhere to go. Next can extend the session with one
+   * related search, so it stays lit for as long as continuous play is on — the
+   * same argument `selectCanSkipNext` makes on the audio side, where the defect
+   * was a control greyed out over an action perfectly able to answer it.
+   */
+  it('keeps a video Next available while continuous play can extend the session', () => {
     const standalone = selectSnapshotState(withVideo())
-    expect(standalone.canNext).toBe(false)
+    expect(standalone.canNext).toBe(true)
     expect(standalone.canPrevious).toBe(false)
 
+    const noContinuation = selectSnapshotState(withVideo({ continuousPlay: false }))
+    expect(noContinuation.canNext).toBe(false)
+
     const inSession = selectSnapshotState(
-      withVideo({ sessionItems: [VIDEO, OTHER], sessionIndex: 0 }),
+      withVideo({ sessionItems: [VIDEO, OTHER], sessionIndex: 0, continuousPlay: false }),
     )
     expect(inSession.canNext).toBe(true)
     expect(inSession.canPrevious).toBe(false)
