@@ -1,6 +1,13 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { recordYouTubeApiTraffic, stubAllProviders, stubProviders } from './fixtures'
+import {
+  collapseSheet,
+  recordYouTubeApiTraffic,
+  stageHitTest,
+  stubAllProviders,
+  stubProviders,
+  transport,
+} from './fixtures'
 
 /**
  * The two flows a visitor reported, in a real browser.
@@ -17,22 +24,6 @@ const barTitle = (page: Page) => page.locator('.player-track b')
 const audioState = () => {
   const audio = document.querySelector('audio')
   return { paused: audio?.paused ?? true, count: document.querySelectorAll('audio').length }
-}
-
-/**
- * Where the audio transport actually lives at this viewport.
- *
- * The reference hides every control but the round play button below 560px, so a
- * phone reaches Next, Repeat and Shuffle through the expanded Now Playing sheet
- * instead. Both are the same store and the same actions, so the rules under test
- * are identical — only the surface differs.
- */
-async function transport(page: Page) {
-  if (await bar(page).getByRole('button', { name: 'Next track' }).isVisible()) return bar(page)
-  await page.getByRole('button', { name: 'Open Now Playing' }).click()
-  const sheet = page.getByRole('dialog', { name: 'Now playing' })
-  await expect(sheet).toBeVisible()
-  return sheet
 }
 
 async function playFirstSearchResult(page: Page) {
@@ -128,7 +119,9 @@ test.describe('the bar follows the engine that is playing', () => {
     expect(state.paused).toBe(true)
     expect(state.count).toBe(1)
 
-    // Closing the video hands the bar back to the preserved, paused track.
+    // Closing the video hands the bar back to the preserved, paused track. The
+    // cross is on the bar, under the sheet, so the sheet comes down first.
+    await collapseSheet(page)
     await page.getByRole('button', { name: /Close the YouTube player/ }).click()
     await expect(page.getByTestId('youtube-stage')).toHaveCount(0)
     await expect(barTitle(page)).toHaveText('Night Signal')
@@ -137,25 +130,26 @@ test.describe('the bar follows the engine that is playing', () => {
     expect((await page.evaluate(audioState)).paused).toBe(true)
   })
 
-  test('the bar steps the YouTube session and spends no quota doing it', async ({
-    page,
-  }, testInfo) => {
-    // Below 560px the reference leaves only the round play button on the bar, so
-    // stepping there is done in the player's own footer — which is on screen
-    // anyway, and is covered by tests/e2e/search-seed-continuation.spec.ts.
-    test.skip(testInfo.project.name === 'chromium-mobile', 'mini-player carries play/pause only')
-
+  /**
+   * Stepping is driven from the expanded sheet, because for a video that is the
+   * surface a visitor has: the embed is mounted there, so the sheet is open the
+   * whole time a video plays, and it is centred over the bar's own control
+   * cluster. Both carry the same unified actions over the same store, and the
+   * bar goes on naming what is playing throughout — which is what is asserted.
+   */
+  test('the transport steps the YouTube session and spends no quota doing it', async ({ page }) => {
     await page.goto('/search?q=aram asatryan')
     await page.getByTestId('youtube-fallback').click()
     await page.locator('[data-testid="youtube-result"]').first().click()
     await expect(barTitle(page)).toHaveText('Sourp Sarkis')
 
     const calls = recordYouTubeApiTraffic(page)
+    const controls = await transport(page)
 
-    await bar(page).getByRole('button', { name: 'Next track' }).click()
+    await controls.getByRole('button', { name: 'Next track' }).click()
     await expect(barTitle(page)).toHaveText('Barov Ari')
 
-    await bar(page).getByRole('button', { name: 'Previous track' }).click()
+    await controls.getByRole('button', { name: 'Previous track' }).click()
     await expect(barTitle(page)).toHaveText('Sourp Sarkis')
 
     expect(calls).toEqual([])
@@ -175,32 +169,21 @@ test.describe('the bar follows the engine that is playing', () => {
     await page.locator('[data-testid="youtube-result"]').first().click()
     await expect(page.getByTestId('youtube-stage')).toBeVisible()
 
-    const stage = (await page.getByTestId('youtube-stage').boundingBox())!
-
-    // The documented floor, in the rendered layout rather than in a stylesheet.
-    expect(stage.width).toBeGreaterThanOrEqual(200)
-    expect(stage.height).toBeGreaterThanOrEqual(200)
-
     // Nothing of the bar is inside the stage: every control is a sibling.
     const inStage = await page.evaluate(
       () => document.querySelectorAll('[data-testid="youtube-stage"] .music-player').length,
     )
     expect(inStage).toBe(0)
 
+    const stage = await stageHitTest(page)
+
+    // The documented floor, in the rendered layout rather than in a stylesheet.
+    expect(stage.width).toBeGreaterThanOrEqual(200)
+    expect(stage.height).toBeGreaterThanOrEqual(200)
+
     // And whatever the compositor puts at the stage's corners and centre is the
     // stage itself, not the bar in front of it.
-    const covering = await page.evaluate(({ x, y, width, height }) => {
-      const points: [number, number][] = [
-        [x + width / 2, y + height / 2],
-        [x + 4, y + 4],
-        [x + width - 4, y + height - 4],
-      ]
-      return points.map((point) => {
-        const node = document.elementFromPoint(point[0], point[1])
-        return node?.closest('[data-testid="youtube-stage"]') ? 'stage' : (node?.className ?? '?')
-      })
-    }, stage)
-    expect(covering).toEqual(['stage', 'stage', 'stage'])
+    expect(stage.covering).toEqual(['stage', 'stage', 'stage'])
   })
 
   test('the same expanded sheet opens for a video', async ({ page }) => {
@@ -226,12 +209,16 @@ test.describe('the bar follows the engine that is playing', () => {
     await expect(dialog.getByTestId('youtube-stage')).toBeVisible()
     await expect(bar(page).locator('iframe')).toHaveCount(0)
 
-    // It is a panel, not a modal: the page behind it is still reachable, which
-    // is what lets a visitor keep browsing while a video plays.
+    // It is a panel, not a modal — the one way the video sheet still differs
+    // from the track sheet it now matches pixel for pixel.
     await expect(dialog).not.toHaveAttribute('aria-modal', 'true')
-    // The brand link, because the header's Home button is hidden below 560px.
+
+    // The sheet belongs to playback rather than to the route, so it survives a
+    // navigation with its player intact. Reaching the header means bringing the
+    // sheet down first on a phone, where it is the whole viewport.
+    await collapseSheet(page)
     await page.getByRole('link', { name: 'Pulse home' }).click()
     await expect(page.getByRole('heading', { name: 'Trending songs' })).toBeVisible()
-    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
+    await expect(barTitle(page)).toHaveText('Sourp Sarkis')
   })
 })

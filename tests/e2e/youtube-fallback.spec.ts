@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test'
-import { recordYouTubeTraffic, stubAllProviders, stubProviders } from './fixtures'
+import {
+  clickBesideSheet,
+  collapseSheet,
+  recordYouTubeTraffic,
+  stageHitTest,
+  stubAllProviders,
+  stubProviders,
+} from './fixtures'
 
 /**
  * Phase 3 end to end: the explicit YouTube fallback
@@ -14,30 +21,6 @@ import { recordYouTubeTraffic, stubAllProviders, stubProviders } from './fixture
 const surface = '[data-testid="youtube-stage"]'
 const stage = '[data-testid="youtube-stage"]'
 const rows = '[data-testid="youtube-result"]'
-
-/**
- * Clicks a row that the video panel may be standing over.
- *
- * The panel is bottom-anchored and, on a phone, tall. A row inside the viewport
- * but underneath it is one a visitor scrolls up to before tapping — Playwright's
- * own `scrollIntoViewIfNeeded` will not, because the element is technically
- * already in view. Scrolling it to the top of the viewport is what a finger
- * does, and it is the only thing this helper adds.
- */
-async function clickClearOfPanel(locator: import('@playwright/test').Locator) {
-  await locator.evaluate((node) => {
-    // Instant, not the page's smooth default: a still-animating row is one
-    // Playwright refuses to click as "not stable".
-    node.scrollIntoView({ block: 'start', behavior: 'instant' })
-    // `start` puts the row flush against the top of the viewport, which on this
-    // layout is underneath the sticky header. Backing off by the header's own
-    // height lands it in the clear strip between header and panel.
-    const header = document.querySelector('.site-header')
-    const offset = header ? header.getBoundingClientRect().height + 8 : 0
-    window.scrollBy({ top: -offset, behavior: 'instant' })
-  })
-  await locator.click()
-}
 
 /**
  * What the fake IFrame API recorded, read from inside the page.
@@ -194,10 +177,9 @@ test.describe('the visible player', () => {
     await page.locator(rows).first().click()
 
     await expect(page.locator(surface)).toBeVisible()
-    const box = await page.locator(stage).boundingBox()
-    expect(box).not.toBeNull()
-    expect(box!.width).toBeGreaterThanOrEqual(200)
-    expect(box!.height).toBeGreaterThanOrEqual(200)
+    const rendered = await stageHitTest(page)
+    expect(rendered.width).toBeGreaterThanOrEqual(200)
+    expect(rendered.height).toBeGreaterThanOrEqual(200)
   })
 
   test('holds one real iframe, with nothing drawn over it', async ({ page }) => {
@@ -230,9 +212,7 @@ test.describe('the visible player', () => {
     expect(vars).not.toHaveProperty('modestbranding')
   })
 
-  test('keeps the close control outside the iframe, and closing stops playback', async ({
-    page,
-  }) => {
+  test('keeps the close control outside the iframe', async ({ page }) => {
     await page.locator(rows).first().click()
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
 
@@ -241,9 +221,27 @@ test.describe('the visible player', () => {
       Boolean(node.closest('[data-testid="youtube-stage"]')),
     )
     expect(insideStage).toBe(false)
+  })
 
-    await close.click()
+  /**
+   * The cross lives on the bar, and the expanded sheet is centred over the
+   * bar's control cluster — so reaching it means bringing the sheet down first,
+   * at every width. Collapsing already pauses the video; dismissing is the
+   * separate, stronger step that releases the item altogether and destroys the
+   * player rather than leaving one loaded and unseen.
+   */
+  test('closing releases the player and leaves nothing loaded', async ({ page }) => {
+    await page.locator(rows).first().click()
+    await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
+
+    await collapseSheet(page)
+    await page.getByRole('button', { name: /Close the YouTube player/ }).click()
+
     await expect(page.locator(surface)).toHaveCount(0)
+    // Nothing is left loaded behind it either: this search had no audio track
+    // underneath, so the bar goes with the item it was describing.
+    await expect(page.locator('.music-player')).toHaveCount(0)
+
     const state = await page.evaluate(readYouTubeGlobals)
     expect(state.playing).toBe(false)
     expect(state.destroyed).toBeGreaterThan(0)
@@ -262,20 +260,41 @@ test.describe('the visible player', () => {
     await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(false)
   })
 
-  test('survives navigation without unmounting', async ({ page }) => {
+  /**
+   * What survives a route change is the **loaded item**, not the iframe.
+   *
+   * The embed is mounted in the expanded sheet and nowhere else, so collapsing
+   * destroys the player by design — there is no state in which a video plays
+   * without its player on screen. What must not be lost is the store's idea of
+   * which video is loaded, so that re-expanding brings back that video rather
+   * than a transport pointing at nothing.
+   */
+  test('keeps the loaded video across a route change', async ({ page }) => {
     await page.locator(rows).first().click()
     await expect(page.locator(surface)).toBeVisible()
+    const title = await page.locator('.player-track b').innerText()
 
-    // The brand mark is the header's route back to browse — the same control
-    // navigation.spec.ts uses, and one the fixed player surface cannot cover.
+    // The sheet covers the header on a phone, so it comes down first — and that
+    // is the gesture that pauses the video.
+    await collapseSheet(page)
     await page.locator('.brand').click()
     await expect(page).toHaveURL(/\/$/)
+
+    // The bar still holds the video across the navigation, named and paused.
+    await expect(page.locator('.player-track b')).toHaveText(title)
+    await expect(page.locator(surface)).toHaveCount(0)
+
+    // Re-expanding rebuilds a player for the same video.
+    await page.getByRole('button', { name: 'Open Now Playing' }).click()
     await expect(page.locator(surface)).toBeVisible()
+    await expect
+      .poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.lastVideoId))
+      .toBe('aaaaaaaaaaa')
   })
 })
 
 test.describe('provider transitions', () => {
-  test('YouTube pauses the audio element, and audio pauses YouTube', async ({ page }) => {
+  test('YouTube pauses the audio element', async ({ page }) => {
     await stubAllProviders(page)
     await page.goto('/search?q=night')
 
@@ -283,16 +302,37 @@ test.describe('provider transitions', () => {
     await page.locator('.song-row').first().click()
     await expect.poll(() => page.evaluate(audioState).then((state) => state.paused)).toBe(false)
 
-    // Then YouTube: the audio element must stop.
+    // Then YouTube: the audio element must stop, and the video's own view opens,
+    // because that is the only place the embed is ever mounted.
     await page.getByTestId('youtube-fallback-more').click()
     await expect(page.locator(rows).first()).toBeVisible()
     await page.locator(rows).first().click()
     await expect(page.locator(surface)).toBeVisible()
     await expect.poll(() => page.evaluate(audioState).then((state) => state.paused)).toBe(true)
     await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(true)
+  })
 
-    // Back to audio: the embedded player must stop.
-    await clickClearOfPanel(page.locator('.song-row').first())
+  test('starting audio stops the video', async ({ page }, testInfo) => {
+    // Starting a track *while the video is still running* is what proves the
+    // handover. On a phone the sheet is the whole viewport, so the only route to
+    // the list is to collapse it — which pauses the video first and would leave
+    // the assertion proving nothing.
+    test.skip(
+      testInfo.project.name === 'chromium-mobile',
+      'the expanded sheet covers the list at this width',
+    )
+
+    await stubAllProviders(page)
+    await page.goto('/search?q=night')
+    await page.getByTestId('youtube-fallback-more').click()
+    await expect(page.locator(rows).first()).toBeVisible()
+    await page.locator(rows).first().click()
+    await expect(page.locator(surface)).toBeVisible()
+    await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(true)
+
+    // The sheet is centred and 520px wide, so a row's leading edge stays clear
+    // of it: a real click on the row, with the video still playing.
+    await clickBesideSheet(page.locator('.song-row').first())
     await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(false)
     await expect.poll(() => page.evaluate(audioState).then((state) => state.paused)).toBe(false)
   })
@@ -308,18 +348,29 @@ test.describe('provider transitions', () => {
     expect(state.src).not.toMatch(/youtube|ytimg|googlevideo/)
   })
 
-  test('YouTube to YouTube reuses the single player', async ({ page }) => {
+  test('YouTube to YouTube reuses the single player', async ({ page }, testInfo) => {
+    // The claim is that the *same* player takes the second video, which needs
+    // the first still mounted when the second is picked. On a phone the sheet
+    // covers the list, so the only route to row two is to collapse — which
+    // destroys the player and makes the count meaningless.
+    test.skip(
+      testInfo.project.name === 'chromium-mobile',
+      'the expanded sheet covers the list at this width',
+    )
+
     await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
     await page.goto('/search?q=nothing here')
     await page.getByTestId('youtube-fallback').click()
 
     await page.locator(rows).nth(0).click()
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
-    await clickClearOfPanel(page.locator(rows).nth(1))
+    await clickBesideSheet(page.locator(rows).nth(1))
 
     await expect
       .poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.lastVideoId))
       .toBe('bbbbbbbbbbb')
+    // One player object built, one iframe in the document: the second video was
+    // loaded into the first player rather than handed a new one.
     expect(await page.evaluate(readYouTubeGlobals).then((g) => g.created)).toBe(1)
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
   })

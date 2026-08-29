@@ -1,4 +1,4 @@
-import type { Page, Route } from '@playwright/test'
+import type { Locator, Page, Route } from '@playwright/test'
 
 /**
  * Deterministic Audius doubles for E2E.
@@ -858,4 +858,126 @@ export function unheartFor(page: Page, title: string) {
 
 export function menuFor(page: Page, title: string) {
   return page.getByRole('button', { name: `More actions for ${title}` })
+}
+
+/* ==========================================================================
+   Reaching past the expanded sheet
+
+   There is one expanded Now Playing view now and one layout for it: centred,
+   520px wide and flush to the bottom edge on a desktop; the whole viewport on a
+   phone. A video opens it automatically, because the embed is mounted there and
+   nowhere else, so for YouTube the sheet is on screen for as long as playback
+   lasts.
+
+   That makes "reach the thing behind the sheet" a real question rather than an
+   incidental one, and it has two honest answers. These helpers are those two
+   answers, so no spec has to reinvent them.
+   ========================================================================== */
+
+/** The expanded view — the same dialog for every provider. */
+export const nowPlayingSheet = (page: Page) => page.getByRole('dialog', { name: 'Now playing' })
+
+/**
+ * Brings the sheet down, the way a visitor returns to browsing.
+ *
+ * This is the only route to the page underneath on a phone, where the sheet is
+ * the entire viewport. It is also the only route to the bar's own controls at
+ * any width: the sheet is centred over the bar's control cluster, so Next,
+ * Previous and the dismiss cross sit behind it while it is open.
+ *
+ * Collapsing **pauses a playing video** — that is `unifiedExpand`, and it is
+ * deliberate: the player is unmounted on the way down, and there is no state in
+ * which a video plays without it on screen. A test that needs the video still
+ * running therefore cannot use this; it uses `clickBesideSheet` instead.
+ */
+export async function collapseSheet(page: Page): Promise<void> {
+  const sheet = nowPlayingSheet(page)
+  if (!(await sheet.isVisible())) return
+  await sheet.getByRole('button', { name: 'Collapse Now Playing' }).click()
+  await sheet.waitFor({ state: 'hidden' })
+}
+
+/**
+ * The transport a visitor can actually reach right now.
+ *
+ * The bar and the sheet carry the same controls, wired to the same unified
+ * actions over the same store, so which one drives a test is only a question of
+ * what is in front. Two things decide that, and neither is the provider:
+ *
+ * · **Is the sheet open?** It is centred over the bar's control cluster, so
+ *   while it is open the bar's copy is behind it. For a video that is the whole
+ *   time it plays, because the embed is mounted in the sheet and nowhere else.
+ * · **Is the bar showing more than Play?** The reference collapses it to the
+ *   round play button below 560px, so a phone reaches Next and Previous by
+ *   expanding.
+ */
+export async function transport(page: Page): Promise<Locator> {
+  const sheet = nowPlayingSheet(page)
+  if (await sheet.isVisible()) return sheet
+
+  const bar = page.locator('.music-player')
+  if (await bar.getByRole('button', { name: 'Next track' }).isVisible()) return bar
+
+  await page.getByRole('button', { name: 'Open Now Playing' }).click()
+  await sheet.waitFor({ state: 'visible' })
+  return sheet
+}
+
+/**
+ * The stage's rendered size, and what the compositor actually puts at its
+ * centre and its corners — both measured in one pass, inside the page.
+ *
+ * Measuring from Node and then hit-testing in a second round trip is a race.
+ * The sheet rises over 260ms, so a box captured while that animation is still
+ * running describes a position the stage has already left by the time the
+ * probes run, and the lower corner lands just below it on the sheet's own
+ * padding. Letting the animations settle and then doing both in the same
+ * evaluate closes the gap, rather than papering over it with a sleep.
+ */
+export async function stageHitTest(
+  page: Page,
+): Promise<{ width: number; height: number; covering: string[] }> {
+  await page
+    .locator('.now-playing')
+    .evaluate((node) =>
+      Promise.all(node.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => {}))),
+    )
+
+  return page.evaluate(() => {
+    const selector = '[data-testid="youtube-stage"]'
+    const stage = document.querySelector(selector)
+    if (!stage) throw new Error('no stage on the page')
+
+    const { x, y, width, height } = stage.getBoundingClientRect()
+    const points: [number, number][] = [
+      [x + width / 2, y + height / 2],
+      [x + 4, y + 4],
+      [x + width - 4, y + height - 4],
+    ]
+
+    return {
+      width,
+      height,
+      covering: points.map(([px, py]) => {
+        const node = document.elementFromPoint(px, py)
+        if (node?.closest(selector)) return 'stage'
+        return node ? (node.getAttribute('class') ?? node.tagName.toLowerCase()) : 'nothing'
+      }),
+    }
+  })
+}
+
+/**
+ * Clicks a row in the list behind the sheet, without collapsing it.
+ *
+ * The sheet is 520px and centred, so on a desktop the results column runs wider
+ * than it does and every row keeps a leading edge in the clear. Clicking that
+ * edge is an ordinary click on the row — a real hit test, not a dispatched
+ * event — with the video still playing behind it.
+ *
+ * A phone has no clear edge, so the callers that need this skip that project.
+ */
+export async function clickBesideSheet(locator: Locator): Promise<void> {
+  await locator.scrollIntoViewIfNeeded()
+  await locator.click({ position: { x: 12, y: 12 } })
 }

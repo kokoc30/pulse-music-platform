@@ -102,22 +102,6 @@ export function YouTubeStageHost({ item }: { item: YouTubeVideoItem }) {
     }
   }, [])
 
-  /**
-   * Tells the page that a panel is standing over its lower edge.
-   *
-   * The video panel is bottom-anchored and tall, so without extra room the last
-   * screenful of a results list is not merely hidden but unreachable — the panel
-   * takes the pointer. The marker lives on the body because the panel is a
-   * sibling of the page, and it is present exactly while a player is mounted.
-   */
-  useEffect(() => {
-    if (typeof document === 'undefined') return
-    document.body.dataset.ytPanel = 'open'
-    return () => {
-      delete document.body.dataset.ytPanel
-    }
-  }, [])
-
   // Hand the engine a plain node inside the React-owned host.
   useEffect(() => {
     const host = hostRef.current

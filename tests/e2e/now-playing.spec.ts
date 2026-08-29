@@ -1,6 +1,13 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { heartFor, likedKeys, stubAllProviders, stubProviders, unheartFor } from './fixtures'
+import {
+  heartFor,
+  likedKeys,
+  stageHitTest,
+  stubAllProviders,
+  stubProviders,
+  unheartFor,
+} from './fixtures'
 
 /**
  * Expanded Now Playing, in a real browser.
@@ -269,26 +276,20 @@ test.describe('it is the video player’s own view', () => {
 
     // Above the documented minimum, in the rendered layout rather than in a
     // stylesheet, and with nothing of ours painted in front of it.
-    const box = (await stage.boundingBox())!
-    expect(box.width).toBeGreaterThanOrEqual(200)
-    expect(box.height).toBeGreaterThanOrEqual(200)
-
-    const covering = await page.evaluate(({ x, y, width, height }) => {
-      const points: [number, number][] = [
-        [x + width / 2, y + height / 2],
-        [x + 4, y + 4],
-        [x + width - 4, y + height - 4],
-      ]
-      return points.map((point) =>
-        document.elementFromPoint(point[0], point[1])?.closest('[data-testid="youtube-stage"]')
-          ? 'stage'
-          : 'covered',
-      )
-    }, box)
-    expect(covering).toEqual(['stage', 'stage', 'stage'])
+    const rendered = await stageHitTest(page)
+    expect(rendered.width).toBeGreaterThanOrEqual(200)
+    expect(rendered.height).toBeGreaterThanOrEqual(200)
+    expect(rendered.covering).toEqual(['stage', 'stage', 'stage'])
   })
 
-  test('is a panel, not a modal — the page behind stays usable', async ({ page }) => {
+  /**
+   * The video sheet is the same sheet in the same place — the layout is shared
+   * down to the pixel. What still differs is that it does not *block*: no
+   * scrim, no swallowed clicks, and no scroll lock on the page behind it. That
+   * is the one intentional difference, and it is asserted here rather than
+   * assumed, at both widths.
+   */
+  test('is a panel, not a modal — nothing behind it is blocked', async ({ page }) => {
     await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
     await page.goto('/search?q=night')
     await page.getByTestId('youtube-fallback').click()
@@ -298,10 +299,46 @@ test.describe('it is the video player’s own view', () => {
       .click()
     await expect(sheet(page)).toBeVisible()
 
-    // Not announced as modal, and not blocking: a visitor can keep browsing
-    // while a video plays, which is the whole reason this is a panel.
+    // Not announced as modal…
     await expect(sheet(page)).not.toHaveAttribute('aria-modal', 'true')
-    // The brand link, because the header's Home button is hidden below 560px.
+    // …the scrim paints nothing and takes no pointer events…
+    const scrim = await page.locator('.now-playing-scrim').evaluate((node) => {
+      const style = getComputedStyle(node)
+      return { events: style.pointerEvents, background: style.backgroundColor }
+    })
+    expect(scrim.events).toBe('none')
+    expect(scrim.background).toBe('rgba(0, 0, 0, 0)')
+    // …and the page behind is not scroll-locked, unlike the audio sheet, which
+    // pins the body to hold the visitor's place.
+    const body = await page.evaluate(() => {
+      const style = getComputedStyle(document.body)
+      return { position: style.position, overflow: style.overflow }
+    })
+    expect(body.position).not.toBe('fixed')
+    expect(body.overflow).not.toBe('hidden')
+  })
+
+  /**
+   * With the sheet centred and 520px wide, a desktop keeps the header, the
+   * sidebar and the outer columns in the clear — so a visitor really can go on
+   * browsing while a video plays. A phone cannot: the sheet is the whole
+   * viewport there, for a video exactly as for a track.
+   */
+  test('leaves the page navigable while a video plays', async ({ page }, testInfo) => {
+    test.skip(
+      testInfo.project.name === 'chromium-mobile',
+      'the expanded sheet is the whole viewport at this width',
+    )
+
+    await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
+    await page.goto('/search?q=night')
+    await page.getByTestId('youtube-fallback').click()
+    await page
+      .getByTestId('youtube-result')
+      .filter({ hasText: 'Night Signal (Official Video)' })
+      .click()
+    await expect(sheet(page)).toBeVisible()
+
     await page.getByRole('link', { name: 'Pulse home' }).click()
     await expect(page.getByRole('heading', { name: 'Trending songs' })).toBeVisible()
     // And navigating did not unmount the player.

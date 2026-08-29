@@ -1,6 +1,13 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { playlistOrder, recordYouTubeApiTraffic, stubAllProviders, stubProviders } from './fixtures'
+import {
+  collapseSheet,
+  playlistOrder,
+  recordYouTubeApiTraffic,
+  stubAllProviders,
+  stubProviders,
+  transport,
+} from './fixtures'
 
 /**
  * The two playback-semantics fixes, end to end in a real browser.
@@ -237,14 +244,11 @@ test.describe('YouTube continues through the results it already has', () => {
     /**
      * The unified transport carries them now, and it is the same pair of
      * controls whichever engine is live. Which *surface* they are reached from
-     * is a breakpoint detail: the reference collapses the bar to a round play
-     * button below 560px, so a phone reaches Next and Previous through the
-     * expanded view — the same store, the same actions, the same rules.
+     * is a layout detail: the expanded sheet is centred over the bar's control
+     * cluster, so while it is open — always, for a video — the sheet's copy is
+     * the one in front. Same store, same actions, same rules.
      */
-    const bar = page.getByRole('region', { name: 'Now playing' })
-    const controls = (await bar.getByRole('button', { name: 'Next track' }).isVisible())
-      ? bar
-      : page.getByRole('dialog', { name: 'Now playing' })
+    const controls = await transport(page)
 
     await controls.getByRole('button', { name: 'Next track' }).click()
     await expect.poll(() => currentVideoId(page)).toBe('bbbbbbbbbbb')
@@ -262,9 +266,13 @@ test.describe('YouTube continues through the results it already has', () => {
 
   test('closing the player ends the session', async ({ page }) => {
     await startFirstResult(page)
+    // The cross is on the bar, behind the sheet, so the sheet comes down first.
+    await collapseSheet(page)
     await page.getByRole('button', { name: /Close the YouTube player/ }).click()
 
     await expect(page.getByTestId('youtube-stage')).toHaveCount(0)
+    // And the item is released, not merely paused: nothing is left loaded.
+    await expect(page.locator('.player-track b')).toHaveCount(0)
   })
 })
 
