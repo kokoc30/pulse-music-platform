@@ -1,3 +1,4 @@
+import { isSameSongVariant } from '@/music/song-identity'
 import { artistKey } from '@/personalization/profile'
 import { scoreCandidates } from './similarity'
 import type { PlanContext, ScoredCandidate } from './types'
@@ -89,9 +90,21 @@ export function planAutoplay(context: PlanContext): ScoredCandidate[] {
    * is a compile-time property of the model rather than a filter that could be
    * forgotten — the same argument `music/types.ts` makes about the audio engine.
    */
-  const eligible = context.candidates.filter(
-    (candidate) => candidate.track.isStreamable && !excluded.has(candidate.track.id),
-  )
+  const eligible = context.candidates.filter((candidate) => {
+    if (!candidate.track.isStreamable) return false
+    if (excluded.has(candidate.track.id)) return false
+    /**
+     * Not another upload of the track that just played.
+     *
+     * Id exclusion cannot see this: *Kosandra*, *Kosandra (Official Audio)* and
+     * *Kosandra (Remastered)* are three ids and one song, and following the
+     * first with the second is the single most obvious way for autoplay to look
+     * broken. The guard is deliberately conservative — a different artist or a
+     * genuinely different take (remix, live, cover) is still fair game
+     * (src/music/song-identity.ts).
+     */
+    return !isSameSongVariant(context.seed, candidate.track)
+  })
 
   const ranked = scoreCandidates(context.seed, eligible, {
     // Undefined unless the caller had consent to read the profile.
@@ -120,6 +133,9 @@ export function planAutoplay(context: PlanContext): ScoredCandidate[] {
 
     const pick = order.find((candidate) => {
       if (taken.has(candidate.track.id)) return false
+      // Nor two cosmetic versions of one song inside the same run — the buffer
+      // holds several tracks, and "next" and "the one after" must differ too.
+      if (chosen.some((item) => isSameSongVariant(item.track, candidate.track))) return false
       return artistAllowed(chosen, artistKey(candidate.track.artistName), position)
     })
 

@@ -118,6 +118,7 @@ export function TrackRow({
             itemKey={track.id}
             toRef={() => trackRefFromTrack(track)}
             canHide={canHide}
+            queueableTrack={track}
           />
         )}
       </span>

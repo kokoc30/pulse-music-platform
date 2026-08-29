@@ -1,5 +1,5 @@
 import { Youtube } from 'lucide-react'
-import { playYouTubeVideo } from '@/player/youtube-actions'
+import { playYouTubeResult } from '@/player/youtube-actions'
 import { useYouTubeStore } from '@/player/youtube-store'
 import type { YouTubeVideoItem } from '@/music/types'
 import type { YouTubeFallbackState } from '@/features/search/useYouTubeFallback'
@@ -30,9 +30,14 @@ export function YouTubeResultsSection({ fallback }: YouTubeResultsSectionProps) 
   if (fallback.status === 'idle') return null
 
   const play = (item: YouTubeVideoItem) => {
-    // A real click: user-initiated, so playback may start once the surface is
-    // on screen. `playYouTubeVideo` opens the surface before it asks to play.
-    void playYouTubeVideo(item, { userInitiated: true })
+    /**
+     * A real click: user-initiated, so playback may start once the surface is
+     * on screen. The *already-fetched* result list goes with it as the playback
+     * session, so a natural end can continue to the next eligible result
+     * without asking YouTube for anything — no `search.list`, no `videos.list`,
+     * no related-video lookup.
+     */
+    void playYouTubeResult(fallback.videos, item, fallback.query ?? null)
   }
 
   return (

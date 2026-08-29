@@ -28,6 +28,39 @@ export interface YouTubePlaybackState {
   currentTime: number
   duration: number
   error: string | null
+
+  /**
+   * The already-fetched result list this playback came from.
+   *
+   * **Session-only, and deliberately so.** It is never written to IndexedDB or
+   * `localStorage`: it is a page of YouTube search results, and the Phase 7
+   * library rules for saved YouTube metadata are a separate, stricter thing.
+   * A reload starts with no session, which is correct — the results are gone
+   * too.
+   *
+   * Empty for a video opened from anywhere other than a result list (Recently
+   * Played, a saved library item), because those are single items with nothing
+   * to continue into.
+   */
+  sessionItems: YouTubeVideoItem[]
+  /** Index into `sessionItems` of the item currently loaded. `-1` when none. */
+  sessionIndex: number
+  /** The query the results came from, for the surface's caption. */
+  sessionQuery: string | null
+  /**
+   * Whether a *natural end* may advance to the next eligible result.
+   *
+   * Governs only that: advancing through already-fetched results while the
+   * player is on screen. It grants nothing in the background, and it never
+   * causes a network request.
+   */
+  continuousPlay: boolean
+  /**
+   * Set when the hidden-document rule paused playback, so the surface can
+   * explain why once the visitor comes back. Session-only, and cleared as soon
+   * as it has been shown or playback resumes.
+   */
+  pausedForBackgroundPolicy: boolean
 }
 
 export interface YouTubePlaybackActions {
@@ -37,6 +70,13 @@ export interface YouTubePlaybackActions {
   setProgress: (currentTime: number, duration: number) => void
   setError: (error: string | null) => void
   close: () => void
+
+  /** Adopts an already-fetched result list. Makes no request of any kind. */
+  startSession: (items: YouTubeVideoItem[], index: number, query: string | null) => void
+  setSessionIndex: (index: number) => void
+  setContinuousPlay: (enabled: boolean) => void
+  setPausedForBackgroundPolicy: (paused: boolean) => void
+  clearSession: () => void
 }
 
 export const initialYouTubeState: YouTubePlaybackState = {
@@ -47,6 +87,13 @@ export const initialYouTubeState: YouTubePlaybackState = {
   currentTime: 0,
   duration: 0,
   error: null,
+  sessionItems: [],
+  sessionIndex: -1,
+  sessionQuery: null,
+  // On by default, but only ever reached after the visitor explicitly started a
+  // YouTube result — nothing here can begin playing on its own.
+  continuousPlay: true,
+  pausedForBackgroundPolicy: false,
 }
 
 export const useYouTubeStore = create<YouTubePlaybackState & YouTubePlaybackActions>((set) => ({
@@ -68,6 +115,10 @@ export const useYouTubeStore = create<YouTubePlaybackState & YouTubePlaybackActi
       status,
       // Any real playing state clears the "press play" prompt.
       awaitingUserPlay: status === 'playing' ? false : state.awaitingUserPlay,
+      // …and answers the background-pause explanation, which is only about a
+      // playback that was interrupted.
+      pausedForBackgroundPolicy:
+        status === 'playing' ? false : state.pausedForBackgroundPolicy,
       error: status === 'error' ? state.error : null,
     })),
 
@@ -81,5 +132,25 @@ export const useYouTubeStore = create<YouTubePlaybackState & YouTubePlaybackActi
 
   setError: (error) => set({ error, status: error ? 'error' : 'idle' }),
 
-  close: () => set({ ...initialYouTubeState }),
+  /**
+   * Dismissing the surface ends everything, including the session.
+   *
+   * `continuousPlay` is the one thing carried across: it is a stated preference
+   * about how the visitor wants results to behave, not a property of the list
+   * they just closed.
+   */
+  close: () =>
+    set((state) => ({ ...initialYouTubeState, continuousPlay: state.continuousPlay })),
+
+  startSession: (sessionItems, sessionIndex, sessionQuery) =>
+    set({ sessionItems, sessionIndex, sessionQuery }),
+
+  setSessionIndex: (sessionIndex) => set({ sessionIndex }),
+
+  setContinuousPlay: (continuousPlay) => set({ continuousPlay }),
+
+  setPausedForBackgroundPolicy: (pausedForBackgroundPolicy) =>
+    set({ pausedForBackgroundPolicy }),
+
+  clearSession: () => set({ sessionItems: [], sessionIndex: -1, sessionQuery: null }),
 }))

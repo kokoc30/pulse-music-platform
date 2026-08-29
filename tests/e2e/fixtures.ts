@@ -501,6 +501,9 @@ const FAKE_IFRAME_API = `
       fire(STATE.PLAYING)
     }
     this.playVideo = function () { window.__pulseYouTube.playCalls += 1; fire(STATE.PLAYING) }
+    // Test seam: drive a natural end, which is the one state a test cannot
+    // reach by pressing anything.
+    window.__pulseYouTube.endCurrent = function () { fire(STATE.ENDED) }
     this.pauseVideo = function () { fire(STATE.PAUSED) }
     this.stopVideo = function () { fire(STATE.UNSTARTED) }
     this.getCurrentTime = function () { return 0 }

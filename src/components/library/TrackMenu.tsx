@@ -6,6 +6,7 @@ import {
   ArrowUpToLine,
   Check,
   EyeOff,
+  ListEnd,
   ListPlus,
   MoreHorizontal,
   Plus,
@@ -20,6 +21,8 @@ import {
   undoNotInterested,
 } from '@/library/library-actions'
 import { MAX_PLAYLIST_NAME_LENGTH } from '@/library/types'
+import type { Track } from '@/music/types'
+import { addToQueue } from '@/player/player-actions'
 import type { LibraryTrackRef } from '@/library/types'
 
 export interface PlaylistItemControls {
@@ -41,6 +44,15 @@ interface TrackMenuProps {
   canHide?: boolean
   /** Present only inside a playlist, where reorder and remove make sense. */
   playlistControls?: PlaylistItemControls
+  /**
+   * The playable track this row stands for, when there is one.
+   *
+   * Enables *Add to queue*, which exists because search rows became seeds: a
+   * click now plays one song rather than silently queueing the whole result
+   * list, so the visitor needs an explicit way to say "and then this one". A
+   * YouTube row passes nothing — its video cannot enter the audio queue.
+   */
+  queueableTrack?: Track
 }
 
 /**
@@ -67,6 +79,7 @@ export function TrackMenu({
   itemKey,
   canHide = false,
   playlistControls,
+  queueableTrack,
 }: TrackMenuProps) {
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -178,6 +191,25 @@ export function TrackMenu({
                 }}
               >
                 <Trash2 size={15} aria-hidden="true" /> Remove from this playlist
+              </button>
+              <hr />
+            </>
+          ) : null}
+
+          {queueableTrack && queueableTrack.isStreamable ? (
+            <>
+              <p className="track-menu-heading">Play queue</p>
+              <button
+                type="button"
+                role="menuitem"
+                aria-label={`Add ${title} to the play queue`}
+                onClick={() => {
+                  addToQueue(queueableTrack)
+                  close()
+                  showNotice(`Added ${title} to the queue`)
+                }}
+              >
+                <ListEnd size={15} aria-hidden="true" /> Add to queue
               </button>
               <hr />
             </>

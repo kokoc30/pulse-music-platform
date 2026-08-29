@@ -474,3 +474,125 @@
   padding-top: 14px;
   border-top: 1px solid var(--color-divider);
 }
+
+/* ==========================================================================
+   Result-session controls (Phase 8)
+
+   Every control here is a sibling of `.yt-surface-stage`, never an overlay on
+   it: the iframe and YouTube's own native controls stay completely unobscured,
+   which is the same rule the play/pause button above already follows
+   (docs/youtube-policy-audit.md §8).
+   ========================================================================== */
+
+.yt-surface-step {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-player);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) ease,
+    color var(--dur-fast) ease;
+}
+
+.yt-surface-step:hover:not(:disabled) {
+  background: var(--overlay-row-hover);
+  color: var(--color-text-strong);
+}
+
+.yt-surface-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* In the footer row, not on a row of its own — see YouTubePlayerSurface. */
+.yt-surface-continuous {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--color-text-player);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.yt-surface-continuous input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+
+/* The background-pause explanation. Stated once, dismissible, and never over
+   the player. */
+.yt-surface-policy {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-bar);
+  background: var(--color-control);
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.yt-surface-policy button {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-dim);
+  cursor: pointer;
+}
+
+.yt-surface-policy button:hover {
+  color: var(--color-text-strong);
+}
+
+/* On a phone the surface is a fixed overlay and the viewport is short, so every
+   row it does not need is a row of the results list it stops covering. The
+   elapsed-time readout goes first: YouTube's own controls already show it,
+   inside the player, where the visitor is looking. */
+@media (max-width: 560px) {
+  .yt-surface-time {
+    display: none;
+  }
+
+  .yt-surface-foot {
+    gap: 8px;
+  }
+
+  /* The words go, the control stays: on a phone the checkbox is the whole
+     affordance and its accessible name carries the meaning. */
+  .yt-surface-continuous span {
+    display: none;
+  }
+}
+
+/* Room to scroll out from under the fixed player.
+
+   Below 830px the surface spans the full width and covers the bottom of the
+   page, so without this the last screenful of results is not merely hidden but
+   unclickable — the overlay takes the pointer. The extra space is only present
+   while the player is actually open. */
+@media (max-width: 830px) {
+  body[data-yt-surface='open'] .pulse-app {
+    padding-bottom: calc(var(--app-bottom-space-sm) + 340px);
+  }
+}

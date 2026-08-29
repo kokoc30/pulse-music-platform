@@ -7,7 +7,7 @@ import { TopResultCard } from '@/components/search/TopResultCard'
 import { TrackList } from '@/components/track/TrackList'
 import { YouTubeFallbackAction } from '@/components/youtube/YouTubeFallbackAction'
 import { YouTubeResultsSection } from '@/components/youtube/YouTubeResultsSection'
-import { playFromShelf } from '@/features/discovery/playShelf'
+import { playSeedTrack } from '@/features/discovery/playShelf'
 import type { Track } from '@/music/types'
 import { useCurrentTrack, useIsLoading, useIsPlaying } from '@/player/player-selectors'
 import type { TrackSearchState } from './useTrackSearch'
@@ -78,7 +78,24 @@ export function SearchResults({ query, search }: SearchResultsProps) {
   const foundOnYouTube = fallback.videos.length > 0
 
   const context = { id: `search:${query}`, label: `“${query}”` }
-  const play = (index: number) => void playFromShelf(tracks, index, context)
+
+  /**
+   * A search row is a *seed*, not a collection.
+   *
+   * Clicking one result means "play this song", so the queue becomes that one
+   * track and Phase 6 autoplay chooses what follows. Previously the whole result
+   * list became the explicit queue, which meant the next thing to play was
+   * always the next search row — often another upload of the same recording —
+   * and the similarity planner was never consulted at all
+   * (docs/SEARCH_SEED_AND_YOUTUBE_CONTINUATION_FIX.md).
+   *
+   * The other results stay on the page; they are simply not queued on the
+   * visitor's behalf.
+   */
+  const play = (index: number) => {
+    const track = tracks[index]
+    if (track) void playSeedTrack(track, context)
+  }
 
   const topResult: Track | undefined = tracks[0]
   const topState: 'idle' | 'loading' | 'playing' =

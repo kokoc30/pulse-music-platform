@@ -305,7 +305,11 @@ test.describe('C — playing a playlist', () => {
   })
 
   test('the shuffled running order is stable within the session', async ({ page }) => {
-    await page.getByRole('button', { name: 'Shuffle', exact: true }).click()
+    // Scoped to the playlist header: once playback pauses, the player bar's own
+    // round control is also named "Play", and these assertions are about the
+    // playlist's buttons rather than the transport's.
+    const hero = page.locator('.library-hero-actions')
+    await hero.getByRole('button', { name: 'Shuffle', exact: true }).click()
     await expect(page.locator('.player-track b')).not.toBeEmpty()
     const first = await page.locator('.player-track b').innerText()
 
@@ -315,9 +319,9 @@ test.describe('C — playing a playlist', () => {
 
     // Starting the same playlist again keeps the session's running order rather
     // than drawing a new one.
-    await page.getByRole('button', { name: 'Play', exact: true }).click()
+    await hero.getByRole('button', { name: 'Play', exact: true }).click()
     await expect(page.locator('.player-track b')).toHaveText('Night Signal')
-    await page.getByRole('button', { name: 'Shuffle', exact: true }).click()
+    await hero.getByRole('button', { name: 'Shuffle', exact: true }).click()
     await expect(page.locator('.player-track b')).toHaveText(first)
     await nextTrack(page)
     await expect(page.locator('.player-track b')).toHaveText(second)

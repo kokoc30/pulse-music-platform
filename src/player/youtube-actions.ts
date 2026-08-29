@@ -2,6 +2,7 @@ import { canEmbedYouTubeItem, embedBlockReason } from '@/music/youtube/normalize
 import type { YouTubeVideoItem } from '@/music/types'
 import { activateYouTube, releasePlayback } from './playback-coordinator'
 import { getYouTubeEngine } from './youtube-engine'
+import { documentHidden as isDocumentHidden, youTubeVisibleRatio } from './youtube-visibility'
 import { useYouTubeStore } from './youtube-store'
 
 /**
@@ -73,6 +74,18 @@ export async function playYouTubeVideo(
   options: StartOptions,
   store: Store = useYouTubeStore,
 ): Promise<boolean> {
+  /**
+   * A one-off play ends any result session.
+   *
+   * Recently Played and the saved library both open a single video through this
+   * function. Leaving a previous search session in place would mean a video
+   * played from the library silently continuing into results from an unrelated
+   * search — a continuation the visitor never asked for. Playback *within* a
+   * session goes through `playSessionItem`, which keeps it.
+   */
+  const { sessionItems, sessionIndex } = store.getState()
+  if (sessionItems[sessionIndex]?.id !== item.id) store.getState().clearSession()
+
   if (!canEmbedYouTubeItem(item)) {
     store.getState().setError(embedBlockReason(item) ?? 'This video cannot be played here.')
     return false
@@ -160,6 +173,12 @@ export function closeYouTubeSurface(store: Store = useYouTubeStore): void {
 /**
  * `document.visibilitychange` handler. A hidden document pauses YouTube — this
  * is the background-playback rule, and it is not optional.
+ *
+ * The developer policies prohibit an API client from allowing the player to
+ * continue when the client's window is closed or minimised, so this is the
+ * behaviour rather than a limitation to be worked around. What Phase 8 adds is
+ * only an *explanation*: a flag the surface can read to tell the visitor why the
+ * video stopped, and that Audius and Jamendo do not have this restriction.
  */
 export function handleDocumentVisibility(
   hidden: boolean,
@@ -170,6 +189,178 @@ export function handleDocumentVisibility(
   if (state.status !== 'playing') return
   getYouTubeEngine().pause()
   state.setStatus('paused')
+  state.setPausedForBackgroundPolicy(true)
+}
+
+/* --------------------------------------------------------------------------
+   Result sessions
+
+   Continuing through the results the visitor already has. Every function below
+   reads `sessionItems` and nothing else: there is no code path here that can
+   reach `/api/youtube`, spend `search.list` or `videos.list` quota, or ask for
+   "related" videos — `relatedToVideoId` has been unsupported since August 2023
+   and is not used anywhere in this application.
+   -------------------------------------------------------------------------- */
+
+/**
+ * The next index in the session that Pulse is actually allowed to embed.
+ *
+ * Reuses `canEmbedYouTubeItem`, the same predicate the rows and the player use,
+ * so a made-for-kids or embedding-disabled result is skipped by exactly the rule
+ * that stopped it being playable in the first place. There is no second copy of
+ * that policy check.
+ */
+export function nextEligibleIndex(
+  items: readonly YouTubeVideoItem[],
+  from: number,
+  direction: 1 | -1 = 1,
+): number {
+  for (let index = from + direction; index >= 0 && index < items.length; index += direction) {
+    const candidate = items[index]
+    if (candidate && canEmbedYouTubeItem(candidate)) return index
+  }
+  return -1
+}
+
+/**
+ * Starts playback from an already-fetched result list.
+ *
+ * The list is adopted as the session exactly as the search returned it —
+ * relevance order, untouched. Nothing is re-ranked: deriving an order from view
+ * counts, likes, duration or channel popularity would be creating a new metric
+ * from API Data, which §III.E.4.h prohibits and which this project has avoided
+ * since Phase 3.
+ */
+export async function playYouTubeResult(
+  items: readonly YouTubeVideoItem[],
+  item: YouTubeVideoItem,
+  query: string | null = null,
+  store: Store = useYouTubeStore,
+): Promise<boolean> {
+  const index = items.findIndex((candidate) => candidate.id === item.id)
+  store.getState().startSession([...items], index, query)
+  return playSessionItem(index >= 0 ? index : -1, item, { userInitiated: true }, store)
+}
+
+/** Plays one item of the current session, keeping the session intact. */
+async function playSessionItem(
+  index: number,
+  item: YouTubeVideoItem,
+  options: StartOptions,
+  store: Store,
+): Promise<boolean> {
+  if (index >= 0) store.getState().setSessionIndex(index)
+
+  if (!canEmbedYouTubeItem(item)) {
+    store.getState().setError(embedBlockReason(item) ?? 'This video cannot be played here.')
+    return false
+  }
+
+  const hidden = documentIsHidden(options.documentHidden)
+  const autoplay = mayAutoplay({ ...options, documentHidden: hidden })
+
+  store.getState().openWith(item, autoplay ? 'loading' : 'cued')
+  if (index >= 0) store.getState().setSessionIndex(index)
+  activateYouTube()
+
+  try {
+    const engine = getYouTubeEngine()
+    await engine.play(item, { userInitiated: autoplay })
+    if (!autoplay) store.getState().setAwaitingUserPlay(true)
+    else if (engine.isPlaying()) store.getState().setStatus('playing')
+    return true
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message ? error.message : 'YouTube could not play this video.'
+    store.getState().setError(message)
+    return false
+  }
+}
+
+/** Cues one session item without playing it, keeping the session intact. */
+async function cueSessionItem(
+  index: number,
+  item: YouTubeVideoItem,
+  store: Store,
+): Promise<boolean> {
+  store.getState().openWith(item, 'cued')
+  store.getState().setSessionIndex(index)
+  activateYouTube()
+  try {
+    await getYouTubeEngine().cue(item)
+    store.getState().setAwaitingUserPlay(true)
+    return true
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message ? error.message : 'YouTube could not load this video.'
+    store.getState().setError(message)
+    return false
+  }
+}
+
+/**
+ * Step through the session from a real button press.
+ *
+ * `userInitiated: true`, because it is — which is the one condition under which
+ * `mayAutoplay` does not need a visibility measurement.
+ */
+export async function playYouTubeSessionStep(
+  direction: 1 | -1,
+  store: Store = useYouTubeStore,
+): Promise<boolean> {
+  const { sessionItems, sessionIndex } = store.getState()
+  const next = nextEligibleIndex(sessionItems, sessionIndex, direction)
+  const item = sessionItems[next]
+  if (next < 0 || !item) return false
+  return playSessionItem(next, item, { userInitiated: true }, store)
+}
+
+/** True when a press of Next or Previous would go somewhere. */
+export function hasYouTubeSessionStep(
+  direction: 1 | -1,
+  store: Store = useYouTubeStore,
+): boolean {
+  const { sessionItems, sessionIndex } = store.getState()
+  return nextEligibleIndex(sessionItems, sessionIndex, direction) >= 0
+}
+
+/**
+ * A video ended naturally. Continue through the results the visitor already has.
+ *
+ * Three gates, all of which must pass, and each of which is someone else's rule
+ * rather than this function's opinion:
+ *
+ * 1. **Continuous play is on.** The visitor's own setting.
+ * 2. **There is a next eligible result.** No request is made to find one; when
+ *    the session runs out, playback simply ends and YouTube's replay screen
+ *    stands.
+ * 3. **`mayAutoplay` agrees.** The document is visible *and* more than half the
+ *    player is on screen, measured by a real `IntersectionObserver`. This is
+ *    Required Minimum Functionality, and it is checked through the same helper
+ *    every other scripted transition uses.
+ *
+ * Failing (3) is not failure: the next item is **cued** and waits for a press,
+ * which is exactly what the policy asks for when visibility is insufficient or
+ * unknown. Failing (1) or (2) leaves the ended state alone.
+ */
+export async function advanceYouTubeSession(store: Store = useYouTubeStore): Promise<boolean> {
+  const state = store.getState()
+  if (!state.continuousPlay) return false
+
+  const next = nextEligibleIndex(state.sessionItems, state.sessionIndex, 1)
+  const item = state.sessionItems[next]
+  if (next < 0 || !item) return false
+
+  const hidden = isDocumentHidden()
+  const visibleRatio = youTubeVisibleRatio()
+
+  if (!mayAutoplay({ userInitiated: false, visibleRatio, documentHidden: hidden })) {
+    // Ready and waiting, never started on its own.
+    await cueSessionItem(next, item, store)
+    return false
+  }
+
+  return playSessionItem(next, item, { userInitiated: false, visibleRatio }, store)
 }
 
 /** Engine → store bridge, wired once by the surface component. */
@@ -186,6 +377,11 @@ export function bindYouTubeEngineEvents(store: Store = useYouTubeStore): () => v
           break
         case 'ended':
           current.setStatus('ended')
+          // Previously the story stopped here, and the visitor was left looking
+          // at YouTube's replay screen. Continuation is bounded by the session
+          // the visitor already has and by the visibility rule; when either says
+          // no, the ended state above is what stands.
+          void advanceYouTubeSession(store)
           break
         case 'cued':
           current.setStatus('cued')

@@ -51,11 +51,22 @@ test.describe('critical flow: open → search → click → audio plays', () => 
   // next, the progress bar and the volume cluster are all display:none. Those
   // controls are therefore desktop-only; mobile reaches the queue through the
   // navigation drawer (see mobile.spec.ts and docs/reference-deviations.md D-12).
-  test('next and previous move through the queue built from the results', async ({ page, viewport }) => {
+  test('next and previous move through a queue the visitor built', async ({ page, viewport }) => {
     test.skip((viewport?.width ?? 0) <= 560, 'reference hides these controls on mobile')
     await page.goto('/search?q=night')
     await page.locator('.song-row').first().click()
     await expect(page.locator('.player-track b')).toHaveText('Night Signal')
+
+    /**
+     * The queue is built deliberately now.
+     *
+     * A search row is a *seed*: it plays one song rather than silently queueing
+     * every other result, so the second entry comes from the row menu. The
+     * transport controls themselves are unchanged, which is what this test is
+     * about (docs/SEARCH_SEED_AND_YOUTUBE_CONTINUATION_FIX.md).
+     */
+    await page.getByRole('button', { name: 'More actions for Night Drive' }).click()
+    await page.getByRole('menuitem', { name: 'Add Night Drive to the play queue' }).click()
 
     await page.getByRole('button', { name: 'Next track' }).click()
     await expect(page.locator('.player-track b')).toHaveText('Night Drive')
@@ -102,7 +113,7 @@ test.describe('critical flow: open → search → click → audio plays', () => 
     await expect.poll(() => page.evaluate(() => document.querySelector('audio')?.muted)).toBe(false)
   })
 
-  test('a finished track advances to the next queue entry', async ({ page }) => {
+  test('a finished track keeps playing something', async ({ page }) => {
     await page.goto('/search?q=night')
     await page.locator('.song-row').first().click()
     await expect(page.locator('.player-track b')).toHaveText('Night Signal')
@@ -116,7 +127,17 @@ test.describe('critical flow: open → search → click → audio plays', () => 
       if (audio) audio.currentTime = Math.max(audio.duration - 0.05, 0)
     })
 
-    await expect(page.locator('.player-track b')).toHaveText('Night Drive', { timeout: 15_000 })
+    /**
+     * Which track follows is now the autoplay planner's decision, not the search
+     * order's: a seed with nothing queued behind it reaches Phase 6. What this
+     * test still guarantees is that playback continues rather than stopping
+     * dead. The planner's own choices are pinned deterministically in
+     * src/player/search-seed-autoplay.test.ts.
+     */
+    await expect(page.locator('.player-track b')).not.toHaveText('Night Signal', {
+      timeout: 15_000,
+    })
+    await expect(page.locator('.player-track b')).not.toBeEmpty()
   })
 
   test('the queue panel lists the queue and can jump within it', async ({ page, viewport }) => {
@@ -125,10 +146,14 @@ test.describe('critical flow: open → search → click → audio plays', () => 
     await page.locator('.song-row').first().click()
     await expect(page.getByRole('region', { name: 'Now playing' })).toBeVisible()
 
+    // Built deliberately: a search click seeds one track, so the second entry
+    // comes from the row menu rather than from the result list.
+    await page.getByRole('button', { name: 'More actions for Night Drive' }).click()
+    await page.getByRole('menuitem', { name: 'Add Night Drive to the play queue' }).click()
+
     await page.getByRole('button', { name: 'Queue', exact: true }).click()
     const panel = page.getByRole('complementary', { name: 'Play queue', exact: true })
     await expect(panel).toBeVisible()
-    // The gated third result is excluded from the playable queue.
     await expect(panel.locator('.song-row')).toHaveCount(2)
 
     await panel.locator('.song-row').nth(1).click()

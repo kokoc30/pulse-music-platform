@@ -3,6 +3,15 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { renderApp, rowFor } from '@/test/render'
 import { usePlayerStore } from '@/player/player-store'
 
+/**
+ * Starts playback and builds a real multi-item queue.
+ *
+ * A search row is a *seed* since the search-seed fix: clicking one plays that
+ * song alone, so the queue no longer fills itself with the rest of the results.
+ * Adding a second track through the row menu is the deliberate replacement, and
+ * a panel test needs more than one row to be about anything
+ * (docs/SEARCH_SEED_AND_YOUTUBE_CONTINUATION_FIX.md).
+ */
 async function startPlaybackFromSearch() {
   const harness = renderApp({ route: '/search?q=nova sound' })
   const list = await screen.findByTestId('track-list')
@@ -10,6 +19,14 @@ async function startPlaybackFromSearch() {
     within(list).getByRole('button', { name: /^Play Midnight Signal by Nova Sound$/i }),
   )
   await screen.findByRole('region', { name: 'Now playing' })
+
+  await harness.user.click(
+    within(list).getByRole('button', { name: 'More actions for Paper Lanterns' }),
+  )
+  await harness.user.click(
+    screen.getByRole('menuitem', { name: 'Add Paper Lanterns to the play queue' }),
+  )
+  await waitFor(() => expect(usePlayerStore.getState().queue).toHaveLength(2))
   return harness
 }
 

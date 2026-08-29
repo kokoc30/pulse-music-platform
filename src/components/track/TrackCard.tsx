@@ -42,6 +42,7 @@ export function TrackCard({ track, onPlay, state = 'idle', canHide = false }: Tr
             itemKey={track.id}
             toRef={() => trackRefFromTrack(track)}
             canHide={canHide}
+            queueableTrack={track}
           />
         </span>
         <PlayAction
