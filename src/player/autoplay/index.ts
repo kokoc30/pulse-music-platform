@@ -44,7 +44,6 @@ export {
 export {
   GENRE_FALLBACK_LIMIT,
   MAX_REQUESTS_PER_REFILL,
-  MAX_REQUESTS_PER_REFILL_WITH_FALLBACK,
   MAX_SESSION_CANDIDATES,
   collectCandidates,
   collectFallbackCandidates,

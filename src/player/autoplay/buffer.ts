@@ -96,8 +96,13 @@ export async function refillBuffer(context: RefillContext): Promise<void> {
      * what the visitor reported.
      *
      * Guarded on an empty plan rather than an empty pool, because a pool full of
-     * candidates that all fail the rules is exactly as useless as no pool. One
-     * request, no retry, and only when the seed carries a genre to scope it by.
+     * candidates that all fail the rules is exactly as useless as no pool.
+     *
+     * `collectFallbackCandidates` decides whether there is anything to spend:
+     * it answers only for an **Audius** seed carrying a genre, because a Jamendo
+     * seed has already had the provider's own similarity answer and must not be
+     * given a weaker one on top. So this call costs nothing at all for Jamendo,
+     * and at most the seed's single allowance for Audius. Never retried.
      */
     if (buffer.length === 0) {
       const fallback = await collectFallbackCandidates(context.seed, sources)

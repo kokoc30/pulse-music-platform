@@ -7,27 +7,30 @@ import type { Candidate } from './types'
  * Where autoplay candidates come from, and — more importantly — where they do
  * not.
  *
- * The whole module is built around one budget. The free path costs nothing: an
- * Audius seed is answered entirely from tracks the session already loaded, because
- * Audius has no similar-tracks endpoint and fanning out searches to fake one is
- * exactly what agents/32 forbids. A Jamendo seed spends one `/tracks/similar`,
- * the provider's own opinion.
+ * The whole module is built around one budget, and it is **at most one provider
+ * request per refill, per seed** — the same ceiling this file has always had.
  *
- * Only when that free path yields **nothing playable** may a refill spend one
- * further genre-scoped request (`collectFallbackCandidates`). That is the whole
- * increase, it is bounded per refill, and it is never retried — so the worst case
- * for any one refill is two requests, reached only when the alternative was
- * silence.
+ * The two providers reach it differently, because they offer different things:
+ *
+ * · **Jamendo** has a real `/tracks/similar`, so a Jamendo seed spends that one
+ *   request and takes the provider's own opinion as the answer — including when
+ *   the answer is "nothing". It is never followed by a second request of any
+ *   kind.
+ * · **Audius** has no similar-tracks endpoint, and fanning out searches to fake
+ *   one is exactly what agents/32 forbids. So an Audius seed is answered for free
+ *   from tracks the session already loaded, and only if *that* yields nothing
+ *   playable may it spend its single request on a genre-scoped list
+ *   (`collectFallbackCandidates`).
+ *
+ * Neither path can spend two. The free Audius pass and the bounded Audius
+ * fallback are the same one-request allowance, claimed at different moments.
  *
  * YouTube appears nowhere in this file. Not as a source, not as a fallback, not
  * as an enrichment. Autoplay must never search or queue it (agents/33).
  */
 
-/** Hard ceiling on provider requests the *free* pass may make. */
+/** Hard ceiling on provider requests one refill may make, for either seed. */
 export const MAX_REQUESTS_PER_REFILL = 1
-
-/** Hard ceiling once the bounded genre fallback is counted too. */
-export const MAX_REQUESTS_PER_REFILL_WITH_FALLBACK = 2
 
 /** Session tracks considered per refill. Bounds the scoring work, not the network. */
 export const MAX_SESSION_CANDIDATES = 120
@@ -86,14 +89,28 @@ async function fetchGenreCandidates(
 /**
  * The bounded second pass, spent only when the free one yielded nothing usable.
  *
- * Exactly one request, and only when the seed carries a genre to scope it by —
- * an unscoped call would be a generic popularity list, which is not a
- * continuation of anything.
+ * **Audius seeds only, and that restriction is the point.** Audius publishes no
+ * similar-tracks endpoint, so an exhausted Audius refill has spent nothing and
+ * has nowhere else to look; one genre-scoped request is the difference between a
+ * continuation and silence. Jamendo is not in that position. It has a real
+ * `/tracks/similar`, and when the provider's own answer to "what is like this
+ * track" is empty, following it with a generic same-genre list would be
+ * substituting a weaker signal for a provider judgement that already came back —
+ * and would quietly turn Jamendo's documented one-request budget into two.
+ *
+ * So a Jamendo seed spends its one similarity request and stops cleanly. There
+ * is no second Jamendo request either; this is not a matter of which provider is
+ * asked, but of a provider that has already answered not being second-guessed.
+ *
+ * Beyond that: exactly one request, and only when the seed carries a genre to
+ * scope it by — an unscoped call would be a generic popularity list, which is
+ * not a continuation of anything.
  */
 export async function collectFallbackCandidates(
   seed: Track,
   sources: CandidateSources,
 ): Promise<CandidatePool> {
+  if (seed.provider !== 'audius') return { candidates: [], requests: 0 }
   if (!seed.genre) return { candidates: [], requests: 0 }
 
   const tracks = await fetchGenreCandidates(seed.genre, sources.signal, sources.fetchByGenre)

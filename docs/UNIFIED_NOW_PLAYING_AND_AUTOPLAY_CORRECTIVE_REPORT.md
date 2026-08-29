@@ -10,7 +10,7 @@ inventing a change.
 | --- | --- |
 | `pnpm typecheck` | PASS — 0 errors |
 | `pnpm lint` (`--max-warnings 0`) | PASS — 0 errors, 0 warnings |
-| `pnpm test:run` | PASS — 97 files, **1805** tests (was 94 / 1767) |
+| `pnpm test:run` | PASS — 98 files, **1814** tests (was 94 / 1767) |
 | `pnpm build` | PASS |
 | `pnpm verify:bundle` | PASS — 0 secret matches across 12 files in `dist/` |
 | `pnpm test:e2e` | PASS — **428** passed, 30 skipped, 0 failed (was 409 / 29) |
@@ -154,6 +154,7 @@ it is: other tracks in the same genre, not the same sound.
 
 Bounds:
 
+- **Audius seeds only.** See below.
 - Spent only when the plan from the free pass is **empty** — a pool full of
   candidates that all fail the rules is as useless as no pool.
 - Only when the seed carries a genre to scope by; an unscoped call would be a
@@ -161,16 +162,33 @@ Bounds:
 - Exactly one request, never retried, even when it too returns nothing.
 - A failure yields fewer candidates and is never surfaced as an error.
 
-Jamendo's path is unchanged: one `/tracks/similar`, the provider's own opinion.
+### Why the fallback is Audius-only
+
+Audius publishes no similar-tracks endpoint, so an exhausted Audius refill has
+spent nothing and has nowhere else to look — one genre-scoped request is the
+difference between a continuation and silence.
+
+Jamendo is not in that position. It has a real `/tracks/similar`, and when the
+provider's own answer to "what is like this track" comes back empty, that is a
+judgement, not a gap. Following it with a generic same-genre list would override
+a provider opinion that had already arrived, and would quietly turn Jamendo's
+documented one-request budget into two.
+
+So a Jamendo seed spends its one similarity request and stops cleanly — no genre
+fallback, and no second Jamendo request either. The ceiling is **one provider
+request per refill, for either seed**; the free Audius pass and the bounded
+Audius fallback are the same single allowance claimed at different moments.
 
 ## Request budget
 
 | Situation | Requests |
 | --- | --- |
 | Audius seed, session pool can answer | **0** |
-| Jamendo seed, `/tracks/similar` answers | **1** |
-| Either seed, free pass produced nothing → genre fallback | **+1**, once, no retry |
-| Worst case for one refill | **2** — reached only when the alternative was silence |
+| Audius seed, pool exhausted → one genre-scoped request | **1**, once, no retry |
+| Audius seed with no genre, pool exhausted | **0** — stops cleanly |
+| Jamendo seed, `/tracks/similar` | **1**, whatever it returns |
+| Jamendo seed, similarity empty or failed | still **1** — never a genre fallback |
+| Ceiling for any one refill | **1** |
 | Global bar rendering a YouTube item | **0** |
 | Bar's YouTube Next / Previous | **0** — reads `sessionItems` only |
 | Opening, seeking or collapsing the audio sheet | **0** |
@@ -289,7 +307,8 @@ Modified:
 - `src/player/player-selectors.ts` — `selectCanSkipNext` / `useCanSkipNext`;
   `useHasNext` deleted
 - `src/music/song-identity.ts` — `artistHintFromTitle`, `foldTitle`
-- `src/player/autoplay/candidates.ts` — `collectFallbackCandidates`
+- `src/player/autoplay/candidates.ts` — `collectFallbackCandidates`, gated to
+  Audius seeds
 - `src/player/autoplay/buffer.ts` — second pass when the plan is empty
 - `src/player/autoplay/types.ts`, `index.ts` — the `genre-fallback` source
 - `src/components/player/GlobalPlayer.tsx` — renders the active engine
@@ -307,15 +326,19 @@ Added:
 - `src/components/player/YouTubeMiniPlayer.tsx`
 - `src/player/next-semantics.test.ts`,
   `src/player/autoplay/reupload-supply.test.ts`,
+  `src/player/autoplay/request-budget.test.ts`,
   `src/components/player/UnifiedNowPlaying.test.tsx`
 - `tests/e2e/unified-now-playing.spec.ts`
 
 ## Tests
 
-**Unit and component: +38** (1767 → 1805), in three new files —
+**Unit and component: +47** (1767 → 1814), in four new files —
 `next-semantics.test.ts` (17), `reupload-supply.test.ts` (12),
-`UnifiedNowPlaying.test.tsx` (9). The re-upload tests are built from the verbatim
-live Audius rows.
+`UnifiedNowPlaying.test.tsx` (9) and `request-budget.test.ts` (9). The re-upload
+tests are built from the verbatim live Audius rows; the budget tests pin one
+request per refill for each provider, including the case that restriction exists
+to prevent — a Jamendo seed whose similarity came back empty must not fall
+through to a genre request.
 
 **E2E: +19 passing, +1 skipped** (409 → 428) — `unified-now-playing.spec.ts` (13
 across both projects, 1 skipped on mobile) and three Aram submission tests in
@@ -392,8 +415,11 @@ last three passes, and not a regression from this one.
   Experimental, Punk and Metal) the genre it scopes by may be meaningless.
 - **A seed with no genre gets no fallback**, so an untagged track in an exhausted
   session still ends in silence.
-- **Autoplay now continues where it used to stop.** That is the intent, but it
-  means a long unattended session keeps playing and spends roughly one request
-  per exhausted refill.
+- **Autoplay now continues where it used to stop**, for an Audius seed carrying a
+  genre. That is the intent, but it means a long unattended session keeps playing
+  and spends roughly one request per exhausted refill.
+- **An exhausted Jamendo seed ends in silence, by design.** Jamendo answered the
+  similarity question itself, and an empty answer is a judgement rather than a
+  gap; this pass does not second-guess it with a weaker signal.
 - **The phone bar carries play/pause only** while YouTube is active, following
   the reference's own mini-player rules.
