@@ -45,8 +45,10 @@ export {
   GENRE_FALLBACK_LIMIT,
   MAX_REQUESTS_PER_REFILL,
   MAX_SESSION_CANDIDATES,
+  RELATED_SEARCH_LIMIT,
   collectCandidates,
   collectFallbackCandidates,
+  collectRelatedCandidates,
 } from './candidates'
 export type { CandidatePool, CandidateSources } from './candidates'
 

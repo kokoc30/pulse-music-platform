@@ -1,36 +1,45 @@
 import { fetchSimilarJamendoTracks } from '@/music/jamendo'
 import { getMusicProvider } from '@/music/provider'
 import type { Track } from '@/music/types'
+import { fetchRelated, describeSeed } from '../related-fetcher'
+import type { FetchRelatedOptions, RelatedItem } from '../related-fetcher'
 import type { Candidate } from './types'
 
 /**
  * Where autoplay candidates come from, and — more importantly — where they do
  * not.
  *
- * The whole module is built around one budget, and it is **at most one provider
- * request per refill, per seed** — the same ceiling this file has always had.
+ * The module is built around one budget, and the budget answers to one rule
+ * that outranks it: **playback never stops on its own.** A queue that runs dry
+ * has to be refilled, so "spend nothing" stopped being an acceptable answer the
+ * moment silence became a bug rather than an ending.
  *
- * The two providers reach it differently, because they offer different things:
+ * Three passes, in order of what they cost and what they know:
  *
- * · **Jamendo** has a real `/tracks/similar`, so a Jamendo seed spends that one
- *   request and takes the provider's own opinion as the answer — including when
- *   the answer is "nothing". It is never followed by a second request of any
- *   kind.
- * · **Audius** has no similar-tracks endpoint, and fanning out searches to fake
- *   one is exactly what agents/32 forbids. So an Audius seed is answered for free
- *   from tracks the session already loaded, and only if *that* yields nothing
- *   playable may it spend its single request on a genre-scoped list
- *   (`collectFallbackCandidates`).
+ * 1. **Free.** A Jamendo seed spends its `/tracks/similar` call — a real
+ *    editorial judgement nothing local can match — and an Audius seed, which has
+ *    no such endpoint, is answered from tracks the session already loaded.
+ * 2. **One catalogue search**, built from the seed's own tags, genre and
+ *    language: `russian pop`, not the seed's title. Spent when pass 1 cannot
+ *    keep `MIN_QUEUE_DEPTH` playable items ahead of the listener, which is the
+ *    situation that used to end in silence. Both providers may spend it — a
+ *    targeted tag search is not the generic popularity list Jamendo was
+ *    previously, and correctly, protected from.
+ * 3. **One genre-scoped Audius request**, unchanged and still Audius-only
+ *    (`collectFallbackCandidates`).
  *
- * Neither path can spend two. The free Audius pass and the bounded Audius
- * fallback are the same one-request allowance, claimed at different moments.
+ * So a refill costs at most two requests, and only ever reaches the second when
+ * the alternative is stopping. This is a deliberate revision of the
+ * one-request ceiling agents/32 set: that ceiling was written when a dry queue
+ * was allowed to end the session, and it is what made the reported bug possible.
  *
  * YouTube appears nowhere in this file. Not as a source, not as a fallback, not
- * as an enrichment. Autoplay must never search or queue it (agents/33).
+ * as an enrichment. Audio autoplay must never search or queue it (agents/33);
+ * the video engine keeps its own continuation, in `youtube-actions.ts`.
  */
 
 /** Hard ceiling on provider requests one refill may make, for either seed. */
-export const MAX_REQUESTS_PER_REFILL = 1
+export const MAX_REQUESTS_PER_REFILL = 2
 
 /** Session tracks considered per refill. Bounds the scoring work, not the network. */
 export const MAX_SESSION_CANDIDATES = 120
@@ -46,10 +55,67 @@ export interface CandidateSources {
   fetchSimilar?: typeof fetchSimilarJamendoTracks
   /** Test seam for the genre fallback below. */
   fetchByGenre?: (genre: string, signal?: AbortSignal) => Promise<Track[]>
+  /** Test seam for the tag/language search below. */
+  fetchRelatedTracks?: typeof fetchRelated
 }
 
 /** Rows the genre fallback asks for. Enough to plan from, small enough to score. */
 export const GENRE_FALLBACK_LIMIT = 30
+
+/** Rows the tag/language search asks for. Same reasoning, same size. */
+export const RELATED_SEARCH_LIMIT = 20
+
+/**
+ * One catalogue search, described by what the seed *is* rather than what it is
+ * called.
+ *
+ * This is the pass the reported bug was missing. Everything before it can only
+ * offer what the app already happens to hold: a Jamendo similarity answer that
+ * may be empty, or the results of whatever search the listener last ran. When a
+ * listener plays one Russian pop song out of a page of Russian pop songs and
+ * that page is exhausted, there was previously nothing left to play — so the
+ * queue ended, and a repeat mode or a re-upload filled the silence.
+ *
+ * The query comes from `relatedQuery`, which builds it out of the seed's tags,
+ * genre and detected language and **never** out of its title. Searching the
+ * title returns the song that just played and its re-uploads, which is the one
+ * answer a continuation must not give.
+ *
+ * Both providers may spend this, unlike the genre fallback below. A tag search
+ * is a targeted question about the kind of music, not the generic popularity
+ * list Jamendo's own similarity judgement deserved protection from.
+ *
+ * Never throws — `fetchRelated` returns an empty array on every failure path —
+ * and never retried here: the delayed retry belongs to the caller that knows
+ * whether anything is still playing.
+ */
+export async function collectRelatedCandidates(
+  seed: Track,
+  sources: CandidateSources,
+): Promise<CandidatePool> {
+  const search = sources.fetchRelatedTracks ?? fetchRelated
+  const options: FetchRelatedOptions = {
+    limit: RELATED_SEARCH_LIMIT,
+    ...(sources.signal ? { signal: sources.signal } : {}),
+  }
+
+  const found = await search(describeSeed(seed), options)
+  const candidates: Candidate[] = []
+  for (const item of found) {
+    // A `RelatedItem` is a union, and the video half has no business here. This
+    // is the runtime half of the compile-time rule that autoplay never queues
+    // YouTube (agents/33) — the planner's own filter cannot see it, because a
+    // `Candidate` is typed as carrying a `Track`.
+    if (!isAudioTrack(item)) continue
+    if (item.id === seed.id) continue
+    candidates.push({ track: item, source: 'related-search' })
+  }
+  return { candidates, requests: 1 }
+}
+
+function isAudioTrack(item: RelatedItem): item is Track {
+  return item.mediaKind === 'audio'
+}
 
 /**
  * One genre-scoped request, for when the free path came back empty-handed.

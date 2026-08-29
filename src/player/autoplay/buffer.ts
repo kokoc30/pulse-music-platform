@@ -1,7 +1,8 @@
 import { buildProfile } from '@/personalization/profile'
 import { usePersonalizationStore } from '@/personalization/store'
 import type { Track } from '@/music/types'
-import { collectCandidates, collectFallbackCandidates } from './candidates'
+import { MIN_QUEUE_DEPTH } from '../related-fetcher'
+import { collectCandidates, collectFallbackCandidates, collectRelatedCandidates } from './candidates'
 import type { CandidateSources } from './candidates'
 import { BUFFER_TARGET, planAutoplay } from './planner'
 import { sessionTracks } from './session-pool'
@@ -68,6 +69,9 @@ export async function refillBuffer(context: RefillContext): Promise<void> {
       ...(context.signal ? { signal: context.signal } : {}),
       ...(context.sources?.fetchSimilar ? { fetchSimilar: context.sources.fetchSimilar } : {}),
       ...(context.sources?.fetchByGenre ? { fetchByGenre: context.sources.fetchByGenre } : {}),
+      ...(context.sources?.fetchRelatedTracks
+        ? { fetchRelatedTracks: context.sources.fetchRelatedTracks }
+        : {}),
     }
 
     const pool = await collectCandidates(context.seed, sources)
@@ -87,7 +91,33 @@ export async function refillBuffer(context: RefillContext): Promise<void> {
     buffer = plan(pool.candidates)
 
     /**
-     * Nothing survived the free pass — so, once, ask the provider.
+     * Not enough ahead of the listener — so ask the catalogue what this *is*.
+     *
+     * The threshold is supply, not quality: fewer than `MIN_QUEUE_DEPTH`
+     * playable items means the next few minutes are not covered, and covering
+     * them is the whole rule. Waiting for the buffer to reach zero would move
+     * the lookup into the silence after the last track instead of over the music
+     * still playing, which is exactly the gap the reports described.
+     *
+     * The query is built from the seed's tags, genre and detected language, so a
+     * Cyrillic-titled pop track asks for `russian pop` and gets Russian pop back.
+     * Both providers may spend it, and it is spent at most once per refill.
+     */
+    // Everything gathered so far, so a later pass adds to the pool rather than
+    // replacing it: a candidate the free pass found must not be lost because a
+    // paid one was also spent.
+    const collected: Candidate[] = [...pool.candidates]
+
+    if (buffer.length < MIN_QUEUE_DEPTH) {
+      const related = await collectRelatedCandidates(context.seed, sources)
+      if (related.candidates.length) {
+        collected.push(...related.candidates)
+        buffer = plan(collected)
+      }
+    }
+
+    /**
+     * Nothing survived either pass — so, once, ask for the genre.
      *
      * This is the *Kosandra* case made concrete. A search for one song returns a
      * page that is thirteen re-uploads of that song and nothing else; the
@@ -107,7 +137,8 @@ export async function refillBuffer(context: RefillContext): Promise<void> {
     if (buffer.length === 0) {
       const fallback = await collectFallbackCandidates(context.seed, sources)
       if (fallback.candidates.length) {
-        buffer = plan([...pool.candidates, ...fallback.candidates])
+        collected.push(...fallback.candidates)
+        buffer = plan(collected)
       }
     }
   })().finally(() => {

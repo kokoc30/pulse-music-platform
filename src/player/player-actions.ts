@@ -5,11 +5,17 @@ import { reportStreamFailure, resolveStreamSource } from '@/music/stream-source'
 import { MusicError, assertAudioTrack } from '@/music/types'
 import type { Track } from '@/music/types'
 import { getAudioEngine } from './audio-engine'
-import { clearAutoplayBuffer, refillBuffer, takeFromBuffer } from './autoplay'
+import { bufferedCandidates, clearAutoplayBuffer, refillBuffer, takeFromBuffer } from './autoplay'
 import { activateAudio } from './playback-coordinator'
 import { usePlayerStore } from './player-store'
 import type { PlayerState, QueueContext } from './player-store'
 import { nextQueueIndex, previousQueueIndex } from './queue-order'
+import {
+  MIN_QUEUE_DEPTH,
+  NO_MORE_TRACKS_MESSAGE,
+  RELATED_RETRY_DELAY_MS,
+  notePlayed,
+} from './related-fetcher'
 
 /**
  * Restarting instead of stepping back is the convention when the listener is
@@ -113,6 +119,10 @@ export async function playTrack(
   state.setDuration(track.durationSeconds)
   state.setError(null)
 
+  // Remembered at selection rather than at first sound, so a track that fails to
+  // stream is still never offered again as "related" a minute later.
+  notePlayed(track.id)
+
   if (!track.isStreamable) {
     state.setStatus('error')
     state.setError("This track isn't available to stream.")
@@ -145,6 +155,12 @@ export async function playTrack(
     await audio.play()
     if (store.getState().loadToken !== token) return
     store.getState().setStatus('playing')
+    // Real sound is the only thing that proves the provider is reachable, so it
+    // is the only thing that clears the streak `handleMediaError` counts.
+    consecutiveFailures = 0
+    // Deliberately not awaited: the music is already playing, and topping the
+    // supply up must never be something the listener can hear.
+    void ensureAutoplayDepth(store)
   } catch (error) {
     if (store.getState().loadToken !== token) return
     if (isBenignPlayRejection(error)) {
@@ -154,6 +170,34 @@ export async function playTrack(
     store.getState().setStatus('error')
     store.getState().setError(safeErrorText(error))
   }
+}
+
+/**
+ * Keeps three playable items standing ahead of the listener.
+ *
+ * Called when a track *starts*, which is the whole point of it: the lookup then
+ * runs over the three minutes of music already playing, and the track that ends
+ * finds its successor already chosen. The previous arrangement only ever asked
+ * at the moment of silence, so every continuation cost a visible gap and a
+ * failed lookup cost the session.
+ *
+ * Depth counts both halves of what could play next — what the listener explicitly
+ * queued, and what autoplay has already planned — because either can answer.
+ * Nothing here plays anything, and nothing here is awaited by playback.
+ */
+export async function ensureAutoplayDepth(store: Store = usePlayerStore): Promise<void> {
+  const state = store.getState()
+  const seed = state.currentTrack
+  if (!seed || !state.autoplaySimilar) return
+
+  const queuedAhead = Math.max(0, state.queue.length - 1 - state.currentIndex)
+  if (queuedAhead + bufferedCandidates().length >= MIN_QUEUE_DEPTH) return
+
+  await refillBuffer({
+    seed,
+    queuedIds: state.queue.map((track) => track.id),
+    recentIds: recentlyPlayedIds(),
+  })
 }
 
 export async function togglePlay(store: Store = usePlayerStore): Promise<void> {
@@ -275,7 +319,26 @@ export async function playNext(
   }
 
   // 4. Generated similar audio, when the visitor left autoplay on.
-  if (state.autoplaySimilar && state.currentTrack && (await playAutoplayNext(store))) return
+  if (state.autoplaySimilar && state.currentTrack) {
+    if (await playAutoplayNext(store)) return
+    /**
+     * One delayed retry, and only for a track that ran out on its own.
+     *
+     * The case it exists for is a network that dropped during the last minute of
+     * a track: the lookup that should have refilled the buffer failed, and two
+     * seconds later the connection is usually back. A press of Next is not given
+     * this — someone waiting on a button does not want a two-second pause, and
+     * they can press it again.
+     *
+     * Exactly one retry. Beyond that the answer is a message, never a loop.
+     */
+    if (reason === 'ended') {
+      await delay(RELATED_RETRY_DELAY_MS)
+      // The listener may have started something else during the wait.
+      if (store.getState().currentTrack?.id !== state.currentTrack.id) return
+      if (await playAutoplayNext(store)) return
+    }
+  }
 
   // 5. Stop cleanly instead of looping.
   engine().pause()
@@ -283,15 +346,21 @@ export async function playNext(
   store.getState().setStatus('paused')
 
   /**
-   * Say so, but only to someone who asked.
+   * Say so — however the silence arrived.
    *
-   * A press of Next that produces silence needs an explanation. A track ending
-   * quietly at the end of a session does not, and a toast on every natural end
-   * would be noise the visitor never asked for.
+   * This used to speak only to someone who had pressed Next, on the reasoning
+   * that a session ending quietly needs no explanation. It does now: with
+   * autoplay refilling the queue from the catalogue, a track ending in silence
+   * means every source was asked and none of them answered. That is an
+   * exceptional state and the bar should say so, because the alternative the
+   * reports describe — the same song starting again — is not available.
    */
-  if (reason === 'user') {
-    useUiStore.getState().showNotice('No similar track available right now.')
-  }
+  useUiStore.getState().showNotice(NO_MORE_TRACKS_MESSAGE)
+}
+
+/** Isolated so tests can drive it with fake timers. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /**
@@ -475,14 +544,69 @@ export function toggleMute(store: Store = usePlayerStore): void {
   engine().setVolume(muted ? 0 : store.getState().volume)
 }
 
-/** Called by the engine's `ended` event. */
-export async function handleTrackEnded(store: Store = usePlayerStore): Promise<void> {
-  await playNext(store)
+/**
+ * Called by the engine's `ended` event.
+ *
+ * Guarded against a second advance while one is running, and that guard is not
+ * theoretical: `ended` and `error` both fire for a stream whose signed URL
+ * expired mid-play, a paused-then-resumed element can emit `ended` twice, and
+ * an advance now takes long enough to search the catalogue that two of them
+ * would overlap. Two advances would skip a track and could start two loads
+ * against one audio element.
+ *
+ * The concurrent call is dropped rather than queued: the advance already
+ * running is answering the same question, and its answer is the right one.
+ */
+let advancing: Promise<void> | null = null
+
+export async function handleTrackEnded(
+  store: Store = usePlayerStore,
+  options: { skipRepeatOne?: boolean } = {},
+): Promise<void> {
+  if (advancing) return advancing
+  advancing = playNext(store, { reason: 'ended', ...options }).finally(() => {
+    advancing = null
+  })
+  return advancing
+}
+
+/** True while a natural-end advance is in flight. Tests and diagnostics. */
+export function isAdvancing(): boolean {
+  return advancing !== null
+}
+
+/** Test seam. */
+export function resetAdvanceGuard(): void {
+  advancing = null
+}
+
+/**
+ * Consecutive tracks that may fail before the session is allowed to stop.
+ *
+ * A dead track must not end the music, but a catalogue having a bad afternoon
+ * must not be walked end to end either. Three failures in a row is the signal
+ * that the problem is the connection rather than the track.
+ */
+export const MAX_CONSECUTIVE_FAILURES = 3
+let consecutiveFailures = 0
+
+/** Test seam, and what a deliberate play resets. */
+export function resetFailureStreak(): void {
+  consecutiveFailures = 0
 }
 
 /**
  * Called by the engine's `error` event. Never leaves the UI stuck loading, and
  * gives an unreachable Audius content node exactly one second chance.
+ *
+ * **A track that has run out of chances is treated as one that ended.** An
+ * expired signed URL, a withdrawn track and a dead content node all produce this
+ * event, and in every one of those cases the listener's music stopping is the
+ * wrong answer — the next track is. The error is still shown, because something
+ * did go wrong; what changed is that it is no longer the end of the session.
+ *
+ * Bounded by `MAX_CONSECUTIVE_FAILURES`, so a provider outage stops cleanly
+ * instead of walking the buffer at speed.
  */
 export function handleMediaError(message: string, store: Store = usePlayerStore): void {
   const state = store.getState()
@@ -501,6 +625,13 @@ export function handleMediaError(message: string, store: Store = usePlayerStore)
 
   state.setStatus('error')
   state.setError(message)
+
+  consecutiveFailures += 1
+  if (consecutiveFailures > MAX_CONSECUTIVE_FAILURES) return
+
+  // `skipRepeatOne`, because repeat one would answer a broken track by loading
+  // the same broken track — the loop this whole change exists to prevent.
+  void handleTrackEnded(store, { skipRepeatOne: true })
 }
 
 export function addToQueue(track: Track, store: Store = usePlayerStore): void {

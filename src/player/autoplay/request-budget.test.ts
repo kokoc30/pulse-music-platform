@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Track } from '@/music/types'
 import { resetPersonalizationForTests } from '@/personalization'
+import { clearPlayedSession } from '../related-fetcher'
 import { bufferedCandidates, clearAutoplayBuffer, refillBuffer, takeFromBuffer } from './buffer'
 import { MAX_REQUESTS_PER_REFILL } from './candidates'
 import { clearSessionPool, rememberTracks } from './session-pool'
@@ -8,19 +9,24 @@ import { clearSessionPool, rememberTracks } from './session-pool'
 /**
  * What one refill is allowed to cost.
  *
- * The ceiling is **one provider request per refill, per seed**, and the two
- * providers reach it by different routes because they offer different things:
+ * The ceiling is **two provider requests per refill, per seed**, and it was one
+ * until the "playback never stops" rule arrived. That rule changed what the
+ * budget is protecting: a refill that spends nothing and returns nothing used to
+ * be a clean ending, and is now the reported bug. So a second request exists,
+ * and it is spent only when the alternative is silence.
  *
- * · Jamendo has a real `/tracks/similar`, so it spends its one request there and
- *   takes the answer — including an empty one.
- * · Audius has no such endpoint, so it is answered for free from the session
- *   pool, and only an exhausted pool may spend the one request on a genre-scoped
- *   list.
+ * The three passes, and who may use each:
  *
- * The case this file exists to prevent is the tempting one: letting a Jamendo
- * seed whose similarity came back empty fall through to the Audius-style genre
- * list. That would substitute a weaker signal for a provider judgement that had
- * already arrived, and would quietly make a Jamendo refill cost two.
+ * · **Free.** Jamendo has a real `/tracks/similar`, so it spends that; Audius,
+ *   which has no such endpoint, is answered from the session pool.
+ * · **One tag/language search** — `russian pop`, built from the seed's own
+ *   metadata. Either provider may spend it, and only when what is already in
+ *   hand cannot keep `MIN_QUEUE_DEPTH` items ahead of the listener.
+ * · **One genre-scoped list**, still **Audius only**. The case this file has
+ *   always existed to prevent is unchanged: a Jamendo seed whose similarity came
+ *   back empty must not fall through to a generic popularity list, because that
+ *   substitutes a weaker signal for a provider judgement that already arrived.
+ *   A targeted tag search is not that; a trending-by-genre list is.
  */
 
 /**
@@ -77,118 +83,228 @@ function jamendoTrack(overrides: Partial<Track> = {}): Track {
   }
 }
 
+/** A tag/language search that finds nothing, so a test can reach past it. */
+function noRelated() {
+  return vi.fn(() => Promise.resolve([]))
+}
+
 beforeEach(() => {
   counter = 0
   resetPersonalizationForTests()
   clearSessionPool()
   clearAutoplayBuffer()
+  clearPlayedSession()
 })
 
 describe('the ceiling', () => {
-  it('is one provider request per refill', () => {
-    expect(MAX_REQUESTS_PER_REFILL).toBe(1)
+  it('is two provider requests per refill', () => {
+    expect(MAX_REQUESTS_PER_REFILL).toBe(2)
   })
 })
 
 describe('an Audius seed', () => {
-  it('spends nothing while the session pool can answer', async () => {
+  it('spends nothing at all while the session pool can keep three ahead', async () => {
     const fetchByGenre = vi.fn(() => Promise.resolve([audiusTrack()]))
+    const fetchRelatedTracks = noRelated()
     const seed = audiusTrack()
-    rememberTracks([seed, audiusTrack()])
+    rememberTracks([seed, audiusTrack(), audiusTrack(), audiusTrack(), audiusTrack()])
 
-    await refillBuffer({ seed, queuedIds: [seed.id], recentIds: [], sources: { fetchByGenre } })
+    await refillBuffer({
+      seed,
+      queuedIds: [seed.id],
+      recentIds: [],
+      sources: { fetchByGenre, fetchRelatedTracks },
+    })
 
+    expect(fetchRelatedTracks).not.toHaveBeenCalled()
     expect(fetchByGenre).not.toHaveBeenCalled()
     expect(takeFromBuffer()).not.toBeNull()
   })
 
-  it('spends exactly one genre request when the pool is exhausted', async () => {
+  /**
+   * The pass that did not exist, and whose absence was the reported bug.
+   *
+   * One track in memory is not a continuation — it is one more track and then
+   * silence. The threshold is `MIN_QUEUE_DEPTH`, not zero, precisely so the
+   * search happens over music that is still playing.
+   */
+  it('spends one tag search when the pool cannot keep three ahead', async () => {
+    const found = audiusTrack({ id: 'audius:related', providerId: 'related' })
+    const fetchRelatedTracks = vi.fn(() => Promise.resolve([found]))
+    const fetchByGenre = vi.fn(() => Promise.resolve([audiusTrack()]))
+    const seed = audiusTrack()
+    rememberTracks([seed])
+
+    await refillBuffer({
+      seed,
+      queuedIds: [seed.id],
+      recentIds: [],
+      sources: { fetchByGenre, fetchRelatedTracks },
+    })
+
+    expect(fetchRelatedTracks).toHaveBeenCalledTimes(1)
+    // The buffer is answerable now, so the weaker signal is never reached.
+    expect(fetchByGenre).not.toHaveBeenCalled()
+    expect(takeFromBuffer()?.id).toBe('audius:related')
+  })
+
+  it('describes the seed by its tags and language, never by its title', async () => {
+    const fetchRelatedTracks = noRelated()
+    const seed = audiusTrack({ title: 'Косандра', genre: 'Pop', tags: ['pop', 'vocal'] })
+    rememberTracks([seed])
+
+    await refillBuffer({
+      seed,
+      queuedIds: [seed.id],
+      recentIds: [],
+      sources: { fetchRelatedTracks },
+    })
+
+    const [described] = fetchRelatedTracks.mock.calls[0] as unknown as [
+      { title: string; language?: string; tags?: string[] },
+    ]
+    expect(described.language).toBe('ru')
+    expect(described.tags).toEqual(['pop', 'vocal'])
+  })
+
+  it('spends exactly one genre request when the tag search came back empty too', async () => {
     const replacement = audiusTrack({ id: 'audius:fresh', providerId: 'fresh' })
     const fetchByGenre = vi.fn(() => Promise.resolve([replacement]))
+    const fetchRelatedTracks = noRelated()
     const seed = audiusTrack()
     // Only the seed itself is in memory, so the planner has nothing to offer.
     rememberTracks([seed])
 
-    await refillBuffer({ seed, queuedIds: [seed.id], recentIds: [], sources: { fetchByGenre } })
+    await refillBuffer({
+      seed,
+      queuedIds: [seed.id],
+      recentIds: [],
+      sources: { fetchByGenre, fetchRelatedTracks },
+    })
 
+    expect(fetchRelatedTracks).toHaveBeenCalledTimes(1)
     expect(fetchByGenre).toHaveBeenCalledTimes(1)
     expect(fetchByGenre).toHaveBeenCalledWith('Hip-Hop/Rap', undefined)
     expect(takeFromBuffer()?.id).toBe('audius:fresh')
   })
 
-  it('spends nothing when it carries no genre to scope the request by', async () => {
+  it('spends no genre request when it carries no genre to scope one by', async () => {
     const fetchByGenre = vi.fn(() => Promise.resolve([audiusTrack()]))
+    const fetchRelatedTracks = noRelated()
     const seed = audiusTrack({ genre: undefined })
     rememberTracks([seed])
 
-    await refillBuffer({ seed, queuedIds: [seed.id], recentIds: [], sources: { fetchByGenre } })
+    await refillBuffer({
+      seed,
+      queuedIds: [seed.id],
+      recentIds: [],
+      sources: { fetchByGenre, fetchRelatedTracks },
+    })
 
     expect(fetchByGenre).not.toHaveBeenCalled()
     expect(takeFromBuffer()).toBeNull()
   })
 
-  it('stops cleanly rather than retrying when the one request answers nothing', async () => {
+  it('stops cleanly rather than retrying when both requests answer nothing', async () => {
     const fetchByGenre = vi.fn((): Promise<Track[]> => Promise.resolve([]))
+    const fetchRelatedTracks = noRelated()
     const seed = audiusTrack()
     rememberTracks([seed])
 
-    await refillBuffer({ seed, queuedIds: [seed.id], recentIds: [], sources: { fetchByGenre } })
+    await refillBuffer({
+      seed,
+      queuedIds: [seed.id],
+      recentIds: [],
+      sources: { fetchByGenre, fetchRelatedTracks },
+    })
 
+    expect(fetchRelatedTracks).toHaveBeenCalledTimes(1)
     expect(fetchByGenre).toHaveBeenCalledTimes(1)
     expect(takeFromBuffer()).toBeNull()
   })
 })
 
 describe('a Jamendo seed', () => {
-  it('spends exactly one similarity request, and no genre request', async () => {
+  it('spends its similarity request first, and never a genre request', async () => {
     const similar = jamendoTrack({ id: 'jamendo:similar', providerId: 'similar' })
     const fetchSimilar = vi.fn(() =>
       Promise.resolve({ tracks: [similar], requests: 1, status: 'success' as const }),
     )
     const fetchByGenre = vi.fn(() => Promise.resolve([audiusTrack()]))
+    const fetchRelatedTracks = noRelated()
     const seed = jamendoTrack()
 
     await refillBuffer({
       seed,
       queuedIds: [seed.id],
       recentIds: [],
-      sources: { session: [], fetchSimilar, fetchByGenre },
+      sources: { session: [], fetchSimilar, fetchByGenre, fetchRelatedTracks },
     })
 
     expect(fetchSimilar).toHaveBeenCalledTimes(1)
     expect(fetchByGenre).not.toHaveBeenCalled()
+    // Provider similarity leads the buffer; the search only tops it up.
     expect(takeFromBuffer()?.id).toBe('jamendo:similar')
   })
 
+  it('leaves the search unspent when similarity already keeps three ahead', async () => {
+    const tracks = [
+      jamendoTrack({ id: 'jamendo:s1', providerId: 's1' }),
+      jamendoTrack({ id: 'jamendo:s2', providerId: 's2' }),
+      jamendoTrack({ id: 'jamendo:s3', providerId: 's3' }),
+    ]
+    const fetchSimilar = vi.fn(() =>
+      Promise.resolve({ tracks, requests: 1, status: 'success' as const }),
+    )
+    const fetchRelatedTracks = noRelated()
+    const seed = jamendoTrack()
+
+    await refillBuffer({
+      seed,
+      queuedIds: [seed.id],
+      recentIds: [],
+      sources: { session: [], fetchSimilar, fetchRelatedTracks },
+    })
+
+    expect(fetchRelatedTracks).not.toHaveBeenCalled()
+  })
+
   /**
-   * The whole point of this file.
+   * This assertion used to be the opposite, and the reversal is the point.
    *
-   * Jamendo answered "nothing is like this track". That is a provider judgement,
-   * and following it with a generic same-genre list would both override it and
-   * take the refill to two requests.
+   * Jamendo answering "nothing is like this track" is still a provider
+   * judgement, and it is still not overridden by a generic same-genre list. What
+   * changed is that it is no longer allowed to end the music: a targeted search
+   * for the seed's own tags and language is a different question, not a weaker
+   * answer to the one Jamendo already gave.
    */
-  it('accepts an empty similarity answer instead of asking anything else', async () => {
+  it('follows an empty similarity answer with the tag search, never a genre list', async () => {
+    const found = jamendoTrack({ id: 'jamendo:related', providerId: 'related' })
     const fetchSimilar = vi.fn(() =>
       Promise.resolve({ tracks: [], requests: 1, status: 'success' as const }),
     )
     const fetchByGenre = vi.fn(() => Promise.resolve([audiusTrack()]))
+    const fetchRelatedTracks = vi.fn(() => Promise.resolve([found]))
     const seed = jamendoTrack()
 
     await refillBuffer({
       seed,
       queuedIds: [seed.id],
       recentIds: [],
-      sources: { session: [], fetchSimilar, fetchByGenre },
+      sources: { session: [], fetchSimilar, fetchByGenre, fetchRelatedTracks },
     })
 
     expect(fetchSimilar).toHaveBeenCalledTimes(1)
+    expect(fetchRelatedTracks).toHaveBeenCalledTimes(1)
     expect(fetchByGenre).not.toHaveBeenCalled()
-    expect(takeFromBuffer()).toBeNull()
+    expect(takeFromBuffer()?.id).toBe('jamendo:related')
   })
 
-  it('makes no second request when the similarity lookup fails outright', async () => {
+  it('still searches when the similarity lookup fails outright', async () => {
+    const found = jamendoTrack({ id: 'jamendo:related', providerId: 'related' })
     const fetchSimilar = vi.fn(() => Promise.reject(new Error('jamendo down')))
     const fetchByGenre = vi.fn(() => Promise.resolve([audiusTrack()]))
+    const fetchRelatedTracks = vi.fn(() => Promise.resolve([found]))
     const seed = jamendoTrack()
 
     await expect(
@@ -196,30 +312,30 @@ describe('a Jamendo seed', () => {
         seed,
         queuedIds: [seed.id],
         recentIds: [],
-        sources: { session: [], fetchSimilar, fetchByGenre },
+        sources: { session: [], fetchSimilar, fetchByGenre, fetchRelatedTracks },
       }),
     ).resolves.toBeUndefined()
 
-    // One attempt, and nothing after it.
     expect(fetchSimilar).toHaveBeenCalledTimes(1)
     expect(fetchByGenre).not.toHaveBeenCalled()
-    expect(takeFromBuffer()).toBeNull()
+    expect(takeFromBuffer()?.id).toBe('jamendo:related')
   })
 
-  it('is not rescued by a genre request even when its session pool is empty too', async () => {
+  it('is not rescued by a genre request even when everything else came back empty', async () => {
     const fetchSimilar = vi.fn(() =>
       Promise.resolve({ tracks: [], requests: 1, status: 'success' as const }),
     )
     const fetchByGenre = vi.fn(() => Promise.resolve([audiusTrack()]))
+    const fetchRelatedTracks = noRelated()
     const seed = jamendoTrack()
-    // Nothing anywhere: the strongest possible temptation to spend a second call.
+    // Nothing anywhere: the strongest possible temptation to spend a third call.
     rememberTracks([seed])
 
     await refillBuffer({
       seed,
       queuedIds: [seed.id],
       recentIds: [],
-      sources: { fetchSimilar, fetchByGenre },
+      sources: { fetchSimilar, fetchByGenre, fetchRelatedTracks },
     })
 
     expect(fetchByGenre).not.toHaveBeenCalled()

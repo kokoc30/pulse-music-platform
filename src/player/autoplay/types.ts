@@ -16,8 +16,15 @@ export type CandidateSource =
   /** Tracks the session already loaded: shelves, search results, the queue. */
   | 'session'
   /**
-   * One genre-scoped Audius request, spent only when everything free came back
-   * empty. Deliberately named for what it is: same genre, not same sound.
+   * One catalogue search built from the seed's own tags, genre and language —
+   * `russian pop` for a Cyrillic-titled pop track. Spent when what is already in
+   * memory cannot keep three playable items ahead of the listener
+   * (src/player/related-fetcher.ts).
+   */
+  | 'related-search'
+  /**
+   * One genre-scoped Audius request, spent only when everything before it came
+   * back empty. Deliberately named for what it is: same genre, not same sound.
    */
   | 'genre-fallback'
 

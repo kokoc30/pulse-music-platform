@@ -12,6 +12,7 @@ import { resetPlaybackCoordinator } from './playback-coordinator'
 import { handleTrackEnded, resetMediaRetries, skipToNext } from './player-actions'
 import { selectCanSkipNext } from './player-selectors'
 import { initialPlayerState, usePlayerStore } from './player-store'
+import { NO_MORE_TRACKS_MESSAGE, clearPlayedSession } from './related-fetcher'
 
 /**
  * Pressing Next, versus a track running out.
@@ -77,6 +78,7 @@ beforeEach(() => {
   resetPersonalizationForTests()
   clearSessionPool()
   clearAutoplayBuffer()
+  clearPlayedSession()
 })
 
 describe('the Next button is enabled when Next can do something', () => {
@@ -197,7 +199,7 @@ describe('a press of Next means leave this song', () => {
 
     expect(usePlayerStore.getState().status).toBe('paused')
     expect(usePlayerStore.getState().currentTime).toBe(0)
-    expect(useUiStore.getState().notice).toBe('No similar track available right now.')
+    expect(useUiStore.getState().notice).toBe(NO_MORE_TRACKS_MESSAGE)
   })
 
   it('never silently replays the current song', async () => {
@@ -248,13 +250,26 @@ describe('a track running out is not a press of Next', () => {
     expect(engine.playing).toBe(true)
   })
 
-  it('stays quiet when it runs out — no toast on an ordinary ending', async () => {
+  /**
+   * This used to assert the opposite, and the change is deliberate.
+   *
+   * Ending quietly was defensible while a dry queue was an ordinary ending. It
+   * is not one any more: autoplay now searches the catalogue for something in
+   * the same vein before it gives up, so a track ending in silence means every
+   * source was asked and none of them answered. That is exceptional, the bar
+   * should say so, and the alternative the reports described — the same song
+   * starting again — is not on the table.
+   */
+  it('says so when it runs out, because silence is now the exception', async () => {
     withNoGenreCandidates()
     seat(track({ providerId: 'alone' }))
 
     await handleTrackEnded()
 
     expect(usePlayerStore.getState().status).toBe('paused')
-    expect(useUiStore.getState().notice).toBeNull()
+    expect(useUiStore.getState().notice).toBe(NO_MORE_TRACKS_MESSAGE)
+    // And above all: not the track that just finished.
+    expect(engine.playing).toBe(false)
+    expect(currentId()).toBe('alone')
   })
 })
