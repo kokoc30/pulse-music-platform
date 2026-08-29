@@ -1,6 +1,8 @@
 import type { Track } from '@/music/types'
 import { usePlayerStore } from './player-store'
 import type { PlayerState } from './player-store'
+import { nextQueueIndex, previousQueueIndex } from './queue-order'
+import type { RepeatMode } from './queue-order'
 
 /**
  * Narrow selectors so a `timeupdate` tick only re-renders the progress readout,
@@ -21,11 +23,42 @@ export const useQueueIndex = (): number => usePlayerStore((s) => s.currentIndex)
 export const useQueueContextLabel = (): string | null =>
   usePlayerStore((s) => s.queueContext?.label ?? null)
 
+/**
+ * Whether Next has anywhere to go.
+ *
+ * Reads the same `nextQueueIndex` the action does, so the control's enabled
+ * state and what the control actually does can never disagree — a wrapped
+ * repeat-playlist queue or a shuffled running order enables Next on the last
+ * *sequential* track exactly when pressing it would work.
+ */
 export const useHasNext = (): boolean =>
-  usePlayerStore((s) => s.currentIndex >= 0 && s.currentIndex < s.queue.length - 1)
+  usePlayerStore(
+    (s) =>
+      s.repeatMode === 'one' ||
+      nextQueueIndex({
+        queueLength: s.queue.length,
+        currentIndex: s.currentIndex,
+        shuffle: s.shuffle,
+        shuffleOrder: s.shuffleOrder,
+        repeatMode: s.repeatMode,
+      }) !== null,
+  )
 
 export const useHasPrevious = (): boolean =>
-  usePlayerStore((s) => s.currentIndex > 0 || s.currentTime > 0)
+  usePlayerStore(
+    (s) =>
+      s.currentTime > 0 ||
+      previousQueueIndex({
+        queueLength: s.queue.length,
+        currentIndex: s.currentIndex,
+        shuffle: s.shuffle,
+        shuffleOrder: s.shuffleOrder,
+        repeatMode: s.repeatMode,
+      }) !== null,
+  )
+
+export const useRepeatMode = (): RepeatMode => usePlayerStore((s) => s.repeatMode)
+export const useShuffle = (): boolean => usePlayerStore((s) => s.shuffle)
 
 /** True while this exact track is the loaded one — drives row highlighting. */
 export const useIsCurrentTrack = (trackId: string): boolean =>

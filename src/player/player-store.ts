@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import type { Track } from '@/music/types'
+import { nextRepeatMode, shuffledOrder } from './queue-order'
+import type { RepeatMode } from './queue-order'
 
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error'
 
@@ -21,6 +23,23 @@ export interface PlayerState {
   muted: boolean
   /** Play similar music when the queue runs out. */
   autoplaySimilar: boolean
+  /** Off, repeat the whole list, or repeat the current track. */
+  repeatMode: RepeatMode
+  /** True while playback follows `shuffleOrder` rather than the queue order. */
+  shuffle: boolean
+  /**
+   * A permutation of queue *indices*. The queue itself is never rearranged, so
+   * turning shuffle off restores the original sequence exactly (queue-order.ts).
+   */
+  shuffleOrder: number[]
+  /**
+   * Seed the current permutation was generated from.
+   *
+   * Kept in state so a shuffled order is reproducible for the whole session and
+   * so a test can pin it. Session-only: a reload starts a new running order,
+   * which is what "session shuffle" means.
+   */
+  shuffleSeed: number
   error: string | null
   /** Monotonic token guarding against stale stream loads. */
   loadToken: number
@@ -36,6 +55,12 @@ export interface PlayerActions {
   setVolume: (volume: number) => void
   setMuted: (muted: boolean) => void
   setAutoplaySimilar: (enabled: boolean) => void
+  setRepeatMode: (mode: RepeatMode) => void
+  /** Off → repeat playlist → repeat one → off. */
+  cycleRepeatMode: () => void
+  setShuffle: (enabled: boolean) => void
+  /** Draws a fresh running order from the next seed. */
+  reshuffle: () => void
   setError: (error: string | null) => void
   nextLoadToken: () => number
   enqueueNext: (track: Track) => void
@@ -55,6 +80,15 @@ export const AUTOPLAY_STORAGE_KEY = 'pulse:autoplay'
 /** Recommended default: on. A queue that stops dead is the worse surprise. */
 export const DEFAULT_AUTOPLAY = true
 export const MUTED_STORAGE_KEY = 'pulse:muted'
+/**
+ * Repeat is a playback preference and persists like volume and autoplay, under
+ * its own key. Shuffle deliberately does not: it is bound to a running order
+ * that only exists for the session, and silently resuming a shuffle a week later
+ * with a different order would be the more surprising behaviour
+ * (agents/45 → "session-only shuffled order").
+ */
+export const REPEAT_STORAGE_KEY = 'pulse:repeat'
+export const DEFAULT_REPEAT: RepeatMode = 'off'
 export const DEFAULT_VOLUME = 0.8
 
 export function clampVolume(value: number): number {
@@ -107,6 +141,25 @@ export function persistAutoplay(enabled: boolean, storage = safeStorage()): void
   }
 }
 
+export function readPersistedRepeat(storage: Storage | undefined = safeStorage()): RepeatMode {
+  if (!storage) return DEFAULT_REPEAT
+  try {
+    const raw = storage.getItem(REPEAT_STORAGE_KEY)
+    return raw === 'all' || raw === 'one' ? raw : DEFAULT_REPEAT
+  } catch {
+    return DEFAULT_REPEAT
+  }
+}
+
+export function persistRepeat(mode: RepeatMode, storage = safeStorage()): void {
+  if (!storage) return
+  try {
+    storage.setItem(REPEAT_STORAGE_KEY, mode)
+  } catch {
+    // Private mode / disabled storage — playback must keep working.
+  }
+}
+
 export function persistVolume(volume: number, muted: boolean, storage = safeStorage()): void {
   if (!storage) return
   try {
@@ -127,6 +180,7 @@ function safeStorage(): Storage | undefined {
 
 const persisted = readPersistedVolume()
 const persistedAutoplay = readPersistedAutoplay()
+const persistedRepeat = readPersistedRepeat()
 
 export const initialPlayerState: PlayerState = {
   status: 'idle',
@@ -139,6 +193,10 @@ export const initialPlayerState: PlayerState = {
   volume: persisted.volume,
   muted: persisted.muted,
   autoplaySimilar: persistedAutoplay,
+  repeatMode: persistedRepeat,
+  shuffle: false,
+  shuffleOrder: [],
+  shuffleSeed: 1,
   error: null,
   loadToken: 0,
 }
@@ -149,11 +207,25 @@ export const usePlayerStore = create<PlayerState & PlayerActions>((set, get) => 
   setStatus: (status) => set({ status }),
 
   setQueue: (queue, index, context) =>
-    set({
-      queue,
-      currentIndex: index,
-      queueContext: context,
-      currentTrack: queue[index] ?? null,
+    set((state) => {
+      // A genuinely different list needs a new running order; advancing within
+      // the same list must keep the one the visitor is already hearing.
+      const sameList =
+        queue.length === state.queue.length &&
+        queue.every((track, position) => track.id === state.queue[position]?.id)
+
+      const shuffleOrder =
+        state.shuffle && !sameList
+          ? shuffledOrder(queue.length, index, state.shuffleSeed)
+          : state.shuffleOrder
+
+      return {
+        queue,
+        currentIndex: index,
+        queueContext: context,
+        currentTrack: queue[index] ?? null,
+        shuffleOrder,
+      }
     }),
 
   setCurrentIndex: (index) =>
@@ -185,6 +257,41 @@ export const usePlayerStore = create<PlayerState & PlayerActions>((set, get) => 
     persistAutoplay(autoplaySimilar)
   },
 
+  setRepeatMode: (repeatMode) => {
+    set({ repeatMode })
+    persistRepeat(repeatMode)
+  },
+
+  cycleRepeatMode: () => {
+    const repeatMode = nextRepeatMode(get().repeatMode)
+    set({ repeatMode })
+    persistRepeat(repeatMode)
+  },
+
+  setShuffle: (shuffle) =>
+    set((state) => {
+      if (shuffle === state.shuffle) return state
+      if (!shuffle) return { shuffle: false, shuffleOrder: [] }
+      // A new seed per activation, so switching shuffle off and on again is a
+      // genuinely different order rather than the same one every time.
+      const shuffleSeed = state.shuffleSeed + 1
+      return {
+        shuffle: true,
+        shuffleSeed,
+        shuffleOrder: shuffledOrder(state.queue.length, state.currentIndex, shuffleSeed),
+      }
+    }),
+
+  reshuffle: () =>
+    set((state) => {
+      if (!state.shuffle) return state
+      const shuffleSeed = state.shuffleSeed + 1
+      return {
+        shuffleSeed,
+        shuffleOrder: shuffledOrder(state.queue.length, state.currentIndex, shuffleSeed),
+      }
+    }),
+
   setError: (error) => set({ error }),
 
   nextLoadToken: () => {
@@ -199,7 +306,13 @@ export const usePlayerStore = create<PlayerState & PlayerActions>((set, get) => 
       const queue = [...state.queue]
       const insertAt = state.currentIndex >= 0 ? state.currentIndex + 1 : queue.length
       queue.splice(insertAt, 0, track)
-      return { queue }
+      // The running order is a permutation of indices, and one has just been
+      // inserted. Rebuilding from the same seed keeps the order deterministic
+      // while making room for the new position.
+      const shuffleOrder = state.shuffle
+        ? shuffledOrder(queue.length, state.currentIndex, state.shuffleSeed)
+        : state.shuffleOrder
+      return { queue, shuffleOrder }
     }),
 
   reset: () =>
@@ -207,8 +320,9 @@ export const usePlayerStore = create<PlayerState & PlayerActions>((set, get) => 
       ...initialPlayerState,
       volume: get().volume,
       muted: get().muted,
-      // A preference, not session state: resetting the player must not silently
-      // re-enable something the visitor turned off.
+      // Preferences, not session state: resetting the player must not silently
+      // re-enable something the visitor turned off, or forget a repeat mode.
       autoplaySimilar: get().autoplaySimilar,
+      repeatMode: get().repeatMode,
     }),
 }))

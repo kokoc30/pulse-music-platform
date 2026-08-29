@@ -12,6 +12,7 @@ import { DiscoveryShelf } from '@/features/discovery/DiscoveryShelf'
 import { playChart, playFromShelf } from '@/features/discovery/playShelf'
 import { CHART_SHELF, SHELF_CARD_COUNT, STATION_SHELF } from '@/features/discovery/shelves'
 import { useHomeDashboard } from '@/features/discovery/useHomeDashboard'
+import { MixCard } from '@/features/library/MixCard'
 import type { Track } from '@/music/types'
 import { CONTEXT_IDS } from '@/personalization/play-context'
 import { playHistoryEntry } from '@/personalization/replay'
@@ -37,7 +38,7 @@ import { useYouTubeStore } from '@/player/youtube-store'
 export function HomePage() {
   const navigate = useNavigate()
   const dashboard = useHomeDashboard()
-  const { discovery, recommended, recent, because, artistTracks, profile } = dashboard
+  const { discovery, mixes, recommended, recent, because, artistTracks, profile } = dashboard
   const { trending, month, artists, stations, status, errors, reload } = discovery
 
   const currentTrack = useCurrentTrack()
@@ -65,6 +66,13 @@ export function HomePage() {
     return isPlaying ? 'playing' : 'idle'
   }
 
+  /** A mix card is 'playing' while any of its tracks is the loaded one. */
+  const mixState = (tracks: Track[]): 'idle' | 'loading' | 'playing' => {
+    if (!currentTrack || !tracks.some((track) => track.id === currentTrack.id)) return 'idle'
+    if (isLoading) return 'loading'
+    return isPlaying ? 'playing' : 'idle'
+  }
+
   const play = (tracks: Track[], index: number, id: string, label: string) =>
     void playFromShelf(tracks, index, { id, label })
 
@@ -76,7 +84,17 @@ export function HomePage() {
     id: HomeSectionId,
     tracks: Track[],
     contextId: string,
-    options: { title?: string; error?: string | undefined; description?: string } = {},
+    options: {
+      title?: string
+      error?: string | undefined
+      description?: string
+      /**
+       * *Not interested* is offered only where the shelf is a claim about this
+       * visitor. Trending and charts are claims about the catalogue, so hiding a
+       * row there would have nothing to act on (agents/43).
+       */
+      canHide?: boolean
+    } = {},
   ) => {
     const title = options.title ?? HOME_SECTION_TITLES[id]
     return (
@@ -98,6 +116,7 @@ export function HomePage() {
               key={track.id}
               track={track}
               state={cardState(track)}
+              canHide={options.canHide === true}
               onPlay={() => play(tracks, index, contextId, title)}
             />
           ))}
@@ -113,8 +132,11 @@ export function HomePage() {
           'recommended',
           recommended.map((item) => item.track),
           CONTEXT_IDS.recommended,
-          // The disclosure STEP 17 asks for, at the point where it is relevant.
-          { description: 'Chosen on this device from what you have played here.' },
+          {
+            // The disclosure STEP 17 asks for, at the point where it is relevant.
+            description: 'Chosen on this device from what you have played and saved here.',
+            canHide: true,
+          },
         )
 
       case 'recent':
@@ -147,14 +169,40 @@ export function HomePage() {
           </DiscoveryShelf>
         )
 
+      case 'mixes':
+        return (
+          <DiscoveryShelf
+            key="mixes"
+            id="mixes"
+            title={HOME_SECTION_TITLES.mixes}
+            anchor={HOME_SECTION_ANCHORS.mixes}
+            status="ready"
+            onShowAll={() => scrollToShelf(HOME_SECTION_ANCHORS.mixes)}
+            skeleton={<ShelfSkeleton />}
+            description="Built on this device from what you play and save. Nothing is uploaded."
+          >
+            <div className="music-grid">
+              {mixes.map((mix) => (
+                <MixCard
+                  key={mix.id}
+                  mix={mix}
+                  state={mixState(mix.tracks)}
+                  onPlay={() => play(mix.tracks, 0, `mix:${mix.id}`, mix.title)}
+                />
+              ))}
+            </div>
+          </DiscoveryShelf>
+        )
+
       case 'because':
         if (!because) return null
         return trackShelf('because', because.tracks, CONTEXT_IDS.because, {
           title: `${HOME_SECTION_TITLES.because} ${because.seed.name}`,
+          canHide: true,
         })
 
       case 'artists':
-        return trackShelf('artists', artistTracks, CONTEXT_IDS.artists)
+        return trackShelf('artists', artistTracks, CONTEXT_IDS.artists, { canHide: true })
 
       case 'trending':
         return trackShelf('trending', trending, 'shelf:trending', { error: errors.trending })

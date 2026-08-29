@@ -143,7 +143,9 @@ test.describe('critical flow: open → search → click → audio plays', () => 
     const gated = page.locator('.song-row[data-streamable="false"]')
     await expect(gated).toHaveCount(1)
     await expect(gated).toHaveAttribute('aria-disabled', 'true')
-    await expect(gated.getByRole('button')).toBeDisabled()
+    // Named: since Phase 7 the row also carries the Pulse heart and the overflow
+    // menu, which stay enabled — a gated track can still be saved for later.
+    await expect(gated.locator('.song-row-action')).toBeDisabled()
     await expect(gated.locator('.song-duration')).toHaveText('Gated')
   })
 

@@ -8,6 +8,7 @@ import { clearAutoplayBuffer, refillBuffer, takeFromBuffer } from './autoplay'
 import { activateAudio } from './playback-coordinator'
 import { usePlayerStore } from './player-store'
 import type { QueueContext } from './player-store'
+import { nextQueueIndex, previousQueueIndex } from './queue-order'
 
 /**
  * Restarting instead of stepping back is the convention when the listener is
@@ -222,31 +223,62 @@ export const MAX_AUTOPLAY_ATTEMPTS = 3
  * Advance one track.
  *
  * The precedence is exact and is the same for the on-page control, the Media
- * Session's Next, and a track ending naturally (agents/32 → "Queue priority"):
+ * Session's Next, and a track ending naturally (agents/32 → "Queue priority";
+ * agents/45 → "Priority at track end"):
  *
- *   1. the explicit queue — whatever the visitor actually asked for
- *   2. autoplay's generated candidate, when the preference is on
- *   3. stop
+ *   1. repeat one — replay the current track
+ *   2. the explicit queue, in the running order in force — whatever the visitor
+ *      actually asked for, including a playlist continuation
+ *   3. repeat playlist — wrap to the start of that same list
+ *   4. autoplay's generated candidate, when the preference is on
+ *   5. stop
  *
- * Autoplay can never jump ahead of a queued item, because the queue is consulted
- * first and unconditionally.
+ * Every rule the visitor set outranks everything the app generated. Autoplay is
+ * consulted last and unconditionally last, so it can neither jump ahead of a
+ * queued item nor pre-empt a repeat. Steps 2 and 3 are one call into
+ * `nextQueueIndex`, which is what keeps shuffle and repeat-playlist from being
+ * two competing notions of "next".
+ *
+ * `skipTrackId` exists for the one case that could otherwise loop: a track that
+ * has just failed to play. It is excluded from being chosen again by repeat one.
  */
-export async function playNext(store: Store = usePlayerStore): Promise<void> {
+export async function playNext(
+  store: Store = usePlayerStore,
+  options: { skipRepeatOne?: boolean } = {},
+): Promise<void> {
   const state = store.getState()
-  const nextIndex = state.currentIndex + 1
-  const next = state.queue[nextIndex]
 
-  // 1. Explicit queue. Includes an existing station/playlist continuation,
-  //    which is already materialised into the queue by `playFromShelf`.
-  if (next) {
+  // 1. Repeat one. Deliberately ahead of the queue: the visitor asked for this
+  //    track, and nothing generated may override that.
+  if (state.repeatMode === 'one' && state.currentTrack && !options.skipRepeatOne) {
+    await playTrack(
+      state.currentTrack,
+      { queue: state.queue, index: state.currentIndex },
+      store,
+    )
+    return
+  }
+
+  // 2 and 3. The explicit queue in its running order, wrapping only when the
+  //    visitor turned Repeat playlist on.
+  const nextIndex = nextQueueIndex({
+    queueLength: state.queue.length,
+    currentIndex: state.currentIndex,
+    shuffle: state.shuffle,
+    shuffleOrder: state.shuffleOrder,
+    repeatMode: state.repeatMode,
+  })
+  const next = nextIndex === null ? undefined : state.queue[nextIndex]
+
+  if (next && nextIndex !== null) {
     await playTrack(next, { queue: state.queue, index: nextIndex }, store)
     return
   }
 
-  // 2. Generated similar audio, when the visitor left autoplay on.
+  // 4. Generated similar audio, when the visitor left autoplay on.
   if (state.autoplaySimilar && state.currentTrack && (await playAutoplayNext(store))) return
 
-  // 3. Stop cleanly instead of looping.
+  // 5. Stop cleanly instead of looping.
   engine().pause()
   store.getState().setCurrentTime(0)
   store.getState().setStatus('paused')
@@ -292,6 +324,14 @@ function recentlyPlayedIds(): string[] {
   return recentlyPlayed(state.listeningHistory).map((entry) => entry.id)
 }
 
+/**
+ * Step back one track.
+ *
+ * Follows the same running order Next does, so a shuffled session is genuinely
+ * navigable in both directions rather than shuffled forwards and sequential
+ * backwards. Repeat one does *not* apply here: a visitor pressing Previous is
+ * asking to move, and answering with the same track again would look broken.
+ */
 export async function playPrevious(store: Store = usePlayerStore): Promise<void> {
   const state = store.getState()
   if (!state.currentTrack) return
@@ -301,9 +341,15 @@ export async function playPrevious(store: Store = usePlayerStore): Promise<void>
     return
   }
 
-  const previousIndex = state.currentIndex - 1
-  const previous = state.queue[previousIndex]
-  if (!previous) {
+  const previousIndex = previousQueueIndex({
+    queueLength: state.queue.length,
+    currentIndex: state.currentIndex,
+    shuffle: state.shuffle,
+    shuffleOrder: state.shuffleOrder,
+    repeatMode: state.repeatMode,
+  })
+  const previous = previousIndex === null ? undefined : state.queue[previousIndex]
+  if (!previous || previousIndex === null) {
     seek(0, store)
     return
   }

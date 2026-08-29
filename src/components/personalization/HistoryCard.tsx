@@ -1,7 +1,10 @@
 import { ExternalLink } from 'lucide-react'
+import { LikeButton } from '@/components/library/LikeButton'
+import { TrackMenu } from '@/components/library/TrackMenu'
 import { Artwork } from '@/components/track/Artwork'
 import { PlayAction } from '@/components/track/PlayAction'
 import { YouTubeThumbnail } from '@/components/youtube/YouTubeThumbnail'
+import { trackRefFromListenEntry } from '@/library/track-ref'
 import { providerLabel } from '@/music/provider-labels'
 import { historyArtwork } from '@/personalization/artwork'
 import { toYouTubeItem } from '@/personalization/replay'
@@ -43,6 +46,22 @@ export function HistoryCard({ entry, onPlay, state = 'idle' }: HistoryCardProps)
           // the same song would, rather than blanking on the first dead node.
           <Artwork artwork={historyArtwork(entry)} size="medium" />
         )}
+        {/* Recently Played is one of the surfaces agents/42 names for the heart,
+            and a natural one: it is where a visitor realises they want to keep
+            something they just heard. The reference is built from the stored row
+            rather than a live provider object, so pressing it costs no request. */}
+        <span className="card-actions">
+          <LikeButton
+            itemKey={entry.id}
+            title={entry.title}
+            toRef={() => trackRefFromListenEntry(entry)}
+          />
+          <TrackMenu
+            title={entry.title}
+            itemKey={entry.id}
+            toRef={() => trackRefFromListenEntry(entry)}
+          />
+        </span>
         <PlayAction
           onClick={onPlay}
           state={state}

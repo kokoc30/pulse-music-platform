@@ -2,11 +2,17 @@ import { detectScript, isLowSignal, normalizeText } from '@/music/search/text'
 import type { Script } from '@/music/search/text'
 import {
   EARLY_PROFILE_LISTENS,
+  EXPLICIT_LIKE_WEIGHT,
+  EXPLICIT_MIN_DECAY,
+  EXPLICIT_PLAYLIST_WEIGHT,
   MATURE_PROFILE_LISTENS,
+  MAX_EXPLICIT_ITEMS,
   MIN_SEED_AFFINITY,
   MIN_SEED_PLAYS,
   WARM_PROFILE_LISTENS,
 } from './config'
+import { readExplicitIntent } from './explicit-intent'
+import type { ExplicitIntent, ExplicitItem } from './explicit-intent'
 import { addWeight, effectiveWeight, normalizeWeights, recencyDecay } from './scoring'
 import type { WeightMap } from './scoring'
 import { qualifiedListenCount } from './history'
@@ -62,6 +68,21 @@ export interface PersonalizationProfile {
   scriptWeights: Record<Script, number>
   /** Ids of items played recently enough to hold back from recommendations. */
   recentItemIds: string[]
+  /**
+   * Distinct catalogue items the visitor explicitly saved — liked, or curated
+   * into a playlist. Counted once each, however many playlists hold them.
+   */
+  explicitItemCount: number
+  /**
+   * Items the visitor marked *Not interested*, as an exclusion list.
+   *
+   * The negative signal is deliberately an exclusion and nothing more. A
+   * negative *weight* would generalise one refusal into a claim about an artist,
+   * a genre or a script, which is both weaker evidence than it looks and exactly
+   * the kind of inference agents/43 rules out. Saying "not this one" is treated
+   * as meaning "not this one" (agents/43 → "Not interested").
+   */
+  hiddenItemIds: string[]
   updatedAt: number
 }
 
@@ -84,6 +105,8 @@ export function emptyProfile(now = Date.now()): PersonalizationProfile {
     tokenWeights: {},
     scriptWeights: { ...EMPTY_SCRIPT_WEIGHTS },
     recentItemIds: [],
+    explicitItemCount: 0,
+    hiddenItemIds: [],
     updatedAt: now,
   }
 }
@@ -111,9 +134,40 @@ function tokensOf(entry: ListenEntry): string[] {
   return tokens.filter((token) => !isLowSignal(token))
 }
 
-export function buildProfile(state: PersonalizationState, now = Date.now()): PersonalizationProfile {
+/**
+ * How much one explicitly saved item is worth.
+ *
+ * Two booleans, added once each, then damped by a floored recency. There is no
+ * term here that could grow with the number of playlists a track sits in,
+ * because the input carries no such number — five playlists and one playlist
+ * produce exactly the same value (agents/43 → "No double-count explosions").
+ */
+export function explicitWeight(item: ExplicitItem, now = Date.now()): number {
+  const base =
+    (item.liked ? EXPLICIT_LIKE_WEIGHT : 0) + (item.inPlaylist ? EXPLICIT_PLAYLIST_WEIGHT : 0)
+  if (base <= 0) return 0
+  return base * Math.max(recencyDecay(item.savedAt, now), EXPLICIT_MIN_DECAY)
+}
+
+export function buildProfile(
+  state: PersonalizationState,
+  now = Date.now(),
+  /**
+   * Explicit library intent. Defaults to whatever the library registered, and
+   * takes an override so tests can describe an exact situation.
+   *
+   * Reached only from here, and this function is only called while
+   * personalization is enabled — which is what makes "explicit library actions
+   * must not train the profile when consent is denied" true without the library
+   * knowing anything about consent (agents/43).
+   */
+  intent: ExplicitIntent = readExplicitIntent(),
+): PersonalizationProfile {
   // YouTube never reaches any weight below. See the module comment.
   const entries = catalogEntries(state.listeningHistory)
+  const explicitItems = [...intent.items]
+    .sort((a, b) => b.savedAt - a.savedAt)
+    .slice(0, MAX_EXPLICIT_ITEMS)
 
   const artistWeights: WeightMap = {}
   const genreWeights: WeightMap = {}
@@ -153,6 +207,50 @@ export function buildProfile(state: PersonalizationState, now = Date.now()): Per
     scriptRaw[detectScript(`${entry.title} ${entry.artist}`)] += weight
   }
 
+  /**
+   * Explicit intent, folded into the same maps rather than a second engine.
+   *
+   * A like and a listen are evidence about the same thing — which artists, tags
+   * and words this browser keeps coming back to — so they belong in one set of
+   * weights. Adding a parallel scorer would mean two rankings to reconcile and
+   * two places for a rule to drift (agents/43 → "Do not create a second profile
+   * engine").
+   *
+   * An explicitly saved artist also enters `artistMeta`, so *More from artists
+   * you like* can name someone the visitor liked without ever pressing play.
+   * `plays` stays at zero for such an artist, which is what keeps *Because you
+   * listened to …* honest: that section makes a claim about listening, and
+   * `MIN_SEED_PLAYS` still has to be met by real listens.
+   */
+  for (const item of explicitItems) {
+    const weight = explicitWeight(item, now)
+    if (weight <= 0) continue
+
+    const key = artistKey(item.artist)
+    addWeight(artistWeights, key, weight)
+
+    if (!artistMeta.has(key)) {
+      artistMeta.set(key, {
+        key,
+        name: item.artist,
+        ...(item.artistId ? { artistId: item.artistId } : {}),
+        provider: item.provider === 'jamendo' ? 'jamendo' : 'audius',
+        weight: 0,
+        plays: 0,
+        lastPlayedAt: item.savedAt,
+      })
+    }
+
+    if (item.genre) addWeight(genreWeights, item.genre.toLowerCase(), weight)
+
+    const { tokens } = normalizeText(`${item.title} ${item.artist}`)
+    for (const token of tokens) {
+      if (!isLowSignal(token)) addWeight(tokenWeights, token, weight * 0.5)
+    }
+
+    scriptRaw[detectScript(`${item.title} ${item.artist}`)] += weight
+  }
+
   // First-party input: what the visitor typed, regardless of which catalogue (or
   // whether YouTube) eventually answered it.
   for (const search of state.searchHistory) {
@@ -184,6 +282,8 @@ export function buildProfile(state: PersonalizationState, now = Date.now()): Per
       .filter((entry) => entry.playCount > 0)
       .sort((a, b) => b.lastPlayedAt - a.lastPlayedAt)
       .map((entry) => entry.id),
+    explicitItemCount: explicitItems.length,
+    hiddenItemIds: [...intent.hiddenKeys],
     updatedAt: now,
   }
 }

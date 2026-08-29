@@ -791,3 +791,68 @@ export function recordYouTubeApiTraffic(page: Page): string[] {
   })
   return calls
 }
+
+/* ==========================================================================
+   Library doubles (Phase 7)
+
+   The library lives in IndexedDB, and Playwright runs a real browser, so these
+   helpers talk to the real thing — there is no adapter to stub. Reading it back
+   is how a test proves that a like actually reached durable storage rather than
+   merely a React store.
+   ========================================================================== */
+
+export const LIBRARY_DB = 'pulse.library.v1'
+export const LIBRARY_STORE = 'state'
+export const LIBRARY_RECORD = 'state'
+
+/** The persisted library record, exactly as it sits in IndexedDB. */
+export async function readLibrary(page: Page): Promise<Record<string, unknown> | null> {
+  return page.evaluate(
+    ([dbName, storeName, key]) =>
+      new Promise<Record<string, unknown> | null>((resolve) => {
+        const open = indexedDB.open(dbName)
+        open.onerror = () => resolve(null)
+        open.onsuccess = () => {
+          const db = open.result
+          if (!db.objectStoreNames.contains(storeName)) {
+            resolve(null)
+            return
+          }
+          const request = db.transaction(storeName, 'readonly').objectStore(storeName).get(key)
+          request.onerror = () => resolve(null)
+          request.onsuccess = () =>
+            resolve((request.result as Record<string, unknown> | undefined) ?? null)
+        }
+      }),
+    [LIBRARY_DB, LIBRARY_STORE, LIBRARY_RECORD] as const,
+  )
+}
+
+/** Liked keys currently on disk, in stored order. */
+export async function likedKeys(page: Page): Promise<string[]> {
+  const record = await readLibrary(page)
+  return (record?.likedTrackKeys as string[] | undefined) ?? []
+}
+
+/** One playlist's stored item order, by playlist name. */
+export async function playlistOrder(page: Page, name: string): Promise<string[]> {
+  const record = await readLibrary(page)
+  const playlists = (record?.playlists ?? {}) as Record<
+    string,
+    { name: string; itemKeys: string[] }
+  >
+  return Object.values(playlists).find((list) => list.name === name)?.itemKeys ?? []
+}
+
+/** The heart on a given row or card, by the track's title. */
+export function heartFor(page: Page, title: string) {
+  return page.getByRole('button', { name: `Save ${title} to Liked Songs in Pulse` })
+}
+
+export function unheartFor(page: Page, title: string) {
+  return page.getByRole('button', { name: `Remove ${title} from Liked Songs in Pulse` })
+}
+
+export function menuFor(page: Page, title: string) {
+  return page.getByRole('button', { name: `More actions for ${title}` })
+}

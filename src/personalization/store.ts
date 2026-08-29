@@ -72,6 +72,17 @@ export interface PersonalizationStoreState {
   clearSearchHistory: () => void
   resetRecommendations: () => void
   purgeExpired: () => void
+  /**
+   * Recomputes the derived profile without changing stored state.
+   *
+   * The library calls this after a like, a playlist change or a *Not
+   * interested*, because those alter the profile's *inputs* while nothing in
+   * `pulse.personalization.v1` has moved. Writing a timestamp into
+   * personalization storage just to invalidate a cache would put library
+   * activity into the behavioural record, which is precisely the mixing the two
+   * domains were separated to avoid.
+   */
+  refreshProfile: () => void
   /** Test seam: replaces state wholesale without persisting. */
   replaceState: (state: PersonalizationState) => void
 }
@@ -262,6 +273,14 @@ export const usePersonalizationStore = create<PersonalizationStoreState>((set, g
 
     purgeExpired: () =>
       commit((state) => purgeExpiredYouTubeFromState(state), { requireConsent: false }),
+
+    refreshProfile: () => {
+      const current = get()
+      // With consent withheld there is no profile to refresh, and recomputing
+      // one would be personalization without permission.
+      if (current.state.consent !== 'granted') return
+      set({ profile: buildProfile(current.state) })
+    },
 
     replaceState: (state) => set({ state, profile: derive(state, state.consent === 'granted') }),
   }

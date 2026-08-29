@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { showNotice } from '@/app/ui-store'
 import { PlaybackSettings } from '@/components/settings/PlaybackSettings'
+import { clearLibrary } from '@/library/library-actions'
+import { useLibraryStore } from '@/library/store'
 import { MAX_HISTORY_DAYS, MAX_HISTORY_ITEMS, MAX_SEARCH_HISTORY, YOUTUBE_RETENTION_DAYS } from '@/personalization/config'
 import { usePersonalizationStore } from '@/personalization/store'
 
@@ -32,6 +34,17 @@ export function SettingsPage() {
   const clearListening = usePersonalizationStore((store) => store.clearListeningHistory)
   const clearSearches = usePersonalizationStore((store) => store.clearSearchHistory)
   const resetAll = usePersonalizationStore((store) => store.resetRecommendations)
+
+  // The library is a separate domain with separate storage, so it reads from its
+  // own store and its controls sit under their own heading. Clearing one must
+  // never quietly clear the other (agents/44 → "Privacy").
+  const likedCount = useLibraryStore((store) => store.state.likedTrackKeys.length)
+  const playlistCount = useLibraryStore((store) => store.state.playlistOrder.length)
+  const libraryCount = useLibraryStore((store) => Object.keys(store.state.tracks).length)
+  const hiddenCount = useLibraryStore((store) => store.state.hiddenRecommendationKeys.length)
+  const libraryStorageAvailable = useLibraryStore((store) => store.storageAvailable)
+  const libraryHydrated = useLibraryStore((store) => store.hydrated)
+  const resetHidden = useLibraryStore((store) => store.resetHidden)
 
   useEffect(() => {
     document.title = 'Settings — Pulse'
@@ -135,6 +148,64 @@ export function SettingsPage() {
           }}
         />
 
+        <h2>Your Library</h2>
+        <p>
+          Liked Songs and playlists are saved <b>in this browser</b>, in its own storage, separately
+          from your listening history. There is no Pulse account and no cloud sync, so they do not
+          follow you to another device or another browser. Liking something in Pulse{' '}
+          <b>does not</b> change your Audius, Jamendo or YouTube account — Pulse is not signed in to
+          any of them.
+        </p>
+
+        <div className="settings-row">
+          <div>
+            <b>Saved on this device</b>
+            <span>
+              {likedCount} liked {likedCount === 1 ? 'song' : 'songs'} · {playlistCount}{' '}
+              {playlistCount === 1 ? 'playlist' : 'playlists'} · {libraryCount} saved{' '}
+              {libraryCount === 1 ? 'item' : 'items'}.
+            </span>
+          </div>
+          <Link className="retry-button" to="/library">
+            Open Your Library
+          </Link>
+        </div>
+
+        {/* Not a live region, unlike the confirmations below. This describes a
+            standing condition that is true from first paint and read in document
+            order; announcing it as a status would repeat it on unrelated
+            re-renders and compete with the confirmation that follows. */}
+        {!libraryStorageAvailable && libraryHydrated ? (
+          <p className="settings-warning">
+            This browser is not letting Pulse store a library, so anything you save will be lost when
+            you close the tab. Search and playback still work normally.
+          </p>
+        ) : null}
+
+        <DestructiveAction
+          id="reset-hidden"
+          title="Reset hidden recommendations"
+          description="Brings back everything you marked Not interested, so it can be suggested again. Your Liked Songs and playlists are not affected."
+          confirmLabel="Reset hidden recommendations"
+          disabled={hiddenCount === 0}
+          onConfirm={() => {
+            resetHidden()
+            showNotice('Hidden recommendations reset.')
+          }}
+        />
+
+        <DestructiveAction
+          id="clear-library"
+          title="Clear Library"
+          description="Deletes every Liked Song, every playlist and every hidden-recommendation record saved in this browser. Because likes and playlists are themselves the signal, this also removes their influence on your recommendations. Your listening history, search history, volume and playback settings are not touched, and nothing changes on Audius, Jamendo or YouTube."
+          confirmLabel="Clear Library"
+          disabled={libraryCount === 0 && hiddenCount === 0}
+          onConfirm={() => {
+            void clearLibrary()
+            showNotice('Your library has been cleared on this device.')
+          }}
+        />
+
         <h2>What is kept, and for how long</h2>
         <ul>
           <li>
@@ -142,6 +213,11 @@ export function SettingsPage() {
             {MAX_HISTORY_DAYS} days since you last played them.
           </li>
           <li>Searches you submit: the {MAX_SEARCH_HISTORY} most recent, deduplicated.</li>
+          <li>
+            Your library: the songs you like and the playlists you make, kept until you delete them.
+            For each saved song Pulse keeps only the title, artist, cover image address, duration and
+            the provider&rsquo;s own page — never a stream address.
+          </li>
           <li>
             YouTube videos you play: title, channel, thumbnail address and duration only, deleted
             automatically within {YOUTUBE_RETENTION_DAYS} days, as YouTube&rsquo;s API policies

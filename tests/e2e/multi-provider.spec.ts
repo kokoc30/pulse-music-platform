@@ -265,7 +265,8 @@ test.describe('provider outages degrade instead of breaking', () => {
     const row = page.locator('.song-row').filter({ hasText: 'Night Ghost' })
     await expect(row).toBeVisible()
     await expect(row).toHaveAttribute('aria-disabled', 'true')
-    await expect(row.getByRole('button')).toBeDisabled()
+    // The play control specifically: the heart and menu beside it stay usable.
+    await expect(row.locator('.song-row-action')).toBeDisabled()
   })
 })
 

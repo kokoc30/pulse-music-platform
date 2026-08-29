@@ -229,7 +229,8 @@ describe('made-for-kids and non-embeddable results', () => {
     const { user, youtube } = await openFallback()
     const row = youtubeRows().find((r) => within(r).queryByText('Qele Qele'))!
     expect(row.dataset.embeddable).toBe('true')
-    await user.click(within(row).getByRole('button'))
+    // Named: an embeddable row also carries the Phase 7 library heart and menu.
+    await user.click(within(row).getByRole('button', { name: /^Play /i }))
     await waitFor(() => expect(youtube.created).toBe(1))
     expect(youtube.current()?.videoId).toBe('aaaaaaaaaaa')
   })

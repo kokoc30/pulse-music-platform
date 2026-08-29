@@ -169,11 +169,17 @@ describe('attribution in the result list', () => {
     // stop being a button in the first place.
     const { container } = renderList(JAMENDO_FIXTURES)
     for (const row of container.querySelectorAll<HTMLElement>('.song-row')) {
-      const button = within(row).getByRole('button')
       const link = within(row).getByRole('link')
-      expect(button.contains(link)).toBe(false)
+      // Asserted against *every* button in the row, not just the play control.
+      // Phase 7 added the library heart and the overflow menu beside it, and the
+      // invalid-markup rule this test exists for applies to all of them.
+      const buttons = within(row).getAllByRole('button')
+      expect(buttons.length).toBeGreaterThan(0)
+      for (const button of buttons) {
+        expect(button.contains(link)).toBe(false)
+        expect(row.contains(button)).toBe(true)
+      }
       expect(link.closest('button')).toBeNull()
-      expect(row.contains(button)).toBe(true)
       expect(row.contains(link)).toBe(true)
     }
   })
@@ -182,12 +188,21 @@ describe('attribution in the result list', () => {
     const { container } = renderList(JAMENDO_FIXTURES)
     const rows = [...container.querySelectorAll<HTMLElement>('.song-row')]
 
+    // Named rather than "the only button in the row": since Phase 7 a row also
+    // carries the library heart and the overflow menu. The property under test
+    // is that there is exactly one *play* control and it reflects availability.
+    // A playable row is named "Play …"; a gated one names the track and says it
+    // is not available. Both are the row's single play control.
+    const playButton = (row: HTMLElement) =>
+      within(row).getByRole('button', { name: /^Play |not available to stream$/i })
+
     const playable = rows[0]
-    expect(within(playable).getByRole('button')).toBeEnabled()
+    expect(within(playable).getAllByRole('button', { name: /^Play /i })).toHaveLength(1)
+    expect(playButton(playable)).toBeEnabled()
     expect(playable).not.toHaveAttribute('aria-disabled')
 
     const gated = rows[2]
-    expect(within(gated).getByRole('button')).toBeDisabled()
+    expect(playButton(gated)).toBeDisabled()
     expect(gated).toHaveAttribute('aria-disabled', 'true')
     // A gated track keeps its backlink: it is still displayed content.
     expect(within(gated).getByRole('link', { name: /on Jamendo/i })).toBeInTheDocument()

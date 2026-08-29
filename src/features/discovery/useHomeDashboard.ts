@@ -10,6 +10,9 @@ import { planHomeSections, recentShelf } from '@/personalization/selectors'
 import type { HomeSectionId } from '@/personalization/selectors'
 import { usePersonalizationStore } from '@/personalization/store'
 import type { ListenEntry } from '@/personalization/types'
+import type { Mix } from '@/library/mixes'
+import { useMadeForYouMixes } from '@/features/library/useMixes'
+import { useLibraryStore } from '@/library/store'
 import { useDiscovery } from './useDiscovery'
 import type { DiscoveryState } from './useDiscovery'
 
@@ -39,6 +42,11 @@ export interface HomeDashboard {
   sections: HomeSectionId[]
   discovery: DiscoveryState
   profile: PersonalizationProfile
+  /**
+   * Made-for-you mixes, or an empty array when the evidence does not support
+   * any. Built from the same pool the shelves use, so they cost no requests.
+   */
+  mixes: Mix[]
   recommended: ScoredTrack[]
   recent: ListenEntry[]
   because: { seed: ArtistAffinity; tracks: Track[] } | null
@@ -90,16 +98,35 @@ export function useHomeDashboard(): HomeDashboard {
     [enabled, state.updatedAt],
   )
 
+  /**
+   * Everything excluded from a generated shelf.
+   *
+   * Two sources with different lifetimes: Phase 4's per-card dismissals, and
+   * Phase 7's *Not interested*, which lives in the library so it survives with
+   * or without personalization consent. Merged here rather than in the ranker,
+   * which has no business knowing there are two lists.
+   */
+  const hiddenKeys = useLibraryStore((store) => store.state.hiddenRecommendationKeys)
+  const excluded = useMemo(
+    () => [...state.dismissedItems, ...hiddenKeys],
+    [state.dismissedItems, hiddenKeys],
+  )
+
   const seed = useMemo(() => (enabled ? seedArtist(profile) : null), [enabled, profile])
+
+  // Built from the same free pool the shelves use, plus the Phase 6 session
+  // pool. Returns nothing on a cold profile, which is what keeps the section
+  // from appearing before there is anything behind it.
+  const mixes = useMadeForYouMixes(candidates)
 
   const recommended = useMemo(() => {
     if (!enabled || profile.stage === 'cold' || profile.stage === 'early') return []
     return buildRecommendations(candidates, profile, {
       history: state.listeningHistory,
-      dismissed: state.dismissedItems,
+      dismissed: excluded,
       size: SHELF_SIZE,
     })
-  }, [enabled, candidates, profile, state.listeningHistory, state.dismissedItems])
+  }, [enabled, candidates, profile, state.listeningHistory, excluded])
 
   const affinityKeys = useMemo(
     () => profile.artists.slice(0, 3).map((artist) => artist.key),
@@ -110,11 +137,11 @@ export function useHomeDashboard(): HomeDashboard {
     if (!enabled || affinityKeys.length === 0) return []
     return tracksByArtists(candidates, affinityKeys, {
       history: state.listeningHistory,
-      dismissed: state.dismissedItems,
+      dismissed: excluded,
       size: SHELF_SIZE,
       exclude: recommended.map((item) => item.track.id),
     })
-  }, [enabled, candidates, affinityKeys, state.listeningHistory, state.dismissedItems, recommended])
+  }, [enabled, candidates, affinityKeys, state.listeningHistory, excluded, recommended])
 
   const fetched = useFetchedArtistTracks(profile, pooledArtistTracks.length, enabled)
 
@@ -130,16 +157,18 @@ export function useHomeDashboard(): HomeDashboard {
 
   const becauseTracks = useMemo(() => {
     if (!seed) return []
-    const excluded = new Set([
+    // Rows another shelf on this page already used. Distinct from `excluded`,
+    // which is what the visitor asked never to see again.
+    const alreadyShown = [
       ...recommended.map((item) => item.track.id),
       ...artistTracks.map((track) => track.id),
-    ])
+    ]
     const pool = [...candidates, ...fetched]
     return tracksByArtists(pool, [seed.key], {
       history: state.listeningHistory,
-      dismissed: state.dismissedItems,
+      dismissed: excluded,
       size: SHELF_SIZE,
-      exclude: [...excluded],
+      exclude: alreadyShown,
     })
   }, [
     seed,
@@ -148,11 +177,12 @@ export function useHomeDashboard(): HomeDashboard {
     recommended,
     artistTracks,
     state.listeningHistory,
-    state.dismissedItems,
+    excluded,
   ])
 
   const sections = planHomeSections({
     stage: enabled ? profile.stage : 'cold',
+    hasMixes: mixes.length > 0,
     hasRecommendations: recommended.length >= 2,
     hasRecent: recent.length > 0,
     // The section names an artist out loud, so it needs both a defensible seed
@@ -165,6 +195,7 @@ export function useHomeDashboard(): HomeDashboard {
     sections,
     discovery,
     profile,
+    mixes,
     recommended,
     recent,
     because: seed && becauseTracks.length >= 2 ? { seed, tracks: becauseTracks } : null,

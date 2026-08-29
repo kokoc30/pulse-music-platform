@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { X } from 'lucide-react'
+import { Repeat, Repeat1, Shuffle, X } from 'lucide-react'
 import { useUiStore } from '@/app/ui-store'
 import { TrackList } from '@/components/track/TrackList'
 import { playQueueIndex } from '@/player/player-actions'
@@ -8,7 +8,11 @@ import {
   useIsPlaying,
   useQueue,
   useQueueContextLabel,
+  useRepeatMode,
+  useShuffle,
 } from '@/player/player-selectors'
+import { usePlayerStore } from '@/player/player-store'
+import { REPEAT_LABELS } from '@/player/queue-order'
 
 /**
  * Production addition: the reference has no queue UI, but the contract requires
@@ -22,6 +26,10 @@ export function QueuePanel() {
   const currentTrack = useCurrentTrack()
   const isPlaying = useIsPlaying()
   const contextLabel = useQueueContextLabel()
+  const shuffle = useShuffle()
+  const repeatMode = useRepeatMode()
+  const setShuffle = usePlayerStore((state) => state.setShuffle)
+  const cycleRepeatMode = usePlayerStore((state) => state.cycleRepeatMode)
   const closeRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -53,6 +61,41 @@ export function QueuePanel() {
           </div>
           <button ref={closeRef} type="button" onClick={() => setQueueOpen(false)} aria-label="Close queue">
             <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        {/* Shuffle and repeat belong to the queue, and this is the one surface
+            that shows the queue on every screen size. Below 560px the reference
+            collapses the player to a mini-player and hides everything but
+            play/pause, so without this the two controls would be unreachable on
+            a phone — which is not an acceptable reading of "professional player
+            controls" (agents/45). Same store, same actions as the bar. */}
+        <div className="queue-modes">
+          <button
+            type="button"
+            className="player-toggle"
+            data-active={shuffle ? 'true' : 'false'}
+            aria-pressed={shuffle}
+            aria-label={shuffle ? 'Shuffle on' : 'Shuffle off'}
+            onClick={() => setShuffle(!shuffle)}
+          >
+            <Shuffle size={15} aria-hidden="true" />
+            <span>{shuffle ? 'Shuffle on' : 'Shuffle'}</span>
+          </button>
+          <button
+            type="button"
+            className="player-toggle"
+            data-active={repeatMode === 'off' ? 'false' : 'true'}
+            aria-pressed={repeatMode !== 'off'}
+            aria-label={REPEAT_LABELS[repeatMode]}
+            onClick={cycleRepeatMode}
+          >
+            {repeatMode === 'one' ? (
+              <Repeat1 size={15} aria-hidden="true" />
+            ) : (
+              <Repeat size={15} aria-hidden="true" />
+            )}
+            <span>{REPEAT_LABELS[repeatMode]}</span>
           </button>
         </div>
         <div className="queue-body">

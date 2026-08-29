@@ -34,9 +34,10 @@ export function PrivacyPage() {
         <h2>There is no account and no database</h2>
         <p>
           Pulse has no sign-up, no login and no user profiles, and it stores nothing about you on a
-          server. What it does keep, it keeps in this browser&rsquo;s local storage: your player
-          volume and mute setting, and — if you turn it on — a listening history used to
-          personalise your home page. Clearing your browser data removes all of it.
+          server. What it does keep, it keeps in this browser: your player volume, mute and playback
+          settings; the songs and playlists you save to Your Library; and — if you turn it on — a
+          listening history used to personalise your home page. Clearing your browser data removes
+          all of it.
         </p>
 
         <h2>Personalised home page, stored on this device</h2>
@@ -85,6 +86,56 @@ export function PrivacyPage() {
           <Link to="/settings">Settings</Link> page. Turning it off deletes what was already there.
           With it off, search, playback and the queue all work exactly as before, and your home page
           shows the general discovery shelves.
+        </p>
+
+        <h2>Your Library is saved on this device only</h2>
+        <p>
+          Liking a song or making a playlist in Pulse saves it in <b>this browser</b>, in its own
+          storage area, separately from your listening history. There is no Pulse account and no
+          cloud sync, so:
+        </p>
+        <ul>
+          <li>
+            <b>It does not follow you.</b> Your library exists in this browser on this device.
+            Another browser, another phone or a private window each starts empty.
+          </li>
+          <li>
+            <b>Nothing about a provider account changes.</b> Pulse is not signed in to Audius,
+            Jamendo or YouTube — it has no login for any of them. A heart in Pulse is a record in
+            this browser and nothing else, which is why the app says <i>Liked in Pulse</i> and{' '}
+            <i>Saved to a Pulse playlist</i> rather than just &ldquo;liked&rdquo;. Deleting your
+            Pulse library removes nothing from those services, and never did anything to them in the
+            first place.
+          </li>
+          <li>
+            <b>What is stored for each saved song.</b> Its provider and id, title, artist, the
+            address of its cover image, its duration, and the provider&rsquo;s own page for it —
+            the same things already on your screen. Playlists additionally store the name and
+            description you typed and the order you put the songs in.
+          </li>
+          <li>
+            <b>What is never stored.</b> Audio or video files, stream addresses, API keys, or any
+            credential. Because no stream address is kept, playing something from your library asks
+            the provider for it again at that moment.
+          </li>
+          <li>
+            <b>Not interested.</b> If you hide a suggestion, Pulse records only that one item&rsquo;s
+            id so it can stop showing it. It records no reason, and draws no conclusion about you
+            from it.
+          </li>
+        </ul>
+        <p>
+          <b>YouTube items saved to your library follow the shorter YouTube rule</b> described below:
+          they are deleted automatically within 30 days, whether they are in Liked Songs or in a
+          playlist.
+        </p>
+        <p>
+          You can delete your whole library at any time with <i>Clear Library</i> on the{' '}
+          <Link to="/settings">Settings</Link> page. That removes your Liked Songs, your playlists
+          and your hidden suggestions, and — because those saves are themselves what shapes your
+          recommendations — their influence on what Pulse suggests. It does not touch your listening
+          history, your searches, or your volume and playback settings, which are cleared by their
+          own separate controls.
         </p>
 
         <h2>Music comes from three external providers</h2>
@@ -146,7 +197,7 @@ export function PrivacyPage() {
           reloading Pulse makes no YouTube request of any kind, however much you have watched.
         </p>
 
-        <h3>YouTube videos in your history</h3>
+        <h3>YouTube videos in your history and your library</h3>
         <p>
           If personalisation is on and you play a YouTube video, Pulse remembers it so it can appear
           in <i>Recently played</i>. YouTube&rsquo;s API rules govern that copy, and they are
@@ -163,12 +214,21 @@ export function PrivacyPage() {
             while it is open.
           </li>
           <li>
+            <b>The same 30-day limit applies to a YouTube video you save.</b> If you like a YouTube
+            result or add one to a playlist, that saved copy expires too — and when it does, Pulse
+            deletes the whole saved item, including its place in your Liked Songs and in any
+            playlist. It does not keep a nameless placeholder. To keep such a video, search for it
+            again and save it again.
+          </li>
+          <li>
             <b>No view counts, likes, ratings or engagement figures are stored</b> — Pulse never
             asks YouTube for them in the first place.
           </li>
           <li>
             <b>YouTube data plays no part in your music recommendations.</b> Your suggestions are
-            worked out only from Audius and Jamendo listening and from searches you typed yourself.
+            worked out only from Audius and Jamendo listening, from Audius and Jamendo tracks you
+            saved, and from searches you typed yourself. Liking a YouTube video changes nothing about
+            what Pulse recommends.
           </li>
           <li>
             No video or audio is ever downloaded, copied or stored. Playback always goes through
@@ -197,6 +257,11 @@ export function PrivacyPage() {
           <li>
             It does not link that history to an identity. There is no account, no login and no
             identifier that persists beyond this browser&rsquo;s storage.
+          </li>
+          <li>
+            It does not act on your behalf on any provider. It does not favourite, like, follow,
+            subscribe, or create a playlist on Audius, Jamendo or YouTube, and it has no permission
+            to — there is no provider sign-in anywhere in this app.
           </li>
           <li>It runs no analytics, no advertising and no third-party tracking scripts of its own.</li>
           <li>

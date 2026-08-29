@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react'
-import { Compass, Disc3, Flame, Home, ListMusic, Radio, Search, Users, X } from 'lucide-react'
+import { Compass, Disc3, Flame, Heart, Home, Library, ListMusic, Radio, Search, Users, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useUiStore } from '@/app/ui-store'
 import { SHELF_ANCHORS } from '@/features/discovery/shelves'
 import { playUnderground } from '@/features/discovery/playShelf'
+import { LIBRARY_ROUTES } from '@/library/library-actions'
 import { AUDIUS_LINKS } from '@/lib/links'
 
 /**
@@ -57,6 +58,15 @@ export function MobileNavDrawer() {
           <button type="button" onClick={focusSearch}>
             <Search size={18} aria-hidden="true" /> Search
           </button>
+          {/* Phase 7: the library reaches the same navigation the sidebar does,
+              because below 830px the sidebar is hidden entirely and this drawer
+              is the only way to anything (docs/reference-deviations.md D-11). */}
+          <Link to={LIBRARY_ROUTES.library} onClick={close}>
+            <Library size={18} aria-hidden="true" /> Your Library
+          </Link>
+          <Link to={LIBRARY_ROUTES.liked} onClick={close}>
+            <Heart size={18} aria-hidden="true" /> Liked Songs
+          </Link>
           <Link to={`/#${SHELF_ANCHORS.trending}`} onClick={close}>
             <Flame size={18} aria-hidden="true" /> Trending
           </Link>

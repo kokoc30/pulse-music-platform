@@ -5,6 +5,7 @@ import { MobileNavDrawer } from '@/components/navigation/MobileNavDrawer'
 import { GlobalPlayer } from '@/components/player/GlobalPlayer'
 import { QueuePanel } from '@/components/queue/QueuePanel'
 import { YouTubePlayerSurface } from '@/components/youtube/YouTubePlayerSurface'
+import { LibraryHost } from '@/features/library/LibraryHost'
 import { PersonalizationHost } from '@/features/personalization/PersonalizationHost'
 import { MediaSessionHost } from '@/features/playback/MediaSessionHost'
 import { PlayerEngineHost } from '@/features/playback/PlayerEngineHost'
@@ -36,6 +37,10 @@ export function AppShell() {
           as merely "replaced", and the `ended` event would arrive after the
           session it describes had already closed. */}
       <PersonalizationHost />
+      {/* Your Library: hydration, the YouTube retention sweep, and the one link
+          between explicit saves and the preference profile. Renders nothing,
+          and lives above the router so a like survives navigation. */}
+      <LibraryHost />
       <PlayerEngineHost />
       {/* OS media controls for the audio engine only. Cleared whenever YouTube
           claims playback, so no lock-screen button can reach a hidden video. */}

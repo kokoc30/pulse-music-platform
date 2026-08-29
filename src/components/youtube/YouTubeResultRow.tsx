@@ -1,5 +1,8 @@
 import { ExternalLink, Play } from 'lucide-react'
+import { LikeButton } from '@/components/library/LikeButton'
+import { TrackMenu } from '@/components/library/TrackMenu'
 import { formatDuration } from '@/lib/format'
+import { trackRefFromYouTube } from '@/library/track-ref'
 import { canEmbedYouTubeItem, embedBlockReason } from '@/music/youtube'
 import type { YouTubeVideoItem } from '@/music/types'
 import { YouTubeThumbnail } from './YouTubeThumbnail'
@@ -96,6 +99,32 @@ export function YouTubeResultRow({ item, isCurrent, isPlaying, onPlay }: YouTube
             ? formatDuration(item.durationSeconds)
             : '--:--'}
       </span>
+
+      {/* Saving a YouTube result is a Pulse-local, *temporary* record. Only the
+          fields already on this row are kept, no statistics are stored, and the
+          copy is deleted within 30 days as YouTube's Developer Policies require
+          (agents/44; src/library/youtube-policy.ts). Nothing here touches a
+          YouTube account — Pulse has no YouTube OAuth.
+
+          A row Pulse may not embed gets no library actions either. Saving one
+          would create a library entry that can never play — `canPlaySavedYouTubeRef`
+          requires the same embeddable / not-made-for-kids pair this row does — so
+          the heart would promise something the policy forbids delivering. Such a
+          row keeps exactly one affordance, its link to YouTube. */}
+      {embeddable ? (
+        <span className="yt-row-actions">
+          <LikeButton
+            itemKey={item.id}
+            title={item.title}
+            toRef={() => trackRefFromYouTube(item)}
+          />
+          <TrackMenu
+            title={item.title}
+            itemKey={item.id}
+            toRef={() => trackRefFromYouTube(item)}
+          />
+        </span>
+      ) : null}
 
       {isCurrent ? (
         <span className="yt-row-state">{isPlaying ? 'Playing' : 'Paused'}</span>

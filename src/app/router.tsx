@@ -1,5 +1,8 @@
 import { createBrowserRouter } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
+import { LibraryPage } from '@/features/library/LibraryPage'
+import { LikedSongsPage } from '@/features/library/LikedSongsPage'
+import { PlaylistPage } from '@/features/library/PlaylistPage'
 import { HomePage } from '@/pages/HomePage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { PrivacyPage } from '@/pages/PrivacyPage'
@@ -18,6 +21,12 @@ export const routes = [
     children: [
       { index: true, element: <HomePage /> },
       { path: 'search', element: <SearchPage /> },
+      // Phase 7: the local library. Three routes rather than one page with
+      // internal state, so Liked Songs and each playlist are real, shareable,
+      // back-button-friendly URLs (agents/42).
+      { path: 'library', element: <LibraryPage /> },
+      { path: 'library/liked', element: <LikedSongsPage /> },
+      { path: 'playlist/:playlistId', element: <PlaylistPage /> },
       // Phase 3: the disclosure agents/26 requires, on its own shareable URL.
       { path: 'privacy', element: <PrivacyPage /> },
       // Phase 4: the clear/reset controls STEP 16 asks for, kept off the home

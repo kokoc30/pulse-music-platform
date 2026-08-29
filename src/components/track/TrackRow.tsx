@@ -1,5 +1,7 @@
-import { MoreHorizontal } from 'lucide-react'
+import { LikeButton } from '@/components/library/LikeButton'
+import { TrackMenu } from '@/components/library/TrackMenu'
 import { formatDuration } from '@/lib/format'
+import { trackRefFromTrack } from '@/library/track-ref'
 import { providerLabel } from '@/music/provider-labels'
 import type { Track } from '@/music/types'
 import { Artwork } from './Artwork'
@@ -12,8 +14,10 @@ interface TrackRowProps {
   isCurrent: boolean
   isPlaying: boolean
   onPlay: () => void
-  /** Queue rows drop the trailing overflow glyph to fit the narrower panel. */
+  /** Queue rows keep the heart but drop the overflow menu, to fit the panel. */
   compact?: boolean
+  /** Offered only on generated recommendation surfaces. */
+  canHide?: boolean
 }
 
 /**
@@ -49,6 +53,7 @@ export function TrackRow({
   isPlaying,
   onPlay,
   compact = false,
+  canHide = false,
 }: TrackRowProps) {
   const unavailable = !track.isStreamable
   // Provider-credited rows say so in their accessible name too, so a screen
@@ -97,7 +102,25 @@ export function TrackRow({
       <span className="song-duration">
         {unavailable ? 'Gated' : formatDuration(track.durationSeconds)}
       </span>
-      {compact ? null : <MoreHorizontal size={20} aria-hidden="true" />}
+      {/* The reference drew a decorative ⋯ glyph here. Phase 7 gives that slot
+          the two real actions the design was always implying: the Pulse heart
+          and the overflow menu. The queue panel is narrower, so it keeps the
+          heart and drops the menu rather than crowding the row. */}
+      <span className="song-row-actions">
+        <LikeButton
+          itemKey={track.id}
+          title={track.title}
+          toRef={() => trackRefFromTrack(track)}
+        />
+        {compact ? null : (
+          <TrackMenu
+            title={track.title}
+            itemKey={track.id}
+            toRef={() => trackRefFromTrack(track)}
+            canHide={canHide}
+          />
+        )}
+      </span>
     </div>
   )
 }

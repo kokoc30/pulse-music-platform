@@ -1,13 +1,19 @@
 import { ExternalLink } from 'lucide-react'
+import { LikeButton } from '@/components/library/LikeButton'
 import { Artwork } from '@/components/track/Artwork'
 import { ProviderCredit } from '@/components/track/ProviderCredit'
+import { trackRefFromTrack } from '@/library/track-ref'
 import { providerLabel } from '@/music/provider-labels'
 import type { Track } from '@/music/types'
 
 /**
- * The reference's `.player-track` cluster. Its "Like" heart needs an account
- * store, which V1 does not have, so the slot carries the provider backlink
- * instead (docs/reference-deviations.md D-06).
+ * The reference's `.player-track` cluster.
+ *
+ * The reference drew a "Like" heart here and V1 had nowhere to put the state, so
+ * the slot carried the provider backlink instead (docs/reference-deviations.md
+ * D-06). Phase 7 restores the heart, and it is the *same* component the search
+ * rows and home cards use, reading the same store — the backlink stays, because
+ * Jamendo's attribution requirement did not go away.
  *
  * The now-playing cluster is the one context every played track passes through,
  * which makes it the right home for Jamendo's required per-item backlink: while
@@ -37,6 +43,13 @@ export function PlayerTrackInfo({ track }: { track: Track }) {
           <ProviderCredit track={track} variant="link" />
         </span>
       </div>
+      <LikeButton
+        itemKey={track.id}
+        title={track.title}
+        toRef={() => trackRefFromTrack(track)}
+        variant="prominent"
+        size={18}
+      />
       {iconLink ? (
         <a
           href={iconLink}

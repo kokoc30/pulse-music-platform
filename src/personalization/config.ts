@@ -125,6 +125,49 @@ export const MIN_SEED_PLAYS = 2
  */
 export const MAX_AFFINITY_LOOKUPS = 2
 
+/* --------------------------------------------------------------------------
+   Explicit library intent (Phase 7)
+   -------------------------------------------------------------------------- */
+
+/**
+ * What one Pulse Like is worth to the preference profile.
+ *
+ * Calibrated against the listening weights above rather than picked. An ordinary
+ * qualified listen is worth `WEIGHTS.qualified` = 1; a like is worth twice that,
+ * because saying "keep this" is a deliberate statement and pressing play is not.
+ * It stays below what a genuinely repeated, completed listen can reach
+ * (2 × `MAX_REPEAT_FACTOR`), so a single heart cannot outrank a track the
+ * visitor has actually returned to for weeks (agents/43 → "Signal hierarchy").
+ */
+export const EXPLICIT_LIKE_WEIGHT = 2
+
+/**
+ * What being in at least one playlist is worth, added once.
+ *
+ * Curating something into a list is weaker evidence than liking it — a playlist
+ * can be a theme, a mood, or music kept for someone else — but it is still
+ * explicit. Added once regardless of how many playlists hold the track.
+ */
+export const EXPLICIT_PLAYLIST_WEIGHT = 1
+
+/**
+ * Floor on how far an explicit signal may decay.
+ *
+ * Listening decays with a 21-day half-life because attention genuinely moves on.
+ * A like is a statement rather than a moment, so it fades as taste changes but
+ * never to nothing: an old favourite still counts for half of what it did the
+ * day it was saved.
+ */
+export const EXPLICIT_MIN_DECAY = 0.5
+
+/**
+ * Explicit items folded into one profile pass.
+ *
+ * Bounds the work on a very large library. Most recently saved first, so the cap
+ * drops the oldest evidence rather than an arbitrary slice.
+ */
+export const MAX_EXPLICIT_ITEMS = 400
+
 export const MS_PER_DAY = 86_400_000
 export const MS_PER_HOUR = 3_600_000
 

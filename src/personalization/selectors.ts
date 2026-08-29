@@ -19,6 +19,7 @@ import type { ListenEntry, PersonalizationState } from './types'
  */
 
 export type HomeSectionId =
+  | 'mixes'
   | 'recommended'
   | 'recent'
   | 'because'
@@ -40,12 +41,29 @@ const CLOSING_SECTION: HomeSectionId = 'charts'
 
 /** Preferred personalized shelves per stage, best first. */
 const STAGE_PREFERENCES: Record<ProfileStage, HomeSectionId[]> = {
-  cold: [],
+  /**
+   * `mixes` appears even at cold, and that is not a contradiction.
+   *
+   * `stage` measures *listening*, and it is the right gate for shelves that make
+   * a claim about listening. Phase 7 introduced a second, independent kind of
+   * evidence: things the visitor deliberately saved. Someone who has liked five
+   * tracks without finishing a listen has told the app more than someone who
+   * half-played five — so gating their mixes on a listening stage would be the
+   * dishonest answer, not the cautious one.
+   *
+   * The honesty guarantee lives where the evidence does: `buildMixes` returns
+   * nothing without enough of it, and `hasMixes` here is simply whether one
+   * could actually be built. A browser with no library and no history still gets
+   * exactly the Phase 1–3 discovery page (agents/43 → "Cold start").
+   */
+  cold: ['mixes'],
   // Two clicks are not a taste profile. The honest offer at this stage is "here
   // is what you just played", not "here is what we think you like" (STEP 9).
-  early: ['recent'],
-  warm: ['recommended', 'recent', 'artists'],
-  mature: ['recommended', 'recent', 'because', 'artists'],
+  early: ['mixes', 'recent'],
+  // Once listening supports them too, mixes lead: they are the strongest thing
+  // the app can say, and they are only ever offered with evidence behind them.
+  warm: ['mixes', 'recommended', 'recent', 'artists'],
+  mature: ['mixes', 'recommended', 'recent', 'because', 'artists'],
 }
 
 /** Discovery shelves, in the order they are handed back unused slots. */
@@ -53,6 +71,8 @@ const DISCOVERY_ORDER: HomeSectionId[] = ['trending', 'popular-artists', 'month'
 
 export interface HomePlanInput {
   stage: ProfileStage
+  /** True when at least one made-for-you mix could actually be filled. */
+  hasMixes?: boolean
   hasRecommendations: boolean
   hasRecent: boolean
   hasBecause: boolean
@@ -60,6 +80,7 @@ export interface HomePlanInput {
 }
 
 const AVAILABILITY: Record<string, (input: HomePlanInput) => boolean> = {
+  mixes: (input) => input.hasMixes === true,
   recommended: (input) => input.hasRecommendations,
   recent: (input) => input.hasRecent,
   because: (input) => input.hasBecause,
@@ -108,6 +129,7 @@ export function planHomeSections(input: HomePlanInput): HomeSectionId[] {
 
 /** Headings. Personalized copy never makes a claim about who the listener is. */
 export const HOME_SECTION_TITLES: Record<HomeSectionId, string> = {
+  mixes: 'Made for you',
   recommended: 'Recommended for you',
   recent: 'Recently played',
   because: 'Because you listened to',
@@ -121,6 +143,7 @@ export const HOME_SECTION_TITLES: Record<HomeSectionId, string> = {
 
 /** Anchor ids, so the header and footer utility links keep working. */
 export const HOME_SECTION_ANCHORS: Record<HomeSectionId, string> = {
+  mixes: 'made-for-you',
   recommended: 'recommended',
   recent: 'recently-played',
   because: 'because',
