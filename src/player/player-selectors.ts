@@ -63,18 +63,27 @@ export function selectCanSkipNext(s: PlayerState): boolean {
 
 export const useCanSkipNext = (): boolean => usePlayerStore(selectCanSkipNext)
 
-export const useHasPrevious = (): boolean =>
-  usePlayerStore(
-    (s) =>
-      s.currentTime > 0 ||
-      previousQueueIndex({
-        queueLength: s.queue.length,
-        currentIndex: s.currentIndex,
-        shuffle: s.shuffle,
-        shuffleOrder: s.shuffleOrder,
-        repeatMode: s.repeatMode,
-      }) !== null,
+/**
+ * Whether Previous would do anything — either restart this track, or step back.
+ *
+ * Exported as a pure predicate, not left inline in the hook, so the unified
+ * snapshot can reuse it rather than restating it. A duplicated transport
+ * predicate is exactly what put `useHasNext` and `playNext` out of step.
+ */
+export function selectHasPrevious(s: PlayerState): boolean {
+  return (
+    s.currentTime > 0 ||
+    previousQueueIndex({
+      queueLength: s.queue.length,
+      currentIndex: s.currentIndex,
+      shuffle: s.shuffle,
+      shuffleOrder: s.shuffleOrder,
+      repeatMode: s.repeatMode,
+    }) !== null
   )
+}
+
+export const useHasPrevious = (): boolean => usePlayerStore(selectHasPrevious)
 
 export const useRepeatMode = (): RepeatMode => usePlayerStore((s) => s.repeatMode)
 export const useShuffle = (): boolean => usePlayerStore((s) => s.shuffle)

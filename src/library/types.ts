@@ -157,6 +157,22 @@ export const MAX_ARTWORK_MIRRORS = 4
 /** Artwork references a generated cover collage draws from. */
 export const COVER_COLLAGE_SIZE = 4
 
+/**
+ * The two sentences a like toggle reports, in one place.
+ *
+ * They live in this dependency-free module rather than beside the action,
+ * because two layers need them and the layers may not import each other: the
+ * library imports the player (to route a saved reference to its engine), so the
+ * player's unified transport cannot import the library back without a cycle.
+ *
+ * The wording says **in Pulse** on the way in, every time. Pulse has no provider
+ * OAuth, so a heart here changes nothing on Audius, Jamendo or YouTube, and copy
+ * that implied otherwise would be a false claim about someone else's service
+ * (agents/44 → "Clear disclosure").
+ */
+export const LIKE_ADDED_MESSAGE = 'Added to Liked Songs in Pulse'
+export const LIKE_REMOVED_MESSAGE = 'Removed from Liked Songs'
+
 /** How the last library storage attempt went. Surfaced so the UI can be honest. */
 export type LibraryStorageStatus =
   /** Read and parsed cleanly, including "there was nothing there yet". */

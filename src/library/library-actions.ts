@@ -4,11 +4,11 @@ import { getMusicProvider } from '@/music/provider'
 import { MusicError } from '@/music/types'
 import type { MediaItem, Track } from '@/music/types'
 import { usePersonalizationStore } from '@/personalization/store'
-import { playTrack } from '@/player/player-actions'
 import { usePlayerStore } from '@/player/player-store'
-import { playYouTubeVideo } from '@/player/youtube-actions'
+import { unifiedPlay } from '@/player/unified-actions'
 import { trackRefFromMediaItem, youTubeItemFromRef } from './track-ref'
 import { useLibraryStore } from './store'
+import { LIKE_ADDED_MESSAGE, LIKE_REMOVED_MESSAGE } from './types'
 import type { LibraryResult, LibraryTrackRef } from './types'
 import { canPlaySavedYouTubeRef } from './youtube-policy'
 
@@ -141,7 +141,7 @@ export async function playLibraryRef(
       showNotice('That video is no longer saved here. Search for it again to play it.')
       return
     }
-    await playYouTubeVideo(item, { userInitiated: true })
+    await unifiedPlay(item)
     return
   }
 
@@ -151,7 +151,7 @@ export async function playLibraryRef(
       showNotice("That track isn't available to stream right now.")
       return
     }
-    await playTrack(track, { queue: [track], index: 0, context })
+    await unifiedPlay(track, context)
   } catch (error) {
     showNotice(
       error instanceof MusicError ? error.userMessage : 'That track is unavailable right now.',
@@ -215,7 +215,7 @@ export async function playPlaylist(
     return
   }
 
-  await playTrack(first, { queue: [first], index: 0, context })
+  await unifiedPlay(first, context)
 
   const remaining = audioRefs.slice(firstAt + 1)
   if (remaining.length === 0) return
@@ -266,9 +266,7 @@ export function toggleLibraryLikeRef(ref: LibraryTrackRef): LibraryResult {
   const store = useLibraryStore.getState()
   const wasLiked = store.state.likedTrackKeys.includes(ref.key)
   const result = store.toggleLiked(ref)
-  showNotice(
-    libraryMessage(result, wasLiked ? 'Removed from Liked Songs' : 'Added to Liked Songs in Pulse'),
-  )
+  showNotice(libraryMessage(result, wasLiked ? LIKE_REMOVED_MESSAGE : LIKE_ADDED_MESSAGE))
   return result
 }
 

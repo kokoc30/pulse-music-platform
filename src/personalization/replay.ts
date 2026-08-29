@@ -3,8 +3,7 @@ import { multiProviderSearch } from '@/music/aggregator'
 import { getMusicProvider } from '@/music/provider'
 import { MusicError } from '@/music/types'
 import type { Track, YouTubeVideoItem } from '@/music/types'
-import { playTrack } from '@/player/player-actions'
-import { playYouTubeVideo } from '@/player/youtube-actions'
+import { unifiedPlay } from '@/player/unified-actions'
 import { canReplayStoredYouTubeEntry } from './youtube-retention'
 import type { ListenEntry } from './types'
 
@@ -98,7 +97,7 @@ export async function playHistoryEntry(
       showNotice('That video is no longer available here. Try searching for it again.')
       return
     }
-    await playYouTubeVideo(item, { userInitiated: true })
+    await unifiedPlay(item)
     return
   }
 
@@ -108,7 +107,7 @@ export async function playHistoryEntry(
       showNotice("That track isn't available to stream right now.")
       return
     }
-    await playTrack(track, { queue: [track], index: 0, context })
+    await unifiedPlay(track, context)
   } catch (error) {
     showNotice(
       error instanceof MusicError ? error.userMessage : 'That track is unavailable right now.',
