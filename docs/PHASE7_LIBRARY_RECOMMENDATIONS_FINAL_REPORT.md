@@ -6,8 +6,12 @@
 
 ## 1. Status
 
-**PASS**, on every criterion in `agents/47_DEFINITION_OF_DONE.md`, with two limitations
-stated plainly in §20 and one deliberate policy decision recorded in §12.
+**PASS on every local criterion** in `agents/47_DEFINITION_OF_DONE.md` — library, player
+integration, recommendations, provider safety, security and all six gates — **with one
+criterion open**: the deployed Functions were not exercised, because the Vercel deployment
+is behind Deployment Protection. See §17; it is reported as unverified, not assumed.
+
+Limitations are listed in §20; the one deliberate policy decision is recorded in §14.
 
 | Gate | Baseline (before) | After | Result |
 | --- | --- | --- | --- |
@@ -22,9 +26,10 @@ Net new deterministic coverage: **+13 test files, +289 unit/component tests, +71
 tests**. No existing test was deleted or weakened; the five that changed are itemised
 in §18, each with the reason.
 
-Production deployment verification is recorded in §17. **It is the one item that
-required a real deploy and is reported exactly as observed — see §17 before treating
-this phase as shipped.**
+The work is committed and pushed (`5658924`), and **Vercel built it successfully**.
+The live Functions could not be exercised because the deployment sits behind Vercel
+Deployment Protection, which no credential in this environment can pass. That is
+recorded exactly as observed in §17, and is **not** counted as a pass.
 
 ---
 
@@ -543,27 +548,52 @@ goes:
 - `pnpm build` passes with the production graph.
 - `pnpm verify:bundle` PASS — 0 matches across 12 files.
 
-### Production endpoint verification — **NOT PERFORMED**
+### Production endpoint verification — **BLOCKED by Deployment Protection**
 
-**This is the one Definition-of-Done item not verified, and it is reported as unverified
-rather than assumed.** The phase was completed locally; the changes have **not** been
-committed, pushed or deployed, so `/api/jamendo` and `/api/youtube` have not been exercised
-against the live deployment, and no manual QA on production HTTPS or on an installed PWA
-has been carried out.
+Pushed and deployed. **The Functions could not be exercised**, for a reason outside this
+repository, and this report does not claim a production pass.
 
-What remains to close it, in order:
+What was done and observed:
 
-1. Commit and push to `main`.
-2. Let Vercel deploy.
-3. `GET /api/jamendo?action=search&q=night` → expect `200` with a sanitized payload, **not**
-   `500 FUNCTION_INVOCATION_FAILED`.
-4. `GET /api/youtube?action=search&q=night` → expect `200`, or the documented
-   `503 UNAVAILABLE` when no key is configured — either is a healthy Function; a `500` is
-   not.
-5. Walk §19 on the deployed origin.
+1. Committed `5658924` and pushed `abf7c65..5658924` to `origin/main`
+   (`github.com/kokoc30/pulse-music-platform`).
+2. Vercel built it. The GitHub deployment for that exact SHA (`6150567440`) reports
+   `state: success`, `environment: Production`, at
+   `https://pulse-music-platform-ldh0eelp6-kokos-projects-8df176f4.vercel.app`.
+   **The production build passed on Vercel** — which is the failure mode the previous
+   phase's build fix addressed, and it is genuinely confirmed.
+3. Requesting the endpoints on that URL returns **`302` to `vercel.com/sso-api`**, not an
+   application response. The same is true of the project's other aliases
+   (`…-kokos-projects-8df176f4.vercel.app`, `…-git-main-…`). The deployment sits behind
+   **Vercel Deployment Protection (SSO)**, so every request — Function or asset — is
+   intercepted before it reaches the app.
+4. There are no Vercel credentials in this environment (`vercel whoami` → *Logged out*),
+   no `.vercel/` project link, and no `VERCEL_AUTOMATION_BYPASS_SECRET` configured, so the
+   protection cannot be bypassed from here.
 
-The static risk is low — the serverless surface is byte-identical and its guard test
-passes — but "low risk" is not "verified", and this report does not claim otherwise.
+**A `302` from the protection layer is not evidence either way about the Functions.** It
+proves nothing about `ERR_MODULE_NOT_FOUND`, and it is not being counted as a pass.
+
+### To close it out
+
+Any one of these unblocks it:
+
+- Vercel → Project → Settings → **Deployment Protection** → disable for Production; or
+- generate a **Protection Bypass for Automation** secret and request the endpoints with
+  `?x-vercel-protection-bypass=<secret>`; or
+- simply open the two URLs in a browser already logged in to that Vercel account.
+
+Then confirm neither Function crashes:
+
+- `GET /api/jamendo?action=search&q=hello` → **200** with the sanitized search envelope.
+- `GET /api/youtube?action=search&q=hello` → **200**, or **429** on spent quota, or
+  **503** if `YOUTUBE_API_KEY` is unset. All three prove the module loaded.
+- A **`500 FUNCTION_INVOCATION_FAILED`**, or `ERR_MODULE_NOT_FOUND` in the Function logs,
+  would be the regression to look for. Nothing in this phase touched `api/`, `server/`,
+  `vercel.json` or any `tsconfig`, and `server/module-resolution.test.ts` passes, so this
+  is not expected — but it is unverified, not verified.
+
+Then walk §19 on that origin, and install the PWA on a real phone for the mobile pass.
 
 ---
 
@@ -649,7 +679,11 @@ layer, which is the existing project rule.
 
 ## 20. Known limitations
 
-1. **Production not verified.** See §17. The single open Definition-of-Done item.
+1. **Live Functions not exercised.** The deploy built successfully on Vercel, but every
+   request to it is intercepted by Deployment Protection, so `/api/jamendo` and
+   `/api/youtube` were not called on production and no manual QA ran on that origin.
+   One setting change or a bypass token closes it — see §17. The single open
+   Definition-of-Done item.
 2. **Playlist playback resolves at most 100 items per Play.** A longer playlist plays its
    first hundred from the chosen row; the rest stay visible and are reachable by starting
    from a later row. A bounded burst on an explicit action was preferred to an unbounded
