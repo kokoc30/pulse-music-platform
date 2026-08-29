@@ -117,7 +117,7 @@ test.describe('the bar follows the engine that is playing', () => {
     await results.first().click()
 
     // The official player opens…
-    await expect(page.getByTestId('youtube-surface')).toBeVisible()
+    await expect(page.getByTestId('youtube-stage')).toBeVisible()
     // …and the bar now names the video, not the Audius track.
     await expect(barTitle(page)).toHaveText('Sourp Sarkis')
     await expect(bar(page)).toContainText('Aram Asatryan - Topic')
@@ -130,7 +130,7 @@ test.describe('the bar follows the engine that is playing', () => {
 
     // Closing the video hands the bar back to the preserved, paused track.
     await page.getByRole('button', { name: /Close the YouTube player/ }).click()
-    await expect(page.getByTestId('youtube-surface')).toHaveCount(0)
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(0)
     await expect(barTitle(page)).toHaveText('Night Signal')
     // Exact: 'Play' is a substring of 'Open Now Playing' and 'Play queue'.
     await expect(bar(page).getByRole('button', { name: 'Play', exact: true })).toBeVisible()
@@ -152,35 +152,58 @@ test.describe('the bar follows the engine that is playing', () => {
 
     const calls = recordYouTubeApiTraffic(page)
 
-    await bar(page).getByRole('button', { name: 'Next YouTube result' }).click()
+    await bar(page).getByRole('button', { name: 'Next track' }).click()
     await expect(barTitle(page)).toHaveText('Barov Ari')
 
-    await bar(page).getByRole('button', { name: 'Previous YouTube result' }).click()
+    await bar(page).getByRole('button', { name: 'Previous track' }).click()
     await expect(barTitle(page)).toHaveText('Sourp Sarkis')
 
     expect(calls).toEqual([])
   })
 
-  test('the bar never draws over the player', async ({ page }) => {
+  /**
+   * The player now *docks into* the bar rather than floating above it, so "the
+   * bar is below the stage" is no longer the invariant — and it never was the
+   * one that mattered. What the policies actually require is that no part of
+   * this application is painted in front of the player, and that the player
+   * keeps its documented minimum size. Both are asserted directly here, by
+   * hit-testing the real compositor rather than by comparing rectangles.
+   */
+  test('nothing is ever painted in front of the player', async ({ page }) => {
     await page.goto('/search?q=aram asatryan')
     await page.getByTestId('youtube-fallback').click()
     await page.locator('[data-testid="youtube-result"]').first().click()
-    await expect(page.getByTestId('youtube-surface')).toBeVisible()
+    await expect(page.getByTestId('youtube-stage')).toBeVisible()
 
     const stage = (await page.getByTestId('youtube-stage').boundingBox())!
-    const player = (await bar(page).boundingBox())!
-    // The bar sits entirely below the video stage.
-    expect(player.y).toBeGreaterThanOrEqual(stage.y + stage.height - 1)
-    // And nothing of the bar is inside the stage.
+
+    // The documented floor, in the rendered layout rather than in a stylesheet.
+    expect(stage.width).toBeGreaterThanOrEqual(200)
+    expect(stage.height).toBeGreaterThanOrEqual(200)
+
+    // Nothing of the bar is inside the stage: every control is a sibling.
     const inStage = await page.evaluate(
       () => document.querySelectorAll('[data-testid="youtube-stage"] .music-player').length,
     )
     expect(inStage).toBe(0)
+
+    // And whatever the compositor puts at the stage's corners and centre is the
+    // stage itself, not the bar in front of it.
+    const covering = await page.evaluate(({ x, y, width, height }) => {
+      const points: [number, number][] = [
+        [x + width / 2, y + height / 2],
+        [x + 4, y + 4],
+        [x + width - 4, y + height - 4],
+      ]
+      return points.map((point) => {
+        const node = document.elementFromPoint(point[0], point[1])
+        return node?.closest('[data-testid="youtube-stage"]') ? 'stage' : (node?.className ?? '?')
+      })
+    }, stage)
+    expect(covering).toEqual(['stage', 'stage', 'stage'])
   })
 
-  test('the audio Now Playing sheet cannot be opened while a video is playing', async ({
-    page,
-  }) => {
+  test('the same expanded sheet opens for a video', async ({ page }) => {
     await page.goto('/search?q=night')
     await page.locator('.song-row').first().click()
     await expect(barTitle(page)).toHaveText('Night Signal')
@@ -190,7 +213,17 @@ test.describe('the bar follows the engine that is playing', () => {
     await page.locator('[data-testid="youtube-result"]').first().click()
     await expect(barTitle(page)).toHaveText('Sourp Sarkis')
 
-    await expect(page.getByRole('button', { name: 'Open Now Playing' })).toHaveCount(0)
-    await expect(page.getByTestId('now-playing')).toHaveCount(0)
+    // The sheet used to be withheld outright while a video was on screen. It is
+    // the video's expanded view now, and it names the video rather than the
+    // Audius track still paused underneath.
+    await page.getByRole('button', { name: 'Open Now Playing' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Now playing' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('heading', { name: 'Sourp Sarkis' })).toBeVisible()
+    await expect(dialog).not.toContainText('Night Signal')
+
+    // The stage moved with it, and is still the same single element.
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
+    await expect(page.getByTestId('youtube-stage')).toHaveAttribute('data-placement', 'sheet')
   })
 })

@@ -4,11 +4,20 @@ import { LIKE_ADDED_MESSAGE, LIKE_REMOVED_MESSAGE } from '@/library/types'
 import { isYouTubeVideoItem } from '@/music/types'
 import type { MediaItem } from '@/music/types'
 import { activeEngine } from './playback-coordinator'
-import { playPrevious, playTrack, seek, skipToNext, togglePlay } from './player-actions'
+import {
+  SEEK_STEP_SECONDS,
+  playPrevious,
+  playTrack,
+  seek,
+  seekBy,
+  skipToNext,
+  togglePlay,
+} from './player-actions'
 import type { QueueContext } from './player-store'
 import { usePlayerStore } from './player-store'
 import { selectSnapshotState } from './use-playback-snapshot'
 import {
+  closeYouTubeSurface,
   playYouTubeSessionStep,
   playYouTubeVideo,
   seekYouTube,
@@ -33,6 +42,15 @@ import { useYouTubeStore } from './youtube-store'
  * a second player.
  */
 
+/**
+ * How far the skip-back and skip-forward controls move.
+ *
+ * Re-exported so a player surface has one import for the whole transport,
+ * including its units. The value itself still belongs to `player-actions`,
+ * beside the Media Session defaults it matches.
+ */
+export { SEEK_STEP_SECONDS }
+
 /** Play or pause whatever currently holds the engine claim. */
 export function unifiedPlayPause(): void {
   if (activeEngine() === 'youtube') {
@@ -47,10 +65,8 @@ export function unifiedPlayPause(): void {
  *
  * Absolute rather than relative on both sides: the seek rail computes a position
  * from where the pointer was released, and `seek` / `seekYouTube` are the two
- * functions that take one. The relative helper (`seekBy`) stays where it is, for
- * the ±10s buttons and the Media Session, and is deliberately not routed through
- * here — mixing the two would mean one of the engines silently interpreting a
- * position as an offset.
+ * functions that take one. The relative form has its own entry point below, so
+ * neither engine can ever be handed an offset where it expects a position.
  */
 export function unifiedSeek(seconds: number): void {
   if (activeEngine() === 'youtube') {
@@ -58,6 +74,27 @@ export function unifiedSeek(seconds: number): void {
     return
   }
   seek(seconds)
+}
+
+/**
+ * Moves the playhead by a relative amount, in seconds.
+ *
+ * Separate from `unifiedSeek` rather than folded into it, because conflating an
+ * offset with a position is precisely the bug that would be invisible until one
+ * engine jumped to second 10 while the other jumped forward by 10.
+ *
+ * The audio side keeps its own `seekBy`, which owns the arithmetic and the
+ * clamp; the YouTube side has no relative form, so the offset is resolved
+ * against the position the store already holds and handed on as a position.
+ */
+export function unifiedSeekBy(deltaSeconds: number): void {
+  if (activeEngine() === 'youtube') {
+    const { currentTime, duration } = useYouTubeStore.getState()
+    if (duration <= 0 || !Number.isFinite(deltaSeconds)) return
+    seekYouTube(currentTime + deltaSeconds)
+    return
+  }
+  seekBy(deltaSeconds)
 }
 
 export function unifiedNext(): void {
@@ -125,6 +162,20 @@ export function unifiedExpand(open: boolean): void {
     toggleYouTubePlayback()
   }
   useUiStore.getState().setNowPlayingOpen(open)
+}
+
+/**
+ * Dismisses the loaded item, handing the bar back to whatever was underneath.
+ *
+ * Only a video has one, and it *stops* rather than pauses: a paused player the
+ * visitor has dismissed is still a player they cannot see, which is the
+ * background-player definition the developer policies prohibit. Releasing the
+ * claim brings back the audio track `activateYouTube` preserved — paused, and
+ * showing Play, because resuming stays the visitor's decision.
+ */
+export function unifiedDismiss(): void {
+  if (activeEngine() !== 'youtube') return
+  closeYouTubeSurface()
 }
 
 /**

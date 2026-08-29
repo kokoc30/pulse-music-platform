@@ -56,6 +56,15 @@ export interface PlaybackCapabilities {
    * there is no second switch for it here.
    */
   continuous: boolean
+  /**
+   * The item can be dismissed, handing the bar back to whatever was underneath.
+   *
+   * YouTube only. An audio track is dismissed by playing something else or by
+   * letting the queue end; a video is an overlay on a session the visitor may
+   * still want back, and `activateYouTube` preserved that session on purpose.
+   * Without this the only way out of a docked player is to start another track.
+   */
+  dismiss: boolean
 }
 
 export interface PlaybackSnapshot {
@@ -74,6 +83,16 @@ export interface PlaybackSnapshot {
   /** The provider's own page for this item. Empty when it published none. */
   sourceUrl: string
   providerLabel: string
+  /**
+   * The `rel` a link to `sourceUrl` must carry.
+   *
+   * Data rather than a branch in the components, because the two providers
+   * genuinely differ: YouTube's Required Minimum Functionality states an API
+   * client "must not use the noreferrer feature", while the catalogues have no
+   * such rule and take the safer pair. Deciding that in the bar would have been
+   * the one engine check left in a player surface.
+   */
+  sourceRel: string
   /**
    * True when the source link is a licence or policy obligation rather than a
    * convenience — Jamendo's per-item backlink, and YouTube's watch-page link.
@@ -123,6 +142,7 @@ const NO_CAPABILITIES: PlaybackCapabilities = {
   queue: false,
   expand: false,
   continuous: false,
+  dismiss: false,
 }
 
 /** Frozen and shared: an identity a memo can compare against cheaply. */
@@ -135,6 +155,7 @@ export const EMPTY_SNAPSHOT: PlaybackSnapshot = {
   artworkAspect: 'square',
   sourceUrl: '',
   providerLabel: '',
+  sourceRel: 'noopener noreferrer',
   attributionRequired: false,
   libraryKey: '',
   toLibraryRef: null,
@@ -159,9 +180,17 @@ export interface SnapshotInput {
 /**
  * The pure half, so the mapping can be tested without React or a live engine.
  *
- * Each branch requires both the claim *and* something behind it: the
- * coordinator's claim says which engine may play, and a claim with nothing
- * loaded is not something to draw a bar for.
+ * The precedence is exactly the one the bar had before it was unified, and the
+ * asymmetry between the two branches is deliberate:
+ *
+ * · **YouTube, only while it holds the claim.** A video is shown when the
+ *   coordinator says it is the live engine and there is an item behind that.
+ * · **Audio whenever a track is loaded**, claim or no claim. Closing a video
+ *   releases the claim to `'none'`, and the audio track it paused is still
+ *   loaded underneath — `activateYouTube` preserves it on purpose so it can be
+ *   resumed. Requiring `engine === 'audio'` here would drop the visitor to the
+ *   join strip at exactly that moment, losing a track they never dismissed.
+ * · **Nothing** only when neither engine has anything at all.
  */
 export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
   const { engine, audio, youtube } = input
@@ -177,6 +206,8 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
       artworkAspect: '16:9',
       sourceUrl: item.sourceUrl,
       providerLabel: 'YouTube',
+      // "must not use the noreferrer feature" — Required Minimum Functionality.
+      sourceRel: 'noopener',
       // Required Minimum Functionality asks for a real link to the watch page.
       attributionRequired: true,
       libraryKey: item.id,
@@ -200,6 +231,7 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
         queue: false,
         expand: true,
         continuous: true,
+        dismiss: true,
       },
       isEmbeddedStage: true,
       stageItem: item,
@@ -207,7 +239,7 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
     }
   }
 
-  if (engine === 'audio' && audio.currentTrack) {
+  if (audio.currentTrack) {
     const track = audio.currentTrack
     return {
       engine: 'audio',
@@ -218,6 +250,7 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
       artworkAspect: 'square',
       sourceUrl: track.sourceUrl ?? track.permalink ?? '',
       providerLabel: providerLabel(track.provider),
+      sourceRel: 'noopener noreferrer',
       // Jamendo's terms require it; Audius asks for none, so an Audius track
       // keeps its link as a convenience that may be dropped on a narrow bar.
       attributionRequired: Boolean(track.attributionRequired && track.sourceUrl),
@@ -238,6 +271,7 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
         queue: true,
         expand: true,
         continuous: false,
+        dismiss: false,
       },
       isEmbeddedStage: false,
       stageItem: null,

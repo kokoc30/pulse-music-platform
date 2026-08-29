@@ -369,6 +369,26 @@
   .player-stage-slot {
     width: min(300px, 52vw);
   }
+
+  /* The reference collapses the bar to a round play button below 560px, and
+     that rule assumes a 76px bar. A docked player makes the bar roughly three
+     times that, so the room the rule was economising on is there — and the
+     controls it hides are the only stepping and scrubbing a phone has, now that
+     the floating player with its own footer is gone. Restored for this case
+     only; the audio mini-player is untouched. */
+  .music-player[data-stage='true'] {
+    grid-template-columns: 1fr;
+  }
+
+  .music-player[data-stage='true'] .player-controls .progress,
+  .music-player[data-stage='true'] .player-controls button:not(.round-play),
+  .music-player[data-stage='true'] .player-track > button {
+    display: flex;
+  }
+
+  .music-player[data-stage='true'] .player-controls .progress {
+    display: grid;
+  }
 }
 
 /* Room to scroll out from under the docked player.
@@ -407,7 +427,7 @@ body[data-yt-stage='bar'] .pulse-app {
 
 /* The background-pause explanation. Stated once, dismissible, and never over
    the player. */
-.now-playing-policy {
+.player-policy {
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -420,7 +440,14 @@ body[data-yt-stage='bar'] .pulse-app {
   line-height: 1.45;
 }
 
-.now-playing-policy button {
+/* The bar is a three-column grid; the explanation takes a row of its own
+   underneath rather than squeezing into one of them. */
+.player-policy {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+}
+
+.player-policy button {
   flex: none;
   display: flex;
   align-items: center;
@@ -434,14 +461,38 @@ body[data-yt-stage='bar'] .pulse-app {
   cursor: pointer;
 }
 
-.now-playing-policy button:hover {
+.player-policy button:hover {
   color: var(--color-text-strong);
 }
 
 /* Keeps the bar's three-column grid intact when the volume control is withheld
    for an item that has no volume of ours to set. */
-.player-volume-spacer {
+.player-aside {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
   min-width: 0;
+}
+
+.player-dismiss {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-control);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+}
+
+.player-dismiss:hover,
+.player-dismiss:focus-visible {
+  background: var(--color-control-hover);
 }
 /* ==========================================================================
    The privacy page

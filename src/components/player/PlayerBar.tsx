@@ -10,13 +10,21 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
+  X,
 } from 'lucide-react'
 import { LikeButton } from '@/components/library/LikeButton'
 import { Artwork } from '@/components/track/Artwork'
 import { usePlayerStore } from '@/player/player-store'
 import { REPEAT_LABELS } from '@/player/queue-order'
-import { unifiedExpand, unifiedNext, unifiedPlayPause, unifiedPrev } from '@/player/unified-actions'
+import {
+  unifiedDismiss,
+  unifiedExpand,
+  unifiedNext,
+  unifiedPlayPause,
+  unifiedPrev,
+} from '@/player/unified-actions'
 import type { PlaybackSnapshot } from '@/player/use-playback-snapshot'
+import { useYouTubeStore } from '@/player/youtube-store'
 import { PlayerProgress } from './PlayerProgress'
 import { VolumeControl } from './VolumeControl'
 import { isInteractiveTarget, useVerticalSwipe } from './swipe'
@@ -140,7 +148,7 @@ export function PlayerBar({ snapshot }: { snapshot: PlaybackSnapshot }) {
             className="player-source"
             href={snapshot.sourceUrl}
             target="_blank"
-            rel="noopener noreferrer"
+            rel={snapshot.sourceRel}
             aria-label={`Open ${snapshot.title} on ${snapshot.providerLabel}`}
           >
             <ExternalLink size={18} aria-hidden="true" />
@@ -196,8 +204,62 @@ export function PlayerBar({ snapshot }: { snapshot: PlaybackSnapshot }) {
         />
       </div>
 
-      {can.volume ? <VolumeControl /> : <div className="player-volume-spacer" aria-hidden="true" />}
+      <div className="player-aside">
+        {can.volume ? <VolumeControl /> : null}
+        {/* Dismissing stops playback and hands the bar back to the audio track
+            that was preserved underneath, paused and showing Play. Without it
+            the only way out of a docked player is to start something else. */}
+        {can.dismiss ? (
+          <button
+            type="button"
+            className="player-dismiss"
+            onClick={unifiedDismiss}
+            aria-label="Close the YouTube player and stop playback"
+          >
+            <X size={17} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
+
+      {/* Only an embedded player has a background-pause rule to explain, so
+          this is gated on the stage rather than on the engine. It lives on the
+          bar rather than in the expanded sheet because the visitor comes back to
+          a paused video without necessarily expanding anything, and an
+          explanation they have to go looking for is not an explanation. */}
+      {snapshot.isEmbeddedStage ? <BackgroundPolicyNotice /> : null}
     </section>
+  )
+}
+
+/**
+ * Why the video stopped when the tab went away.
+ *
+ * Shown once, after the fact, and dismissible. Not a toast on every visibility
+ * change, and not framed as a fault: it is what the YouTube developer policies
+ * require of an embedded player, and saying so is more useful than letting the
+ * visitor conclude the app broke.
+ */
+function BackgroundPolicyNotice() {
+  const paused = useYouTubeStore((state) => state.pausedForBackgroundPolicy)
+  const status = useYouTubeStore((state) => state.status)
+  const dismiss = useYouTubeStore((state) => state.setPausedForBackgroundPolicy)
+
+  if (!paused || status === 'playing') return null
+
+  return (
+    <p className="player-policy" role="status">
+      <span>
+        YouTube playback pauses when Pulse is in the background. Audius and Jamendo tracks keep
+        playing.
+      </span>
+      <button
+        type="button"
+        onClick={() => dismiss(false)}
+        aria-label="Dismiss the background playback explanation"
+      >
+        <X size={13} aria-hidden="true" />
+      </button>
+    </p>
   )
 }
 
@@ -228,7 +290,7 @@ export function PlayerCredit({ snapshot }: { snapshot: PlaybackSnapshot }) {
           className="provider-credit-link"
           href={snapshot.sourceUrl}
           target="_blank"
-          rel={snapshot.engine === 'youtube' ? 'noopener' : 'noopener noreferrer'}
+          rel={snapshot.sourceRel}
           // Stops the backlink from also expanding the sheet.
           onClick={(event) => event.stopPropagation()}
           aria-label={`View “${snapshot.title}” on ${snapshot.providerLabel}`}

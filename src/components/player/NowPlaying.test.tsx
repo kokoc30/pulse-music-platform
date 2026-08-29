@@ -6,6 +6,9 @@ import { usePlayerStore } from '@/player/player-store'
 import { useYouTubeStore } from '@/player/youtube-store'
 import { rememberTracks } from '@/player/autoplay'
 import type { Track } from '@/music/types'
+import { normalizeYouTubeVideo } from '@/music/youtube'
+import { youtubePayload } from '@/test/fixtures/youtube'
+import { playYouTubeVideo } from '@/player/youtube-actions'
 
 /**
  * The expanded Now Playing view, through the real app shell.
@@ -407,13 +410,94 @@ describe('accessibility', () => {
   })
 })
 
-describe('it never competes with the video player', () => {
-  it('stands down while the video surface is open', async () => {
+/**
+ * The sheet used to `return null` whenever a video was on screen, because the
+ * video had its own floating player and two full-screen surfaces would have
+ * fought for the room. There is one player now, so the sheet does not stand
+ * down — it *becomes* the video's expanded view.
+ */
+describe('it is the expanded view for the video player too', () => {
+  it('follows the engine rather than closing when a video takes over', async () => {
     const { user } = await playFirstSearchResult()
     await openSheet(user)
+    expect(within(sheet()!).getByText('Midnight Signal')).toBeInTheDocument()
 
-    useYouTubeStore.setState({ surfaceOpen: true })
+    await playYouTubeVideo(
+      normalizeYouTubeVideo(youtubePayload({ videoId: 'vid0000001', title: 'Sourp Sarkis' })),
+      { userInitiated: true },
+    )
+
+    // Still open, now showing the video — and no longer showing the track.
+    await waitFor(() => expect(within(sheet()!).getByText('Sourp Sarkis')).toBeInTheDocument())
+    expect(within(sheet()!).queryByText('Midnight Signal')).not.toBeInTheDocument()
+  })
+
+  it('hosts the embedded player in the artwork slot, with nothing over it', async () => {
+    const { user } = await playFirstSearchResult()
+    await openSheet(user)
+    await playYouTubeVideo(
+      normalizeYouTubeVideo(youtubePayload({ videoId: 'vid0000002', title: 'Barov Ari' })),
+      { userInitiated: true },
+    )
+
+    await waitFor(() => expect(within(sheet()!).getByText('Barov Ari')).toBeInTheDocument())
+
+    // The stage is a sibling of the sheet, never a child of it: an overlay in
+    // front of an embedded player is exactly what the policies forbid.
+    const stage = screen.getByTestId('youtube-stage')
+    expect(stage).toBeInTheDocument()
+    expect(sheet()!.contains(stage)).toBe(false)
+    // And the sheet shows no still artwork where the player is.
+    expect(sheet()!.querySelector('.now-playing-art')).toBeNull()
+  })
+
+  it('withholds the queue-shaped controls a video has no answer for', async () => {
+    const { user } = await playFirstSearchResult()
+    await openSheet(user)
+    await playYouTubeVideo(
+      normalizeYouTubeVideo(youtubePayload({ videoId: 'vid0000003', title: 'Nani Im Nani' })),
+      { userInitiated: true },
+    )
+    await waitFor(() => expect(within(sheet()!).getByText('Nani Im Nani')).toBeInTheDocument())
+
+    const dialog = sheet()!
+    // Absent, not disabled: a shuffle button over a result session would be a
+    // promise the app cannot keep.
+    expect(within(dialog).queryByRole('button', { name: /Shuffle/i })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /Repeat/i })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /Up next/i })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('slider', { name: 'Volume' })).not.toBeInTheDocument()
+    expect(
+      within(dialog).queryByRole('button', { name: 'Seek back 10 seconds' }),
+    ).not.toBeInTheDocument()
+
+    // What every provider does get, it still gets.
+    expect(within(dialog).getByRole('slider', { name: 'Seek' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: /Save .* to Liked Songs/i })).toBeInTheDocument()
+  })
+
+  it('pauses the video on the way down, because a docked stage is easy to lose', async () => {
+    const { user } = await playFirstSearchResult()
+    await openSheet(user)
+    await playYouTubeVideo(
+      normalizeYouTubeVideo(youtubePayload({ videoId: 'vid0000004', title: 'Ay Kyanq' })),
+      { userInitiated: true },
+    )
+    await waitFor(() => expect(useYouTubeStore.getState().status).toBe('playing'))
+
+    await user.click(screen.getByRole('button', { name: 'Collapse Now Playing' }))
+
+    await waitFor(() => expect(useYouTubeStore.getState().status).toBe('paused'))
+  })
+
+  it('does not pause audio on the way down — that is only a change of view', async () => {
+    const { user, engine } = await playFirstSearchResult()
+    await openSheet(user)
+    expect(engine.playing).toBe(true)
+
+    await user.click(screen.getByRole('button', { name: 'Collapse Now Playing' }))
 
     await waitFor(() => expect(sheet()).toBeNull())
+    expect(engine.playing).toBe(true)
   })
 })

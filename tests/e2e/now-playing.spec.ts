@@ -259,7 +259,7 @@ test.describe('it never covers the video player', () => {
       .getByTestId('youtube-result')
       .filter({ hasText: 'Night Signal (Official Video)' })
       .click()
-    await expect(page.getByTestId('youtube-surface')).toBeVisible()
+    await expect(page.getByTestId('youtube-stage')).toBeVisible()
 
     // No audio track is loaded, so there is no mini-player to expand from — and
     // the sheet must not appear over the iframe under any circumstance.

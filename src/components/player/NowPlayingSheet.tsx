@@ -12,16 +12,21 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
-  X,
 } from 'lucide-react'
 import { useUiStore } from '@/app/ui-store'
 import { LikeButton } from '@/components/library/LikeButton'
 import { TrackMenu } from '@/components/library/TrackMenu'
 import { Artwork } from '@/components/track/Artwork'
-import { SEEK_STEP_SECONDS, seekBy } from '@/player/player-actions'
 import { usePlayerStore } from '@/player/player-store'
 import { REPEAT_LABELS } from '@/player/queue-order'
-import { unifiedExpand, unifiedNext, unifiedPlayPause, unifiedPrev } from '@/player/unified-actions'
+import {
+  SEEK_STEP_SECONDS,
+  unifiedExpand,
+  unifiedNext,
+  unifiedPlayPause,
+  unifiedPrev,
+  unifiedSeekBy,
+} from '@/player/unified-actions'
 import type { PlaybackSnapshot } from '@/player/use-playback-snapshot'
 import { useYouTubeStore } from '@/player/youtube-store'
 import { PlayerCredit } from './PlayerBar'
@@ -196,7 +201,7 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
                 className="now-playing-source"
                 href={snapshot.sourceUrl}
                 target="_blank"
-                rel="noopener noreferrer"
+                rel={snapshot.sourceRel}
               >
                 Open on {snapshot.providerLabel}
               </a>
@@ -246,7 +251,7 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
             <button
               type="button"
               className="now-playing-skip"
-              onClick={() => seekBy(-SEEK_STEP_SECONDS)}
+              onClick={() => unifiedSeekBy(-SEEK_STEP_SECONDS)}
               disabled={!seekable}
               aria-label={`Seek back ${SEEK_STEP_SECONDS} seconds`}
             >
@@ -293,7 +298,7 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
             <button
               type="button"
               className="now-playing-skip"
-              onClick={() => seekBy(SEEK_STEP_SECONDS)}
+              onClick={() => unifiedSeekBy(SEEK_STEP_SECONDS)}
               disabled={!seekable}
               aria-label={`Seek forward ${SEEK_STEP_SECONDS} seconds`}
             >
@@ -303,7 +308,7 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
           ) : null}
         </div>
 
-        {can.shuffle || can.queue || can.repeat || can.volume ? (
+        {can.shuffle || can.queue || can.repeat || can.volume || can.continuous ? (
           <div className="now-playing-secondary">
             {can.shuffle ? <SheetShuffleToggle /> : null}
 
@@ -323,7 +328,6 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
           </div>
         ) : null}
 
-        {can.continuous ? <BackgroundPolicyNotice /> : null}
       </section>
     </div>
   )
@@ -363,38 +367,6 @@ function ContinuousPlayToggle() {
       />
       <span aria-hidden="true">Continuous play</span>
     </label>
-  )
-}
-
-/**
- * Why the video stopped when the tab went away.
- *
- * Shown once, after the fact, and dismissible. Not a toast on every visibility
- * change, and not framed as a fault: it is what the YouTube developer policies
- * require of an embedded player, and saying so is more useful than letting the
- * visitor conclude the app broke.
- */
-function BackgroundPolicyNotice() {
-  const paused = useYouTubeStore((state) => state.pausedForBackgroundPolicy)
-  const status = useYouTubeStore((state) => state.status)
-  const dismiss = useYouTubeStore((state) => state.setPausedForBackgroundPolicy)
-
-  if (!paused || status === 'playing') return null
-
-  return (
-    <p className="now-playing-policy" role="status">
-      <span>
-        YouTube playback pauses when Pulse is in the background. Audius and Jamendo tracks keep
-        playing.
-      </span>
-      <button
-        type="button"
-        onClick={() => dismiss(false)}
-        aria-label="Dismiss the background playback explanation"
-      >
-        <X size={13} aria-hidden="true" />
-      </button>
-    </p>
   )
 }
 

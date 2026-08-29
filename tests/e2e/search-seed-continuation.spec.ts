@@ -137,7 +137,7 @@ test.describe('YouTube continues through the results it already has', () => {
       .getByTestId('youtube-result')
       .filter({ hasText: 'Night Signal (Official Video)' })
       .click()
-    await expect(page.getByTestId('youtube-surface')).toBeVisible()
+    await expect(page.getByTestId('youtube-stage')).toBeVisible()
   }
 
   const currentVideoId = (page: Page) =>
@@ -210,17 +210,22 @@ test.describe('YouTube continues through the results it already has', () => {
     const calls = recordYouTubeApiTraffic(page)
     await endCurrent(page)
 
-    await expect(page.getByTestId('youtube-surface')).toBeVisible()
+    await expect(page.getByTestId('youtube-stage')).toBeVisible()
     expect(calls).toEqual([])
   })
 
   test('continuous play can be switched off, and then it stops', async ({ page }) => {
     await startFirstResult(page)
+
+    // The setting moved into the expanded view when the floating player was
+    // removed — it is the visitor's own preference, and that is where a
+    // preference belongs now that there is one player.
+    await page.getByRole('button', { name: 'Open Now Playing' }).click()
     await page.getByLabel('Continuous play').uncheck()
 
     await endCurrent(page)
 
-    await expect(page.getByTestId('youtube-surface')).toHaveAttribute('data-status', 'ended')
+    // The session did not advance, and nothing was requested to find out.
     expect(await currentVideoId(page)).toBe('aaaaaaaaaaa')
   })
 
@@ -228,19 +233,18 @@ test.describe('YouTube continues through the results it already has', () => {
     await startFirstResult(page)
     const calls = recordYouTubeApiTraffic(page)
 
-    // Scoped to the player's own footer. The global bottom bar now carries the
-    // same two controls while YouTube owns playback, and they drive the same
-    // session — see tests/e2e/unified-now-playing.spec.ts.
-    const surface = page.getByTestId('youtube-surface')
+    // The unified bar carries them now. There is exactly one pair of these
+    // controls in the application, and they drive whichever engine is live.
+    const controls = page.getByRole('region', { name: 'Now playing' })
 
-    await surface.getByRole('button', { name: 'Next YouTube result' }).click()
+    await controls.getByRole('button', { name: 'Next track' }).click()
     await expect.poll(() => currentVideoId(page)).toBe('bbbbbbbbbbb')
 
-    await surface.getByRole('button', { name: 'Previous YouTube result' }).click()
+    await controls.getByRole('button', { name: 'Previous track' }).click()
     await expect.poll(() => currentVideoId(page)).toBe('aaaaaaaaaaa')
 
     expect(calls).toEqual([])
-    // The controls are siblings of the stage, never drawn over the player.
+    // Every control is a sibling of the stage, never drawn over the player.
     const inStage = await page.evaluate(
       () => document.querySelectorAll('[data-testid="youtube-stage"] button').length,
     )
@@ -251,7 +255,7 @@ test.describe('YouTube continues through the results it already has', () => {
     await startFirstResult(page)
     await page.getByRole('button', { name: /Close the YouTube player/ }).click()
 
-    await expect(page.getByTestId('youtube-surface')).toHaveCount(0)
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(0)
   })
 })
 
@@ -264,7 +268,7 @@ test.describe('YouTube still stops in the background — by design', () => {
       .getByTestId('youtube-result')
       .filter({ hasText: 'Night Signal (Official Video)' })
       .click()
-    await expect(page.getByTestId('youtube-surface')).toBeVisible()
+    await expect(page.getByTestId('youtube-stage')).toBeVisible()
     // The doubled IFrame API loads asynchronously; wait for the player it builds
     // before asserting anything about what that player is doing.
     await expect

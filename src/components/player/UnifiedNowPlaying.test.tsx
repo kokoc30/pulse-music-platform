@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { normalizeYouTubeVideo } from '@/music/youtube'
 import { youtubePayload } from '@/test/fixtures/youtube'
 import { renderApp } from '@/test/render'
@@ -105,13 +106,35 @@ describe('the bar follows whichever engine is playing', () => {
     expect(engine.playing).toBe(false)
   })
 
-  it('never renders the expanded audio sheet while YouTube is playing', async () => {
-    await playAudioTrack()
+  it('offers the same expand affordance for a video as for a track', async () => {
+    const { user } = await playAudioTrack()
     await playYouTubeVideo(SOURP, { userInitiated: true })
     await waitFor(() => expect(activeEngine()).toBe('youtube'))
 
-    expect(screen.queryByTestId('now-playing')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Open Now Playing' })).not.toBeInTheDocument()
+    // The sheet used to be withheld here, because the video had a floating
+    // player of its own. There is one player now, so the video expands too.
+    await user.click(within(bar()).getByRole('button', { name: 'Open Now Playing' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Now playing' })
+    expect(within(dialog).getByRole('heading', { name: 'Sourp Sarkis' })).toBeInTheDocument()
+  })
+
+  it('mounts exactly one stage, and never inside a surface that could move it', async () => {
+    const { user } = await playAudioTrack()
+    await playYouTubeResult([SOURP, BAROV], SOURP, 'aram asatryan')
+    await waitFor(() => expect(within(bar()).getByText('Sourp Sarkis')).toBeInTheDocument())
+
+    expect(screen.getAllByTestId('youtube-stage')).toHaveLength(1)
+    const before = screen.getByTestId('youtube-stage')
+
+    await user.click(within(bar()).getByRole('button', { name: 'Open Now Playing' }))
+    await screen.findByRole('dialog', { name: 'Now playing' })
+
+    // The same element, not a second one and not a re-created one: re-parenting
+    // an iframe reloads it, so expanding must move the stage, never remount it.
+    expect(screen.getAllByTestId('youtube-stage')).toHaveLength(1)
+    expect(screen.getByTestId('youtube-stage')).toBe(before)
+    expect(before.dataset.placement).toBe('sheet')
   })
 })
 
@@ -124,10 +147,10 @@ describe('the YouTube bar drives YouTube, never the audio queue', () => {
     await playYouTubeResult([SOURP, BAROV, NANI], BAROV, 'aram asatryan')
     await waitFor(() => expect(within(bar()).getByText('Barov Ari')).toBeInTheDocument())
 
-    await user.click(within(bar()).getByRole('button', { name: 'Next YouTube result' }))
+    await user.click(within(bar()).getByRole('button', { name: 'Next track' }))
     await waitFor(() => expect(useYouTubeStore.getState().item?.title).toBe('Nani Im Nani'))
 
-    await user.click(within(bar()).getByRole('button', { name: 'Previous YouTube result' }))
+    await user.click(within(bar()).getByRole('button', { name: 'Previous track' }))
     await waitFor(() => expect(useYouTubeStore.getState().item?.title).toBe('Barov Ari'))
 
     expect(usePlayerStore.getState().queue.map((track) => track.id)).toEqual(audioQueueBefore)
@@ -141,8 +164,8 @@ describe('the YouTube bar drives YouTube, never the audio queue', () => {
     await waitFor(() => expect(within(bar()).getByText('Sourp Sarkis')).toBeInTheDocument())
 
     expect(useYouTubeStore.getState().sessionItems).toHaveLength(0)
-    expect(within(bar()).getByRole('button', { name: 'Next YouTube result' })).toBeDisabled()
-    expect(within(bar()).getByRole('button', { name: 'Previous YouTube result' })).toBeDisabled()
+    expect(within(bar()).getByRole('button', { name: 'Next track' })).toBeDisabled()
+    expect(within(bar()).getByRole('button', { name: 'Previous track' })).toBeDisabled()
   })
 
   it('reads its progress from the YouTube store, not the audio element', async () => {
@@ -160,14 +183,53 @@ describe('the YouTube bar drives YouTube, never the audio queue', () => {
     expect(within(bar()).queryByText('1:42')).not.toBeInTheDocument()
   })
 
-  it('offers no audio transport at all while YouTube owns playback', async () => {
+  /**
+   * The transport is now *shared* — same buttons, same accessible names, for
+   * every provider. So the claim worth pinning is no longer "the audio controls
+   * are absent"; it is that the shared controls reach the YouTube engine and
+   * leave the audio session alone. The step test above proves the queue is
+   * untouched; this proves the play control is too.
+   */
+  it('drives the video from the shared play control, leaving the audio paused', async () => {
+    const { user, engine } = await playAudioTrack()
+    await playYouTubeVideo(SOURP, { userInitiated: true })
+    await waitFor(() => expect(useYouTubeStore.getState().status).toBe('playing'))
+    expect(engine.playing).toBe(false)
+
+    await user.click(within(bar()).getByRole('button', { name: 'Pause' }))
+
+    await waitFor(() => expect(useYouTubeStore.getState().status).toBe('paused'))
+    // The audio element was never asked to do anything.
+    expect(engine.playing).toBe(false)
+    expect(usePlayerStore.getState().currentTrack?.title).toBe('Midnight Signal')
+  })
+
+  it('withholds the controls a result session has no answer for', async () => {
     await playAudioTrack()
     await playYouTubeVideo(SOURP, { userInitiated: true })
     await waitFor(() => expect(within(bar()).getByText('Sourp Sarkis')).toBeInTheDocument())
 
-    // The audio bar's own controls, by their audio-specific names.
-    expect(within(bar()).queryByRole('button', { name: 'Next track' })).not.toBeInTheDocument()
-    expect(within(bar()).queryByRole('button', { name: 'Previous track' })).not.toBeInTheDocument()
-    expect(within(bar()).queryByRole('slider', { name: 'Seek' })).not.toBeInTheDocument()
+    // Absent rather than disabled: a video has no running order and no volume
+    // of ours to set, so offering either would be a promise the app cannot keep.
+    expect(within(bar()).queryByRole('button', { name: /Shuffle/i })).not.toBeInTheDocument()
+    expect(within(bar()).queryByRole('button', { name: /Repeat/i })).not.toBeInTheDocument()
+    expect(within(bar()).queryByRole('slider', { name: 'Volume' })).not.toBeInTheDocument()
+
+    // The seek rail, by contrast, is real for a video: the IFrame API publishes
+    // `seekTo`, so the same rail scrubs both engines.
+    expect(within(bar()).getByRole('slider', { name: 'Seek' })).toBeInTheDocument()
+  })
+
+  it('scrubs the video through the shared rail', async () => {
+    await playAudioTrack()
+    await playYouTubeVideo(SOURP, { userInitiated: true })
+    await waitFor(() => expect(within(bar()).getByText('Sourp Sarkis')).toBeInTheDocument())
+    useYouTubeStore.getState().setProgress(0, 240)
+
+    const slider = await waitFor(() => within(bar()).getByRole('slider', { name: 'Seek' }))
+    slider.focus()
+    await userEvent.keyboard('{End}')
+
+    await waitFor(() => expect(useYouTubeStore.getState().currentTime).toBe(240))
   })
 })

@@ -11,7 +11,7 @@ import { recordYouTubeTraffic, stubAllProviders, stubProviders } from './fixture
  * assuming it.
  */
 
-const surface = 'section[data-testid="youtube-surface"]'
+const surface = '[data-testid="youtube-stage"]'
 const stage = '[data-testid="youtube-stage"]'
 const rows = '[data-testid="youtube-result"]'
 
