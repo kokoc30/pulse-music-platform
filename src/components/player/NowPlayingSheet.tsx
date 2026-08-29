@@ -154,9 +154,10 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
       <section
         className="now-playing"
         role="dialog"
-        // A video panel is deliberately *not* modal. It sits above the bar with
-        // the page still visible and clickable behind it, so declaring it modal
-        // would be a lie to assistive technology about what is reachable.
+        // A video panel is deliberately *not* modal. It is the same sheet in the
+        // same place, but the page behind it stays visible and clickable, so
+        // declaring it modal would be a lie to assistive technology about what
+        // is reachable.
         aria-modal={snapshot.isEmbeddedStage ? undefined : true}
         aria-label="Now playing"
         ref={sheetRef}
