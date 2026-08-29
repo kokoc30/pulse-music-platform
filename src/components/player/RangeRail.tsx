@@ -11,6 +11,16 @@ interface RangeRailProps {
   disabled?: boolean
   /** Keyboard arrow step as a ratio. */
   step?: number
+  /**
+   * PageUp/PageDown step as a ratio. Defaults to twice `step`.
+   *
+   * Separated because on a seek rail the two want very different sizes: an arrow
+   * key should move about a second, and a page key a useful jump. Tying the
+   * second to the first would make Page a two-second nudge on a long track.
+   */
+  pageStep?: number
+  /** Extra class on the rail, so a larger surface can be styled without a fork. */
+  className?: string
 }
 
 /**
@@ -27,6 +37,8 @@ export function RangeRail({
   ariaValueText,
   disabled = false,
   step = 0.05,
+  pageStep,
+  className,
 }: RangeRailProps) {
   const railRef = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState(false)
@@ -71,8 +83,8 @@ export function RangeRail({
       ArrowUp: clamped + step,
       ArrowLeft: clamped - step,
       ArrowDown: clamped - step,
-      PageUp: clamped + step * 2,
-      PageDown: clamped - step * 2,
+      PageUp: clamped + (pageStep ?? step * 2),
+      PageDown: clamped - (pageStep ?? step * 2),
       Home: 0,
       End: 1,
     }
@@ -85,7 +97,7 @@ export function RangeRail({
   return (
     <div
       ref={railRef}
-      className="rail-hit"
+      className={className ? `rail-hit ${className}` : 'rail-hit'}
       role="slider"
       tabIndex={disabled ? -1 : 0}
       aria-label={ariaLabel}

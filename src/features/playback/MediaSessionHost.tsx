@@ -1,7 +1,15 @@
 import { useEffect } from 'react'
 import { createMediaSessionController } from '@/player/media-session/controller'
 import { onEngineChange } from '@/player/playback-coordinator'
-import { pause, playNext, playPrevious, seek, stopPlayback, togglePlay } from '@/player/player-actions'
+import {
+  pause,
+  playNext,
+  playPrevious,
+  seek,
+  seekBy,
+  stopPlayback,
+  togglePlay,
+} from '@/player/player-actions'
 import { usePlayerStore } from '@/player/player-store'
 
 /**
@@ -36,10 +44,9 @@ export function MediaSessionHost(): null {
       previousTrack: () => void playPrevious(),
       nextTrack: () => void playNext(),
       seekTo: (seconds) => seek(seconds),
-      seekBy: (offset) => {
-        const { currentTime } = usePlayerStore.getState()
-        seek(Math.max(0, currentTime + offset))
-      },
+      // The same relative-seek path the on-screen skip controls use, so the
+      // lock screen and the Now Playing sheet cannot disagree about clamping.
+      seekBy: (offset) => seekBy(offset),
     })
 
     /** Mirrors the store onto the OS. Position writes throttle themselves. */
@@ -74,10 +81,7 @@ export function MediaSessionHost(): null {
         previousTrack: () => void playPrevious(),
         nextTrack: () => void playNext(),
         seekTo: (seconds) => seek(seconds),
-        seekBy: (offset) => {
-          const { currentTime } = usePlayerStore.getState()
-          seek(Math.max(0, currentTime + offset))
-        },
+        seekBy: (offset) => seekBy(offset),
       })
       sync(usePlayerStore.getState())
     })

@@ -42,7 +42,8 @@ function safeErrorText(error: unknown): string {
  * playback failure the listener needs to see.
  */
 function isBenignPlayRejection(error: unknown): boolean {
-  const name = typeof error === 'object' && error !== null ? (error as { name?: string }).name : undefined
+  const name =
+    typeof error === 'object' && error !== null ? (error as { name?: string }).name : undefined
   return name === 'NotAllowedError' || name === 'AbortError'
 }
 
@@ -251,11 +252,7 @@ export async function playNext(
   // 1. Repeat one. Deliberately ahead of the queue: the visitor asked for this
   //    track, and nothing generated may override that.
   if (state.repeatMode === 'one' && state.currentTrack && !options.skipRepeatOne) {
-    await playTrack(
-      state.currentTrack,
-      { queue: state.queue, index: state.currentIndex },
-      store,
-    )
+    await playTrack(state.currentTrack, { queue: state.queue, index: state.currentIndex }, store)
     return
   }
 
@@ -363,6 +360,35 @@ export function seek(seconds: number, store: Store = usePlayerStore): void {
   const clamped = Math.min(Math.max(seconds, 0), duration)
   engine().seek(clamped)
   state.setCurrentTime(clamped)
+}
+
+/**
+ * How far the skip-back and skip-forward controls move.
+ *
+ * Ten seconds is the convention every media app and every OS media notification
+ * uses, and the Media Session's own `seekbackward`/`seekforward` already default
+ * to it — so the on-screen buttons and the lock screen agree without either
+ * knowing about the other.
+ */
+export const SEEK_STEP_SECONDS = 10
+
+/**
+ * Moves the playhead by a relative amount.
+ *
+ * The one place that arithmetic lives. `seek` already clamps to `[0, duration]`
+ * and refuses a non-finite value or an unknown duration, so this adds the
+ * *relative* half and nothing else — no second clamp, no direct engine call, no
+ * component doing its own `currentTime + offset`.
+ *
+ * Returns nothing: like `seek`, a request that cannot be honoured is simply not
+ * honoured, and the UI reads the resulting position from the store as it does
+ * for every other transport action.
+ */
+export function seekBy(deltaSeconds: number, store: Store = usePlayerStore): void {
+  if (!Number.isFinite(deltaSeconds)) return
+  const state = store.getState()
+  if (state.duration <= 0) return
+  seek(state.currentTime + deltaSeconds, store)
 }
 
 export function setVolume(value: number, store: Store = usePlayerStore): void {

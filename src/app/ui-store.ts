@@ -26,12 +26,23 @@ export interface UiState {
   noticeToken: number
   queueOpen: boolean
   mobileNavOpen: boolean
+  /**
+   * Whether the audio player is showing its full Now Playing view.
+   *
+   * Presentation only. It lives beside the queue panel and the mobile drawer
+   * because it is the same kind of thing — a surface the visitor opened — and
+   * deliberately *not* in `player-store`, which owns playback. Nothing here can
+   * start, stop or reload a track: expanding is a change of view over the one
+   * running `HTMLAudioElement`, and collapsing is the same view going away.
+   */
+  nowPlayingOpen: boolean
   focusSearchToken: number
   showNotice: (message: string, action?: NoticeAction) => void
   dismissNotice: () => void
   setQueueOpen: (open: boolean) => void
   toggleQueue: () => void
   setMobileNavOpen: (open: boolean) => void
+  setNowPlayingOpen: (open: boolean) => void
   closeOverlays: () => void
   focusSearch: () => void
 }
@@ -42,6 +53,7 @@ export const useUiStore = create<UiState>((set) => ({
   noticeToken: 0,
   queueOpen: false,
   mobileNavOpen: false,
+  nowPlayingOpen: false,
   focusSearchToken: 0,
 
   showNotice: (message, action) =>
@@ -55,7 +67,8 @@ export const useUiStore = create<UiState>((set) => ({
   setQueueOpen: (queueOpen) => set({ queueOpen, mobileNavOpen: false }),
   toggleQueue: () => set((state) => ({ queueOpen: !state.queueOpen, mobileNavOpen: false })),
   setMobileNavOpen: (mobileNavOpen) => set({ mobileNavOpen }),
-  closeOverlays: () => set({ queueOpen: false, mobileNavOpen: false }),
+  setNowPlayingOpen: (nowPlayingOpen) => set({ nowPlayingOpen, mobileNavOpen: false }),
+  closeOverlays: () => set({ queueOpen: false, mobileNavOpen: false, nowPlayingOpen: false }),
   focusSearch: () =>
     set((state) => ({ focusSearchToken: state.focusSearchToken + 1, mobileNavOpen: false })),
 }))

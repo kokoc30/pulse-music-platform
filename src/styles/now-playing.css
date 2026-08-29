@@ -1,0 +1,480 @@
+/**
+ * Expanded Now Playing — the audio player's full view.
+ *
+ * Built from the tokens the reference already defines: the same surfaces, radii,
+ * accent, spacing rhythm and control shapes as the bottom bar it grows out of.
+ * It is a larger view of the same player, so it should read as the same product
+ * rather than as a second app pasted on top (agents/08_UI_FIDELITY_RULES.md).
+ */
+
+/* ==========================================================================
+   The mini-player's expansion affordance
+   ========================================================================== */
+
+.player-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-rail-icon);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) ease,
+    background-color var(--dur-fast) ease;
+}
+
+.player-expand:hover,
+.player-expand:focus-visible {
+  color: var(--color-text-strong);
+  background: var(--overlay-row-hover);
+}
+
+/* The text block is a mouse shortcut into the sheet, so it says so on hover —
+   without becoming a button, because it contains the provider backlink. */
+.player-track-text {
+  min-width: 0;
+  flex: 1;
+  cursor: pointer;
+}
+
+/* ==========================================================================
+   The sheet
+
+   A scrim plus a panel. The scrim is what makes this modal in fact and not only
+   in ARIA: the page beneath is inert, and body scrolling is locked from the
+   component so the visitor's place is preserved and restored.
+   ========================================================================== */
+
+.now-playing-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.now-playing {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(520px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 10px 22px calc(24px + env(safe-area-inset-bottom, 0px));
+  border-radius: var(--radius-surface) var(--radius-surface) 0 0;
+  border: 1px solid var(--color-player-border);
+  border-bottom: 0;
+  background: var(--color-player-bg);
+  box-shadow: var(--shadow-bar);
+}
+
+/* ==========================================================================
+   Header — the one region a downward swipe is read from
+   ========================================================================== */
+
+.now-playing-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding-top: calc(6px + env(safe-area-inset-top, 0px));
+  /* The grab strip must not become a text selection or a native image drag. */
+  user-select: none;
+  touch-action: pan-y;
+}
+
+.now-playing-grip {
+  width: 38px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--color-track-rail);
+}
+
+.now-playing-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-player);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) ease;
+}
+
+.now-playing-collapse:hover,
+.now-playing-collapse:focus-visible {
+  background: var(--overlay-row-hover);
+  color: var(--color-text-strong);
+}
+
+/* ==========================================================================
+   Artwork
+   ========================================================================== */
+
+.now-playing-art {
+  flex: none;
+  align-self: center;
+  width: min(320px, 68vw);
+  max-width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: var(--radius-surface);
+  background: var(--color-art-placeholder);
+  box-shadow: var(--shadow-play);
+}
+
+.now-playing-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ==========================================================================
+   Track details and per-track actions
+   ========================================================================== */
+
+.now-playing-meta {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: none;
+}
+
+.now-playing-titles {
+  min-width: 0;
+  flex: 1;
+}
+
+.now-playing-titles h2 {
+  margin: 0 0 3px;
+  overflow: hidden;
+  color: var(--color-text-strong);
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now-playing-titles p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now-playing-source {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--color-text-dim);
+  font-size: 11.5px;
+}
+
+.now-playing-source:hover {
+  color: var(--color-text-strong);
+}
+
+.now-playing-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+/* Both are always visible here — this is the surface for acting on the track,
+   not a row where the controls stay quiet until hovered. */
+.now-playing-actions .like-button,
+.now-playing-actions .track-menu-trigger {
+  width: 38px;
+  height: 38px;
+  opacity: 1;
+}
+
+/* The menu opens near the bottom of a tall sheet, so it drops upward. */
+.now-playing-actions .track-menu-popover {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.now-playing-error {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: var(--radius-bar);
+  background: var(--color-control);
+  color: var(--destructive);
+  font-size: 12.5px;
+}
+
+/* ==========================================================================
+   Scrubber
+
+   Same component as the bar, one size larger: a bigger hit area is the whole
+   point of scrubbing on a phone.
+   ========================================================================== */
+
+.progress-sheet {
+  flex: none;
+  gap: 12px;
+}
+
+.progress-sheet span {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-seek {
+  padding: 14px 0;
+}
+
+.rail-seek > div {
+  height: 6px;
+}
+
+.rail-seek > div > i {
+  height: 6px;
+}
+
+/* ==========================================================================
+   Transport
+   ========================================================================== */
+
+.now-playing-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: none;
+}
+
+.now-playing-transport button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-player);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) ease,
+    background-color var(--dur-fast) ease,
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.now-playing-transport button:hover:not(:disabled) {
+  color: var(--color-text-strong);
+  background: var(--overlay-row-hover);
+}
+
+.now-playing-transport button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.now-playing-play {
+  width: 62px !important;
+  height: 62px !important;
+  background: var(--color-track-fill) !important;
+  color: #111 !important;
+}
+
+.now-playing-play:hover {
+  transform: scale(1.04);
+}
+
+/* The skip controls carry their interval as a number over the arrow, so "10"
+   is visible rather than only spoken. */
+.now-playing-skip {
+  position: relative;
+}
+
+.now-playing-skip span {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -45%);
+  font-size: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   Secondary row
+   ========================================================================== */
+
+.now-playing-secondary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-divider);
+}
+
+.now-playing-secondary .player-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  cursor: pointer;
+}
+
+.now-playing-queue {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) ease;
+}
+
+.now-playing-queue:hover {
+  background: var(--overlay-card-hover);
+}
+
+/* ==========================================================================
+   Full-screen on a phone
+
+   The reference's mini-player is what stays behind; the sheet takes the whole
+   viewport, insets and all, so nothing sits under a notch or a gesture bar.
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .now-playing {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border: 0;
+    border-radius: 0;
+    padding-left: 18px;
+    padding-right: 18px;
+    /* Centres the stack on a tall screen without stranding it on a short one. */
+    justify-content: center;
+    gap: 18px;
+  }
+
+  .now-playing-art {
+    width: min(72vw, 60vh);
+  }
+}
+
+/* A short landscape screen: keep everything reachable by letting the sheet
+   scroll rather than compressing the controls out of usable size. */
+@media (max-height: 520px) {
+  .now-playing {
+    justify-content: flex-start;
+    gap: 10px;
+  }
+
+  .now-playing-art {
+    width: min(180px, 38vh);
+  }
+
+  .now-playing-titles h2 {
+    font-size: 16px;
+  }
+}
+
+/* ==========================================================================
+   Motion
+   ========================================================================== */
+
+@media (prefers-reduced-motion: no-preference) {
+  .now-playing-scrim {
+    animation: now-playing-fade var(--dur-fast) var(--ease-out);
+  }
+
+  .now-playing {
+    animation: now-playing-rise 260ms var(--ease-out);
+  }
+}
+
+@keyframes now-playing-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* transform and opacity only — nothing here animates layout. */
+@keyframes now-playing-rise {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+}
+
+/* ==========================================================================
+   The expand control on a phone
+
+   The reference hides `.player-track > button` outright below 560px, because in
+   the original that slot held an inert glyph. It now holds the only keyboard-
+   and screen-reader-reachable route into Now Playing, and a swipe is not a
+   substitute for a control — so it stays, just smaller.
+   ========================================================================== */
+
+@media (max-width: 560px) {
+  .player-track > .player-expand {
+    display: inline-flex;
+    width: 24px;
+    height: 24px;
+  }
+
+  .player-track {
+    gap: 8px;
+  }
+}
+
+/* ==========================================================================
+   The grab strip
+
+   Separate from the header because the header's centre is the collapse button,
+   and a press on a button belongs to that button. Giving the drag zone its own
+   full-width element means the visible grip has a touch target worth aiming at,
+   and the button underneath keeps its ordinary click.
+   ========================================================================== */
+
+.now-playing-grab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  padding: 10px 0;
+  cursor: grab;
+  /* Neither a text selection nor a native drag. */
+  user-select: none;
+  touch-action: pan-y;
+}
+
+.now-playing-grab:active {
+  cursor: grabbing;
+}

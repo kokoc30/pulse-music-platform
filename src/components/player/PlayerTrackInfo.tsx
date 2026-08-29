@@ -1,10 +1,13 @@
-import { ExternalLink } from 'lucide-react'
+import { useCallback } from 'react'
+import { ChevronUp, ExternalLink } from 'lucide-react'
+import { useUiStore } from '@/app/ui-store'
 import { LikeButton } from '@/components/library/LikeButton'
 import { Artwork } from '@/components/track/Artwork'
 import { ProviderCredit } from '@/components/track/ProviderCredit'
 import { trackRefFromTrack } from '@/library/track-ref'
 import { providerLabel } from '@/music/provider-labels'
 import type { Track } from '@/music/types'
+import { isInteractiveTarget, useVerticalSwipe } from './swipe'
 
 /**
  * The reference's `.player-track` cluster.
@@ -22,6 +25,18 @@ import type { Track } from '@/music/types'
  */
 export function PlayerTrackInfo({ track }: { track: Track }) {
   const label = providerLabel(track.provider)
+  const setNowPlayingOpen = useUiStore((state) => state.setNowPlayingOpen)
+  const open = useCallback(() => setNowPlayingOpen(true), [setNowPlayingOpen])
+
+  /**
+   * Swiping up on the info region opens Now Playing.
+   *
+   * `useVerticalSwipe` ignores a gesture that starts on a control, so the heart,
+   * the provider backlink and the transport keep their own presses. A swipe is
+   * additive: the chevron and a click on the text both do the same thing, which
+   * is what keeps this reachable by keyboard and on a desktop.
+   */
+  const swipe = useVerticalSwipe({ onSwipeUp: open })
 
   // Below 560px the reference collapses the player to a mini-player and hides
   // `.player-track > a` outright. That is fine for the Audius convenience link,
@@ -34,9 +49,26 @@ export function PlayerTrackInfo({ track }: { track: Track }) {
   const iconLink = attributed ? undefined : track.permalink
 
   return (
-    <div className="player-track">
+    <div className="player-track" {...swipe}>
+      {/* A real button rather than a click handler on the row: the expansion has
+          to be reachable by keyboard and announceable, and the row also contains
+          a link and a heart that must keep their own activation. */}
+      <button type="button" className="player-expand" onClick={open} aria-label="Open Now Playing">
+        <ChevronUp size={16} aria-hidden="true" />
+      </button>
       <Artwork artwork={track.artwork} size="small" loading="eager" />
-      <div>
+      {/* Mouse convenience only, the same arrangement `TrackRow` uses: the
+          keyboard and assistive-technology route is the real button above, so
+          this handler is not the only way in and needs no key handling of its
+          own. The guard keeps the provider backlink inside it clickable — it
+          must open its own page, not the sheet. */}
+      <div
+        className="player-track-text"
+        onClick={(event) => {
+          if (isInteractiveTarget(event.target)) return
+          open()
+        }}
+      >
         <b title={track.title}>{track.title}</b>
         <span title={track.artistName}>
           {track.artistName}

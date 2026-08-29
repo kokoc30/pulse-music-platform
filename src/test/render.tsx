@@ -87,9 +87,11 @@ export function resetAppState(): FakeAudioEngine {
   resetMediaRetries()
   useUiStore.setState({
     notice: null,
+    noticeAction: null,
     noticeToken: 0,
     queueOpen: false,
     mobileNavOpen: false,
+    nowPlayingOpen: false,
     focusSearchToken: 0,
   })
 
@@ -97,7 +99,9 @@ export function resetAppState(): FakeAudioEngine {
   resetPlaybackCoordinator()
   clearYouTubeSessionCache()
   youtubeFactory = createFakeYouTubeFactory()
-  setYouTubeEngine(createYouTubeIframeEngine({ factory: youtubeFactory, origin: 'http://localhost' }))
+  setYouTubeEngine(
+    createYouTubeIframeEngine({ factory: youtubeFactory, origin: 'http://localhost' }),
+  )
 
   // Phase 6 left these to the suites that used them directly. They are
   // module-level singletons like every other line here, and a pool that
