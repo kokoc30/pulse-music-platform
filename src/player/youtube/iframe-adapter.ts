@@ -87,6 +87,19 @@ export interface YouTubePlayerHandle {
   playVideo(): void
   pauseVideo(): void
   stopVideo(): void
+  /**
+   * Documented `seekTo(seconds, allowSeekAhead)`.
+   *
+   * Using it is not a workaround and does not touch YouTube's own controls: it
+   * is first-class published API surface, and the unified seek rail drives the
+   * player through it exactly as the native scrubber would. Nothing is drawn
+   * over the iframe to provide it (docs/youtube-policy-audit.md §6 — overlays).
+   *
+   * `allowSeekAhead` defaults to `true`, the documented behaviour for a seek
+   * the visitor has committed to: it lets the player request the unbuffered
+   * segment rather than snapping to the nearest keyframe it already holds.
+   */
+  seekTo(seconds: number, allowSeekAhead?: boolean): void
   getCurrentTime(): number
   getDuration(): number
   getPlayerState(): number
@@ -106,6 +119,7 @@ interface YtPlayerInstance {
   playVideo: () => void
   pauseVideo: () => void
   stopVideo: () => void
+  seekTo: (seconds: number, allowSeekAhead: boolean) => void
   getCurrentTime: () => number
   getDuration: () => number
   getPlayerState: () => number
@@ -253,6 +267,8 @@ function wrap(player: YtPlayerInstance): YouTubePlayerHandle {
     playVideo: () => safe(() => player.playVideo(), undefined),
     pauseVideo: () => safe(() => player.pauseVideo(), undefined),
     stopVideo: () => safe(() => player.stopVideo(), undefined),
+    seekTo: (seconds, allowSeekAhead = true) =>
+      safe(() => player.seekTo(seconds, allowSeekAhead), undefined),
     getCurrentTime: () => safe(() => player.getCurrentTime(), 0),
     getDuration: () => safe(() => player.getDuration(), 0),
     getPlayerState: () => safe(() => player.getPlayerState(), YT_STATE.UNSTARTED),

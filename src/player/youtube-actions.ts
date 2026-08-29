@@ -4,6 +4,7 @@ import { activateYouTube, releasePlayback } from './playback-coordinator'
 import { getYouTubeEngine } from './youtube-engine'
 import { documentHidden as isDocumentHidden, youTubeVisibleRatio } from './youtube-visibility'
 import { useYouTubeStore } from './youtube-store'
+import type { YouTubePlaybackState, YouTubeStatus } from './youtube-store'
 
 /**
  * Every way YouTube playback can start, change or stop.
@@ -137,6 +138,66 @@ export async function cueYouTubeVideo(
       error instanceof Error && error.message ? error.message : 'YouTube could not load this video.'
     store.getState().setError(message)
     return false
+  }
+}
+
+/**
+ * Moves the playhead of the loaded video.
+ *
+ * Deliberately shaped exactly like `seek()` in `player-actions.ts` — same
+ * guards, same clamp, same "write the position back to the store" ending — so
+ * the one seek rail behind `unifiedSeek` cannot behave differently depending on
+ * which engine is live. A request that cannot be honoured is simply not
+ * honoured, as on the audio side.
+ *
+ * Nothing here is an overlay, a replacement control, or a modification of the
+ * player: it calls YouTube's own published `seekTo` (docs/youtube-policy-audit.md
+ * §6 — the prohibition is on obscuring native controls, not on driving the
+ * documented API).
+ */
+export function seekYouTube(seconds: number, store: Store = useYouTubeStore): void {
+  const state = store.getState()
+  if (!state.item || !Number.isFinite(seconds)) return
+  const { duration } = state
+  if (duration <= 0) return
+  const clamped = Math.min(Math.max(seconds, 0), duration)
+  getYouTubeEngine().seek(clamped)
+  state.setProgress(clamped, duration)
+}
+
+/**
+ * The raw half of the unified playback snapshot, for the YouTube engine.
+ *
+ * Reads the **store** rather than the live player, and that is the point: the
+ * store is already kept in step with the player by `bindYouTubeEngineEvents`,
+ * and a store read is reactive where a `player.getCurrentTime()` read is not.
+ * A hook built on the latter would render once and then sit still.
+ *
+ * The state argument exists so `usePlaybackSnapshot` can hand in the slice it
+ * has already subscribed to, and so this is testable without a live engine.
+ */
+export interface YouTubeSnapshotRaw {
+  currentTime: number
+  duration: number
+  status: YouTubeStatus
+  title: string
+  subtitle: string
+  artworkUrl: string
+}
+
+export function getYouTubeSnapshot(
+  state: YouTubePlaybackState = useYouTubeStore.getState(),
+): YouTubeSnapshotRaw {
+  const { item } = state
+  return {
+    currentTime: state.currentTime,
+    duration: state.duration || item?.durationSeconds || 0,
+    status: state.status,
+    title: item?.title ?? '',
+    // The channel, never relabelled as an artist: a YouTube uploader is not a
+    // credited performer and the app does not claim otherwise (agents/25).
+    subtitle: item?.channelTitle ?? '',
+    artworkUrl: item?.thumbnailUrl ?? '',
   }
 }
 

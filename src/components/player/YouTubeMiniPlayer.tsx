@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Pause, Play, SkipBack, SkipForward } from 'lucide-react'
+import { ExternalLink, Pause, Play, SkipBack, SkipForward } from 'lucide-react'
 import { useUiStore } from '@/app/ui-store'
+import { LikeButton } from '@/components/library/LikeButton'
 import { YouTubeThumbnail } from '@/components/youtube/YouTubeThumbnail'
 import { formatDuration } from '@/lib/format'
+import { trackRefFromYouTube } from '@/library/track-ref'
 import type { YouTubeVideoItem } from '@/music/types'
 import {
   hasYouTubeSessionStep,
@@ -73,6 +75,33 @@ export function YouTubeMiniPlayer({ item }: { item: YouTubeVideoItem }) {
             <span className="yt-mini-source"> · YouTube</span>
           </span>
         </div>
+
+        {/* The same heart the result rows, the audio bar and every library row
+            render, reading the same store — so a video liked from a search row
+            is already liked here, with no second copy of the state. The saved
+            reference is the temporary, metadata-only YouTube record
+            (agents/44; src/library/youtube-policy.ts), not a YouTube account
+            action: Pulse has no YouTube OAuth and the label says so. */}
+        <LikeButton
+          itemKey={item.id}
+          title={item.title}
+          toRef={() => trackRefFromYouTube(item)}
+          variant="prominent"
+          size={18}
+        />
+
+        {/* The watch-page backlink, in the slot the audio bar gives the
+            provider link. Required Minimum Functionality asks for a real link
+            to the video, and `noreferrer` is deliberately absent because the
+            same rules forbid suppressing the referrer. */}
+        <a
+          href={item.sourceUrl}
+          target="_blank"
+          rel="noopener"
+          aria-label={`Watch ${item.title} on YouTube`}
+        >
+          <ExternalLink size={18} aria-hidden="true" />
+        </a>
       </div>
 
       <div className="player-controls">

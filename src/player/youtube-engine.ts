@@ -53,6 +53,15 @@ export interface YouTubeEngine {
   resume(): void
   pause(): void
   stop(): void
+  /**
+   * Moves the playhead, through the IFrame API's own documented `seekTo`.
+   *
+   * The mirror of `AudioEngine.seek`, and the reason one seek rail can serve
+   * both engines. It reports the new position immediately rather than waiting
+   * for the next progress tick, so a released drag does not visibly snap back
+   * for up to a second.
+   */
+  seek(seconds: number): void
   getCurrentItem(): YouTubeVideoItem | null
   isPlaying(): boolean
   subscribe(events: YouTubeEngineEvents): () => void
@@ -263,6 +272,19 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       playing = false
       stopProgress()
       player?.stopVideo()
+    },
+
+    seek(seconds) {
+      if (!player || !Number.isFinite(seconds)) return
+      // Clamp against the player's own duration rather than the store's, so a
+      // stale store value can never ask for a position the video does not have.
+      const total = player.getDuration()
+      const clamped = total > 0 ? Math.min(Math.max(seconds, 0), total) : Math.max(seconds, 0)
+      player.seekTo(clamped, true)
+      // Publish the new position at once. The 1s progress timer only runs while
+      // the player is playing, so without this a seek on a *paused* video would
+      // leave the rail showing the old position indefinitely.
+      emit((events) => events.onTimeUpdate?.(player?.getCurrentTime() ?? clamped, total))
     },
 
     getCurrentItem: () => current,

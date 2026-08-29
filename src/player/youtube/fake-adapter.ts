@@ -20,6 +20,10 @@ export interface FakeYouTubePlayer extends YouTubePlayerHandle {
   readonly cued: boolean
   readonly destroyed: boolean
   readonly playCalls: number
+  /** How many times the unified seek rail drove this player. */
+  readonly seekCalls: number
+  /** The seconds argument of the most recent `seekTo`, before clamping. */
+  readonly lastSeek: number | null
   readonly container: HTMLElement
   readonly options: CreatePlayerOptions
   /** Drive the documented events from a test. */
@@ -73,6 +77,8 @@ export function createFakeYouTubeFactory(): FakeYouTubeFactory {
       let cued = Boolean(options.videoId)
       let destroyed = false
       let playCalls = 0
+      let seekCalls = 0
+      let lastSeek: number | null = null
       let currentTime = 0
       let duration = 0
       let state: number = YT_STATE.UNSTARTED
@@ -92,6 +98,12 @@ export function createFakeYouTubeFactory(): FakeYouTubeFactory {
         },
         get playCalls() {
           return playCalls
+        },
+        get seekCalls() {
+          return seekCalls
+        },
+        get lastSeek() {
+          return lastSeek
         },
         container,
         options,
@@ -127,6 +139,15 @@ export function createFakeYouTubeFactory(): FakeYouTubeFactory {
           currentTime = 0
           state = YT_STATE.UNSTARTED
           options.events.onStateChange?.('unstarted')
+        },
+        // The real player clamps to the video and reports the new position on
+        // its next clock read; the fake mirrors that so a seek is observable
+        // through `getCurrentTime` exactly as it is in production.
+        seekTo(seconds) {
+          if (!Number.isFinite(seconds)) return
+          seekCalls += 1
+          lastSeek = Math.max(seconds, 0)
+          currentTime = duration > 0 ? Math.min(lastSeek, duration) : lastSeek
         },
         getCurrentTime: () => currentTime,
         getDuration: () => duration,
