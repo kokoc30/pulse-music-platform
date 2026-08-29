@@ -460,6 +460,25 @@ Bundle cost of this fix: `index-*.js` 431.99 → **438.40 kB** (135.07 kB gzip, 
 CSS 135.78 → **137.23 kB** (23.84 kB gzip, **+0.21 kB**). No new dependency —
 `package.json` and `pnpm-lock.yaml` are unchanged.
 
+### Deployed, but the Functions were not exercised
+
+Commit `0db3c47` was pushed to `main` and **Vercel built it successfully** — GitHub
+deployment `6151339692`, `state: success`, at
+`https://pulse-music-platform-qf1ljali6-kokos-projects-8df176f4.vercel.app`.
+
+Requesting anything on that origin — `/`, `/api/jamendo`, `/api/youtube` — returns **`302`
+to `vercel.com/sso-api`**: the project sits behind **Vercel Deployment Protection**, and
+there are no Vercel credentials in this environment (`vercel whoami` → *Logged out*, no
+`VERCEL_AUTOMATION_BYPASS_SECRET`). This is the same wall recorded in
+`PHASE7_LIBRARY_RECOMMENDATIONS_FINAL_REPORT.md` §17.
+
+A `302` from the protection layer says nothing either way about the Functions, and is not
+counted as a pass. Nothing in this fix touched `api/`, `server/`, `vercel.json` or any
+`tsconfig`, so no regression is expected — but *expected* is not *verified*. To close it:
+disable Deployment Protection for Production, or use a Protection Bypass secret, or open
+the two endpoint URLs in a browser already signed in to that Vercel account, and confirm
+neither answers `500 FUNCTION_INVOCATION_FAILED`.
+
 ---
 
 ## §16 — Known limitations
