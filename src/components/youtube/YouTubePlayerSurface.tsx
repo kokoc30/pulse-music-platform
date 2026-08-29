@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ExternalLink, Pause, Play, SkipBack, SkipForward, X } from 'lucide-react'
+import { useUiStore } from '@/app/ui-store'
 import { formatDuration } from '@/lib/format'
 import {
   bindYouTubeEngineEvents,
@@ -55,6 +56,8 @@ export function YouTubePlayerSurface() {
     (state) => state.setPausedForBackgroundPolicy,
   )
 
+  const focusVideoToken = useUiStore((state) => state.focusVideoToken)
+  const surfaceRef = useRef<HTMLElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const mountRef = useRef<HTMLDivElement | null>(null)
   // Re-rendered only when a step actually becomes possible or impossible.
@@ -66,6 +69,22 @@ export function YouTubePlayerSurface() {
   useEffect(() => {
     setSteps({ next: hasYouTubeSessionStep(1), previous: hasYouTubeSessionStep(-1) })
   }, [sessionItems, sessionIndex])
+
+  /**
+   * The bottom bar asked for attention, so take it.
+   *
+   * The bar is supplemental UI over this player, and tapping it must lead here
+   * rather than open a second view of the same video. Moving focus is what makes
+   * that work for a keyboard and a screen reader as well as a mouse; the scroll
+   * is a no-op while the surface is fixed, and correct if it ever is not.
+   */
+  useEffect(() => {
+    if (focusVideoToken === 0) return
+    const node = surfaceRef.current
+    if (!node) return
+    node.scrollIntoView({ block: 'nearest' })
+    node.focus({ preventScroll: true })
+  }, [focusVideoToken])
 
   /**
    * Tells the page a fixed overlay is covering its lower edge.
@@ -161,10 +180,14 @@ export function YouTubePlayerSurface() {
 
   return (
     <section
+      ref={surfaceRef}
       className="yt-surface"
       aria-label="YouTube player"
       data-status={status}
       data-testid="youtube-surface"
+      // Focusable only as a programmatic target; never in the tab order, because
+      // the controls inside it are what a visitor tabs to.
+      tabIndex={-1}
     >
       <header className="yt-surface-head">
         <div className="yt-surface-title">

@@ -1,11 +1,11 @@
 import { buildProfile } from '@/personalization/profile'
 import { usePersonalizationStore } from '@/personalization/store'
 import type { Track } from '@/music/types'
-import { collectCandidates } from './candidates'
+import { collectCandidates, collectFallbackCandidates } from './candidates'
 import type { CandidateSources } from './candidates'
 import { BUFFER_TARGET, planAutoplay } from './planner'
 import { sessionTracks } from './session-pool'
-import type { ScoredCandidate } from './types'
+import type { Candidate, ScoredCandidate } from './types'
 
 /**
  * The small standing supply of "what could play next".
@@ -67,20 +67,44 @@ export async function refillBuffer(context: RefillContext): Promise<void> {
       session: context.sources?.session ?? sessionTracks(),
       ...(context.signal ? { signal: context.signal } : {}),
       ...(context.sources?.fetchSimilar ? { fetchSimilar: context.sources.fetchSimilar } : {}),
+      ...(context.sources?.fetchByGenre ? { fetchByGenre: context.sources.fetchByGenre } : {}),
     }
 
     const pool = await collectCandidates(context.seed, sources)
     const affinity = affinityForAutoplay()
 
-    buffer = planAutoplay({
-      seed: context.seed,
-      candidates: pool.candidates,
-      queuedIds: context.queuedIds,
-      recentIds: context.recentIds,
-      bufferedIds: buffer.map((item) => item.track.id),
-      ...(affinity ? { artistAffinity: affinity } : {}),
-      size: BUFFER_TARGET,
-    })
+    const plan = (candidates: readonly Candidate[]) =>
+      planAutoplay({
+        seed: context.seed,
+        candidates,
+        queuedIds: context.queuedIds,
+        recentIds: context.recentIds,
+        bufferedIds: buffer.map((item) => item.track.id),
+        ...(affinity ? { artistAffinity: affinity } : {}),
+        size: BUFFER_TARGET,
+      })
+
+    buffer = plan(pool.candidates)
+
+    /**
+     * Nothing survived the free pass — so, once, ask the provider.
+     *
+     * This is the *Kosandra* case made concrete. A search for one song returns a
+     * page that is thirteen re-uploads of that song and nothing else; the
+     * same-song rule correctly removes every one of them, and what is left in
+     * memory is empty. Without this the track simply ends in silence, which is
+     * what the visitor reported.
+     *
+     * Guarded on an empty plan rather than an empty pool, because a pool full of
+     * candidates that all fail the rules is exactly as useless as no pool. One
+     * request, no retry, and only when the seed carries a genre to scope it by.
+     */
+    if (buffer.length === 0) {
+      const fallback = await collectFallbackCandidates(context.seed, sources)
+      if (fallback.candidates.length) {
+        buffer = plan([...pool.candidates, ...fallback.candidates])
+      }
+    }
   })().finally(() => {
     refilling = null
   })

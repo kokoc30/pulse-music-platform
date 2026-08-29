@@ -37,6 +37,15 @@ export interface UiState {
    */
   nowPlayingOpen: boolean
   focusSearchToken: number
+  /**
+   * Bumped when the bottom bar asks the visible video player for attention.
+   *
+   * The bar is supplemental UI; the official player is the authority. Tapping
+   * the bar therefore points at that player rather than opening a second view
+   * of it, and this token is how it says so without either component importing
+   * the other.
+   */
+  focusVideoToken: number
   showNotice: (message: string, action?: NoticeAction) => void
   dismissNotice: () => void
   setQueueOpen: (open: boolean) => void
@@ -45,6 +54,7 @@ export interface UiState {
   setNowPlayingOpen: (open: boolean) => void
   closeOverlays: () => void
   focusSearch: () => void
+  focusVideo: () => void
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -55,6 +65,7 @@ export const useUiStore = create<UiState>((set) => ({
   mobileNavOpen: false,
   nowPlayingOpen: false,
   focusSearchToken: 0,
+  focusVideoToken: 0,
 
   showNotice: (message, action) =>
     set((state) => ({
@@ -71,6 +82,7 @@ export const useUiStore = create<UiState>((set) => ({
   closeOverlays: () => set({ queueOpen: false, mobileNavOpen: false, nowPlayingOpen: false }),
   focusSearch: () =>
     set((state) => ({ focusSearchToken: state.focusSearchToken + 1, mobileNavOpen: false })),
+  focusVideo: () => set((state) => ({ focusVideoToken: state.focusVideoToken + 1 })),
 }))
 
 export const showNotice = (message: string, action?: NoticeAction): void =>

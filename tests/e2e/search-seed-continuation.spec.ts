@@ -159,7 +159,9 @@ test.describe('YouTube continues through the results it already has', () => {
       )
       .toBe(true)
     await page.evaluate(() =>
-      (window as unknown as { __pulseYouTube: { endCurrent: () => void } }).__pulseYouTube.endCurrent(),
+      (
+        window as unknown as { __pulseYouTube: { endCurrent: () => void } }
+      ).__pulseYouTube.endCurrent(),
     )
   }
 
@@ -226,10 +228,15 @@ test.describe('YouTube continues through the results it already has', () => {
     await startFirstResult(page)
     const calls = recordYouTubeApiTraffic(page)
 
-    await page.getByRole('button', { name: 'Next YouTube result' }).click()
+    // Scoped to the player's own footer. The global bottom bar now carries the
+    // same two controls while YouTube owns playback, and they drive the same
+    // session — see tests/e2e/unified-now-playing.spec.ts.
+    const surface = page.getByTestId('youtube-surface')
+
+    await surface.getByRole('button', { name: 'Next YouTube result' }).click()
     await expect.poll(() => currentVideoId(page)).toBe('bbbbbbbbbbb')
 
-    await page.getByRole('button', { name: 'Previous YouTube result' }).click()
+    await surface.getByRole('button', { name: 'Previous YouTube result' }).click()
     await expect.poll(() => currentVideoId(page)).toBe('aaaaaaaaaaa')
 
     expect(calls).toEqual([])
@@ -264,8 +271,8 @@ test.describe('YouTube still stops in the background — by design', () => {
       .poll(() =>
         page.evaluate(
           () =>
-            (window as unknown as { __pulseYouTube?: { playing: boolean } }).__pulseYouTube?.playing ??
-            null,
+            (window as unknown as { __pulseYouTube?: { playing: boolean } }).__pulseYouTube
+              ?.playing ?? null,
         ),
       )
       .toBe(true)
@@ -285,8 +292,8 @@ test.describe('YouTube still stops in the background — by design', () => {
       .poll(() =>
         page.evaluate(
           () =>
-            (window as unknown as { __pulseYouTube?: { playing: boolean } }).__pulseYouTube?.playing ??
-            null,
+            (window as unknown as { __pulseYouTube?: { playing: boolean } }).__pulseYouTube
+              ?.playing ?? null,
         ),
       )
       .toBe(false)
@@ -300,6 +307,8 @@ test.describe('YouTube still stops in the background — by design', () => {
       })
       document.dispatchEvent(new Event('visibilitychange'))
     })
-    await expect(page.getByText(/YouTube playback pauses when Pulse is in the background/)).toBeVisible()
+    await expect(
+      page.getByText(/YouTube playback pauses when Pulse is in the background/),
+    ).toBeVisible()
   })
 })

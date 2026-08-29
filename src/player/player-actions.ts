@@ -1,3 +1,4 @@
+import { useUiStore } from '@/app/ui-store'
 import { recentlyPlayed } from '@/personalization/history'
 import { usePersonalizationStore } from '@/personalization/store'
 import { reportStreamFailure, resolveStreamSource } from '@/music/stream-source'
@@ -7,7 +8,7 @@ import { getAudioEngine } from './audio-engine'
 import { clearAutoplayBuffer, refillBuffer, takeFromBuffer } from './autoplay'
 import { activateAudio } from './playback-coordinator'
 import { usePlayerStore } from './player-store'
-import type { QueueContext } from './player-store'
+import type { PlayerState, QueueContext } from './player-store'
 import { nextQueueIndex, previousQueueIndex } from './queue-order'
 
 /**
@@ -245,26 +246,27 @@ export const MAX_AUTOPLAY_ATTEMPTS = 3
  */
 export async function playNext(
   store: Store = usePlayerStore,
-  options: { skipRepeatOne?: boolean } = {},
+  options: { skipRepeatOne?: boolean; reason?: AdvanceReason } = {},
 ): Promise<void> {
+  const reason: AdvanceReason = options.reason ?? 'ended'
   const state = store.getState()
 
   // 1. Repeat one. Deliberately ahead of the queue: the visitor asked for this
-  //    track, and nothing generated may override that.
-  if (state.repeatMode === 'one' && state.currentTrack && !options.skipRepeatOne) {
+  //    track, and nothing generated may override that. It applies only when the
+  //    track ran out on its own — see `skipToNext`.
+  if (
+    reason === 'ended' &&
+    state.repeatMode === 'one' &&
+    state.currentTrack &&
+    !options.skipRepeatOne
+  ) {
     await playTrack(state.currentTrack, { queue: state.queue, index: state.currentIndex }, store)
     return
   }
 
   // 2 and 3. The explicit queue in its running order, wrapping only when the
   //    visitor turned Repeat playlist on.
-  const nextIndex = nextQueueIndex({
-    queueLength: state.queue.length,
-    currentIndex: state.currentIndex,
-    shuffle: state.shuffle,
-    shuffleOrder: state.shuffleOrder,
-    repeatMode: state.repeatMode,
-  })
+  const nextIndex = nextQueueDestination(state, reason)
   const next = nextIndex === null ? undefined : state.queue[nextIndex]
 
   if (next && nextIndex !== null) {
@@ -279,6 +281,73 @@ export async function playNext(
   engine().pause()
   store.getState().setCurrentTime(0)
   store.getState().setStatus('paused')
+
+  /**
+   * Say so, but only to someone who asked.
+   *
+   * A press of Next that produces silence needs an explanation. A track ending
+   * quietly at the end of a session does not, and a toast on every natural end
+   * would be noise the visitor never asked for.
+   */
+  if (reason === 'user') {
+    useUiStore.getState().showNotice('No similar track available right now.')
+  }
+}
+
+/**
+ * Whether the visitor pressed Next, or the track simply ran out.
+ *
+ * These are different intentions and they get different answers, which is the
+ * distinction the previous implementation was missing: it treated a button press
+ * exactly like a track ending, so Repeat one answered a press to *leave* the
+ * song by playing that same song again.
+ */
+export type AdvanceReason = 'ended' | 'user'
+
+/**
+ * The next queue position, for this reason.
+ *
+ * Identical to `nextQueueIndex` except for one case, and that case is the whole
+ * point: a Repeat-playlist queue of a *single* track wraps to itself. That is
+ * the right answer when the track ended — the visitor asked for the list to
+ * repeat — and the wrong one for a press of Next, which is a request to leave
+ * the current song. Returning `null` there lets the caller fall through to
+ * autoplay instead of restarting what is already playing.
+ */
+function nextQueueDestination(state: PlayerState, reason: AdvanceReason): number | null {
+  const index = nextQueueIndex({
+    queueLength: state.queue.length,
+    currentIndex: state.currentIndex,
+    shuffle: state.shuffle,
+    shuffleOrder: state.shuffleOrder,
+    repeatMode: state.repeatMode,
+  })
+  if (index === null) return null
+  if (reason === 'user' && index === state.currentIndex) return null
+  return index
+}
+
+/**
+ * The one action behind every Next the visitor can press.
+ *
+ * The bottom bar, the expanded Now Playing sheet, the Media Session's
+ * `nexttrack` and a headset's skip button all call this and nothing else, so
+ * "what Next does" is defined once rather than four times
+ * (agents/45 → "Media Session").
+ *
+ * It differs from a track ending in exactly two ways, both of them the same
+ * idea — a press of Next means *leave this song*:
+ *
+ * · Repeat one does not answer it. Replaying the current track would be the
+ *   literal opposite of what was asked.
+ * · A single-track Repeat-playlist queue does not wrap onto itself.
+ *
+ * Everything else is unchanged, and deliberately so: a real queued track still
+ * outranks anything generated, and a multi-track Repeat playlist still wraps —
+ * `A B C` at `C` goes to `A`, because `A` is a genuinely different track.
+ */
+export async function skipToNext(store: Store = usePlayerStore): Promise<void> {
+  await playNext(store, { reason: 'user' })
 }
 
 /**

@@ -15,6 +15,11 @@ export type CandidateSource =
   | 'jamendo-similar'
   /** Tracks the session already loaded: shelves, search results, the queue. */
   | 'session'
+  /**
+   * One genre-scoped Audius request, spent only when everything free came back
+   * empty. Deliberately named for what it is: same genre, not same sound.
+   */
+  | 'genre-fallback'
 
 export interface Candidate {
   track: Track
@@ -37,14 +42,7 @@ export interface ScoredCandidate {
 }
 
 export type SimilarityReason =
-  | 'provider'
-  | 'genre'
-  | 'tags'
-  | 'mood'
-  | 'bpm'
-  | 'artist'
-  | 'key'
-  | 'profile'
+  'provider' | 'genre' | 'tags' | 'mood' | 'bpm' | 'artist' | 'key' | 'profile'
 
 /**
  * Everything the planner needs to choose, gathered by the caller.

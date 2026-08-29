@@ -3,8 +3,8 @@ import { createMediaSessionController } from '@/player/media-session/controller'
 import { onEngineChange } from '@/player/playback-coordinator'
 import {
   pause,
-  playNext,
   playPrevious,
+  skipToNext,
   seek,
   seekBy,
   stopPlayback,
@@ -42,7 +42,7 @@ export function MediaSessionHost(): null {
       pause: () => pause(),
       stop: () => stopPlayback(),
       previousTrack: () => void playPrevious(),
-      nextTrack: () => void playNext(),
+      nextTrack: () => void skipToNext(),
       seekTo: (seconds) => seek(seconds),
       // The same relative-seek path the on-screen skip controls use, so the
       // lock screen and the Now Playing sheet cannot disagree about clamping.
@@ -79,7 +79,7 @@ export function MediaSessionHost(): null {
         pause: () => pause(),
         stop: () => stopPlayback(),
         previousTrack: () => void playPrevious(),
-        nextTrack: () => void playNext(),
+        nextTrack: () => void skipToNext(),
         seekTo: (seconds) => seek(seconds),
         seekBy: (offset) => seekBy(offset),
       })

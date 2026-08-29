@@ -33,7 +33,8 @@ type YouTubeGlobals = {
 }
 
 const readYouTubeGlobals = () =>
-  ((window as unknown as { __pulseYouTube?: YouTubeGlobals }).__pulseYouTube ?? {}) as YouTubeGlobals
+  ((window as unknown as { __pulseYouTube?: YouTubeGlobals }).__pulseYouTube ??
+    {}) as YouTubeGlobals
 
 const audioState = () =>
   ({
@@ -205,12 +206,16 @@ test.describe('the visible player', () => {
     expect(vars).not.toHaveProperty('modestbranding')
   })
 
-  test('keeps the close control outside the iframe, and closing stops playback', async ({ page }) => {
+  test('keeps the close control outside the iframe, and closing stops playback', async ({
+    page,
+  }) => {
     await page.locator(rows).first().click()
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
 
     const close = page.getByRole('button', { name: /Close the YouTube player/ })
-    const insideStage = await close.evaluate((node) => Boolean(node.closest('[data-testid="youtube-stage"]')))
+    const insideStage = await close.evaluate((node) =>
+      Boolean(node.closest('[data-testid="youtube-stage"]')),
+    )
     expect(insideStage).toBe(false)
 
     await close.click()
@@ -288,7 +293,9 @@ test.describe('provider transitions', () => {
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
     await page.locator(rows).nth(1).click()
 
-    await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.lastVideoId)).toBe('bbbbbbbbbbb')
+    await expect
+      .poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.lastVideoId))
+      .toBe('bbbbbbbbbbb')
     expect(await page.evaluate(readYouTubeGlobals).then((g) => g.created)).toBe(1)
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
   })
@@ -406,7 +413,9 @@ test.describe('open-catalog confidence drives the fallback', () => {
     await expect(page.getByTestId('youtube-fallback-more')).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Top result' })).toHaveCount(0)
     await expect(page.locator('.song-row')).toHaveCount(0)
-    await expect(page.getByText(/Nothing in the Audius or Jamendo catalogues strongly matched/i)).toBeVisible()
+    await expect(
+      page.getByText(/Nothing in the Audius or Jamendo catalogues strongly matched/i),
+    ).toBeVisible()
 
     // Reaching that state costs no quota.
     expect(traffic).toEqual([])
@@ -439,11 +448,16 @@ test.describe('open-catalog confidence drives the fallback', () => {
     expect(traffic.filter((url) => url.includes('/api/youtube'))).toHaveLength(1)
   })
 
-  test('a genuine match still shows normal results and only the subtle variant', async ({ page }) => {
+  test('a genuine match still shows normal results and only the subtle variant', async ({
+    page,
+  }) => {
     await stubAllProviders(page, {
       audius: { emptySearch: true },
       jamendo: {
-        tracks: [...ARAM_NOISE, { id: 'g1', title: 'Barov Ari', artist: 'Aram Asatryan', duration: 8 }],
+        tracks: [
+          ...ARAM_NOISE,
+          { id: 'g1', title: 'Barov Ari', artist: 'Aram Asatryan', duration: 8 },
+        ],
       },
     })
     await page.goto('/search?q=aram asatryan')
@@ -464,8 +478,16 @@ test.describe('automatic YouTube fallback after an explicit submission', () => {
    * signal and the real open-catalog confidence flag.
    */
   const SAWAS = [
-    { videoId: 'sawas000001', title: 'Saria Al Sawas - Bas asmae Mini video clip', channelTitle: 'Saria Al Sawas' },
-    { videoId: 'sawas000002', title: 'Saria Al Sawas feat. Kosaik Haulii - Wajeh El Goumar', channelTitle: 'Saria Al Sawas' },
+    {
+      videoId: 'sawas000001',
+      title: 'Saria Al Sawas - Bas asmae Mini video clip',
+      channelTitle: 'Saria Al Sawas',
+    },
+    {
+      videoId: 'sawas000002',
+      title: 'Saria Al Sawas feat. Kosaik Haulii - Wajeh El Goumar',
+      channelTitle: 'Saria Al Sawas',
+    },
     { videoId: 'sawas000003', title: 'Ma Mallet', channelTitle: 'Saria Al Sawas - Topic' },
   ]
 
@@ -561,6 +583,88 @@ test.describe('automatic YouTube fallback after an explicit submission', () => {
 
     await page.getByTestId('youtube-fallback').click()
     await expect(page.locator(rows).first()).toBeVisible()
+    expect(traffic.filter((url) => url.includes('/api/youtube'))).toHaveLength(1)
+  })
+})
+
+test.describe('the reported Aram Asatryan submission', () => {
+  /**
+   * The catalogues answer, but with nothing that means anything.
+   *
+   * This is the exact live data: Audius returns one row whose title, uploader
+   * and handle contain neither `aram` nor `asatryan` (it is tagged with them,
+   * and tags are deliberately not scored), and Jamendo returns three rows that
+   * share only the generic token `aram`. Every one of them is weak — verified
+   * against the real scorer, not assumed — so an explicit submission must spend
+   * exactly one YouTube search.
+   *
+   * The distinction that matters here is the one the earlier tests in this file
+   * do not cover: the catalogues are **not empty**. They answered; they just did
+   * not answer *this*.
+   */
+  const ARAM_JAMENDO = [
+    { id: 'n1', title: "Eternos Rivales - Fil d'aram", artist: 'Eternos Rivales', duration: 8 },
+    { id: 'n2', title: '01. Meteo sombre (prod. Aram)', artist: 'L.IAM', duration: 8 },
+    { id: 'n3', title: 'Orom Aram', artist: 'Joel Vanoli', duration: 8 },
+  ]
+
+  const ARAM_VIDEOS = [
+    { videoId: 'aram0000001', title: 'Sourp Sarkis', channelTitle: 'Aram Asatryan - Topic' },
+    { videoId: 'aram0000002', title: 'Barov Ari', channelTitle: 'Aram Asatryan - Topic' },
+  ]
+
+  async function stubAram(page: import('@playwright/test').Page) {
+    await stubAllProviders(page, {
+      audius: { emptySearch: true },
+      jamendo: { tracks: ARAM_JAMENDO },
+      youtube: { videos: ARAM_VIDEOS },
+    })
+  }
+
+  test('an explicit submission runs the fallback exactly once, unprompted', async ({ page }) => {
+    await stubAram(page)
+    const traffic = recordYouTubeTraffic(page)
+
+    await page.goto('/')
+    const field = page.getByLabel('Search songs and artists')
+    await field.click()
+    await field.fill('aram asatryan')
+    await field.press('Enter')
+
+    await expect(page.locator(rows).first()).toBeVisible()
+    await expect(page.getByText('Sourp Sarkis')).toBeVisible()
+    expect(traffic.filter((url) => url.includes('/api/youtube'))).toHaveLength(1)
+    // No manual button left over: it already ran.
+    await expect(page.getByTestId('youtube-fallback')).toHaveCount(0)
+  })
+
+  test('typing the whole phrase spends nothing and keeps the manual control', async ({ page }) => {
+    await stubAram(page)
+    const traffic = recordYouTubeTraffic(page)
+
+    await page.goto('/')
+    const field = page.getByLabel('Search songs and artists')
+    await field.click()
+    await field.fill('aram asatryan')
+
+    await expect(page.getByTestId('youtube-fallback')).toBeVisible()
+    expect(traffic.filter((url) => url.includes('/api/youtube'))).toHaveLength(0)
+  })
+
+  test('submitting the same phrase twice still spends only one search', async ({ page }) => {
+    await stubAram(page)
+    const traffic = recordYouTubeTraffic(page)
+
+    await page.goto('/')
+    const field = page.getByLabel('Search songs and artists')
+    await field.click()
+    await field.fill('aram asatryan')
+    await field.press('Enter')
+    await expect(page.locator(rows).first()).toBeVisible()
+
+    await field.press('Enter')
+    await page.waitForTimeout(500)
+
     expect(traffic.filter((url) => url.includes('/api/youtube'))).toHaveLength(1)
   })
 })

@@ -128,7 +128,7 @@
   transition: background var(--dur-fast) ease;
 }
 
-.yt-row[data-embeddable="true"] {
+.yt-row[data-embeddable='true'] {
   cursor: pointer;
 }
 
@@ -136,7 +136,7 @@
   background: var(--overlay-row-hover);
 }
 
-.yt-row[data-current="true"] {
+.yt-row[data-current='true'] {
   background: var(--overlay-card);
 }
 
@@ -191,7 +191,7 @@
 }
 
 .yt-row:hover .yt-row-play,
-.yt-row[data-current="true"] .yt-row-play {
+.yt-row[data-current='true'] .yt-row-play {
   opacity: 1;
 }
 
@@ -531,7 +531,6 @@
   cursor: pointer;
 }
 
-
 /* The background-pause explanation. Stated once, dismissible, and never over
    the player. */
 .yt-surface-policy {
@@ -594,5 +593,82 @@
 @media (max-width: 830px) {
   body[data-yt-surface='open'] .pulse-app {
     padding-bottom: calc(var(--app-bottom-space-sm) + 340px);
+  }
+}
+
+/* ==========================================================================
+   The bottom bar, while YouTube owns playback
+
+   Deliberately the same shell as the audio bar — `.music-player`, the same
+   grid, the same control shapes — because it is the same bar showing a
+   different engine, not a second bar. What differs is only what a YouTube item
+   can honestly offer: no scrubber, since seeking belongs to the official
+   player's own controls, and no volume, since that is the visitor's business
+   inside the embed.
+   ========================================================================== */
+
+.yt-mini-source {
+  color: var(--color-text-dim);
+}
+
+.yt-mini-text {
+  min-width: 0;
+  flex: 1;
+  cursor: pointer;
+}
+
+/* Informational, and marked as such: a bar with no thumb, because there is
+   nothing here to drag. */
+.yt-mini-progress {
+  align-items: center;
+}
+
+.yt-mini-rail {
+  flex: 1;
+  height: 4px;
+  min-width: 60px;
+  border-radius: var(--radius-pill);
+  background: var(--color-track-rail);
+  overflow: hidden;
+}
+
+.yt-mini-rail > i {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-track-fill);
+}
+
+.yt-mini-art {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.yt-mini-art button {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-bar);
+  background: transparent;
+  cursor: pointer;
+  line-height: 0;
+}
+
+/* The thumbnail is the visitor's route back to the player, so it needs a
+   visible focus ring like any other control. */
+.yt-mini-art button:focus-visible {
+  outline: 2px solid var(--color-track-fill);
+  outline-offset: 2px;
+}
+
+@media (max-width: 560px) {
+  /* The artwork shortcut is redundant on a phone, where the player fills the
+     screen already and the row itself is tappable. */
+  .yt-mini-art {
+    display: none;
+  }
+
+  .yt-mini-progress {
+    display: none;
   }
 }

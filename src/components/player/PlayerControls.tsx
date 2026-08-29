@@ -1,7 +1,7 @@
 import { Loader2, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward } from 'lucide-react'
-import { playNext, playPrevious, togglePlay } from '@/player/player-actions'
+import { playPrevious, skipToNext, togglePlay } from '@/player/player-actions'
 import {
-  useHasNext,
+  useCanSkipNext,
   useHasPrevious,
   useIsLoading,
   useIsPlaying,
@@ -28,7 +28,7 @@ import { PlayerProgress } from './PlayerProgress'
 export function PlayerControls() {
   const isPlaying = useIsPlaying()
   const isLoading = useIsLoading()
-  const hasNext = useHasNext()
+  const canSkipNext = useCanSkipNext()
   const hasPrevious = useHasPrevious()
   const shuffle = useShuffle()
   const repeatMode = useRepeatMode()
@@ -73,8 +73,8 @@ export function PlayerControls() {
         </button>
         <button
           type="button"
-          onClick={() => void playNext()}
-          disabled={!hasNext}
+          onClick={() => void skipToNext()}
+          disabled={!canSkipNext}
           aria-label="Next track"
         >
           <SkipForward size={18} fill="currentColor" aria-hidden="true" />

@@ -131,9 +131,9 @@ test.describe('A — like something and come back to it', () => {
     await page.getByRole('button', { name: 'Play', exact: true }).click()
 
     await expect(page.locator('.player-track b')).toHaveText('Night Signal')
-    await expect.poll(() => page.evaluate(() => document.querySelector('audio')?.paused)).toBe(
-      false,
-    )
+    await expect
+      .poll(() => page.evaluate(() => document.querySelector('audio')?.paused))
+      .toBe(false)
   })
 
   test('unliking removes it, and does not delete listening history', async ({ page }) => {
@@ -283,6 +283,12 @@ test.describe('C — playing a playlist', () => {
     await page.getByRole('button', { name: 'Play', exact: true }).click()
     await expect(page.locator('.player-track b')).toHaveText('Night Signal')
 
+    // Paused before stepping, deliberately. The stub clip is about two seconds
+    // long and this playlist holds three, so a test that takes its time would
+    // otherwise be racing real playback down the queue and on into autoplay.
+    // Where Next *goes* does not depend on whether anything is playing.
+    await page.getByRole('button', { name: 'Pause', exact: true }).click()
+
     await nextTrack(page)
     await expect(page.locator('.player-track b')).toHaveText('Night Drive')
   })
@@ -345,7 +351,9 @@ test.describe('C — playing a playlist', () => {
     await expect(modes.getByRole('button', { name: 'Repeat off' })).toBeVisible()
   })
 
-  test('Repeat one replays the current track rather than advancing', async ({ page }, testInfo) => {
+  test('Repeat one does not trap a press of Next on the current track', async ({
+    page,
+  }, testInfo) => {
     // Pressing Next is the observable trigger, and the reference's mini-player
     // has no Next control at all below 560px — there, repeat-one is only ever
     // reached by a track ending. The rule itself is covered deterministically
@@ -363,7 +371,8 @@ test.describe('C — playing a playlist', () => {
     await expect(modes.getByRole('button', { name: 'Repeat one' })).toBeVisible()
 
     await nextTrack(page)
-    await expect(page.locator('.player-track b')).toHaveText('Night Signal')
+    // The next track in the playlist, not the one that was playing.
+    await expect(page.locator('.player-track b')).toHaveText('Night Drive')
   })
 
   test('Repeat playlist wraps at the end instead of generating something', async ({
@@ -445,9 +454,7 @@ test.describe('D — recommendations respond to explicit intent', () => {
       .toHaveLength(1)
 
     await page.getByRole('button', { name: 'Undo' }).click()
-    await expect
-      .poll(async () => (await readLibrary(page))?.hiddenRecommendationKeys)
-      .toEqual([])
+    await expect.poll(async () => (await readLibrary(page))?.hiddenRecommendationKeys).toEqual([])
   })
 
   test('a hidden item stays hidden across a reload', async ({ page }) => {
@@ -509,9 +516,7 @@ test.describe('D — recommendations respond to explicit intent', () => {
     await page.getByRole('button', { name: 'Reset hidden recommendations' }).click()
     await page.getByRole('button', { name: 'Reset hidden recommendations' }).last().click()
 
-    await expect
-      .poll(async () => (await readLibrary(page))?.hiddenRecommendationKeys)
-      .toEqual([])
+    await expect.poll(async () => (await readLibrary(page))?.hiddenRecommendationKeys).toEqual([])
   })
 
   test('a Pulse like never triggers a provider write', async ({ page }) => {
@@ -576,9 +581,7 @@ test.describe('E — a saved YouTube item', () => {
     await page.goto('/search?q=night')
     await page.getByTestId('youtube-fallback').click()
 
-    const kids = page
-      .getByTestId('youtube-result')
-      .filter({ hasText: 'Night Songs For Kids' })
+    const kids = page.getByTestId('youtube-result').filter({ hasText: 'Night Songs For Kids' })
     await expect(kids).toBeVisible()
     // Saving it would create a library item that could never legally play.
     await expect(kids.getByRole('button')).toHaveCount(0)
@@ -609,11 +612,7 @@ test.describe('storage boundaries', () => {
     await heartFor(page, 'Night Reverie').click()
     await expect.poll(() => likedKeys(page)).toHaveLength(2)
 
-    await page
-      .locator('.song-row')
-      .filter({ hasText: 'Night Signal' })
-      .first()
-      .click()
+    await page.locator('.song-row').filter({ hasText: 'Night Signal' }).first().click()
     await expect(page.locator('.player-track b')).toHaveText('Night Signal')
 
     const serialized = JSON.stringify(await readLibrary(page))
@@ -667,7 +666,9 @@ test.describe('storage boundaries', () => {
     expect(await page.evaluate(() => window.localStorage.getItem('pulse:volume'))).toBe(
       volumeBefore,
     )
-    await expect(page.getByRole('heading', { name: 'Personalised listening history' })).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: 'Personalised listening history' }),
+    ).toBeVisible()
   })
 })
 

@@ -23,14 +23,14 @@ import { providerLabel } from '@/music/provider-labels'
 import type { Track } from '@/music/types'
 import {
   SEEK_STEP_SECONDS,
-  playNext,
+  skipToNext,
   playPrevious,
   seekBy,
   togglePlay,
 } from '@/player/player-actions'
 import {
   useDuration,
-  useHasNext,
+  useCanSkipNext,
   useHasPrevious,
   useIsLoading,
   usePlayerError,
@@ -75,7 +75,7 @@ export function NowPlayingSheet({ track }: { track: Track }) {
   const isLoading = useIsLoading()
   const error = usePlayerError()
   const duration = useDuration()
-  const hasNext = useHasNext()
+  const canSkipNext = useCanSkipNext()
   const hasPrevious = useHasPrevious()
   const shuffle = useShuffle()
   const repeatMode = useRepeatMode()
@@ -287,8 +287,8 @@ export function NowPlayingSheet({ track }: { track: Track }) {
 
           <button
             type="button"
-            onClick={() => void playNext()}
-            disabled={!hasNext}
+            onClick={() => void skipToNext()}
+            disabled={!canSkipNext}
             aria-label="Next track"
           >
             <SkipForward size={22} fill="currentColor" aria-hidden="true" />

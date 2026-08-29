@@ -25,25 +25,43 @@ export const useQueueContextLabel = (): string | null =>
   usePlayerStore((s) => s.queueContext?.label ?? null)
 
 /**
- * Whether Next has anywhere to go.
+ * Whether the listener can ask Pulse to move forward — the question the Next
+ * button is actually asking.
  *
- * Reads the same `nextQueueIndex` the action does, so the control's enabled
- * state and what the control actually does can never disagree — a wrapped
- * repeat-playlist queue or a shuffled running order enables Next on the last
- * *sequential* track exactly when pressing it would work.
+ * The selector this replaces answered a narrower one: "does the *queue* have
+ * another position?" That was the whole of Next before autoplay existed, and it
+ * stopped being the whole of it in Phase 6 without anyone noticing. The consequence was
+ * exact and reported from a real device: playing one song from a search seeds a
+ * queue of one, `nextQueueIndex` returns `null`, and Next appeared **disabled**
+ * — while `playNext` sitting behind that same button was perfectly capable of
+ * generating a similar track. The control and the action disagreed.
+ *
+ * Three ways forward, and each is deliberately a *distinct destination*:
+ *
+ * · a further position in the explicit queue;
+ * · a Repeat-playlist wrap that lands somewhere else — a single-track queue
+ *   wrapping onto itself is not somewhere else;
+ * · autoplay, when the visitor left it on and there is a track to seed from.
+ *
+ * What is deliberately **not** here is Repeat one. It can always replay the
+ * current track, so including it would light up Next on a one-track queue with
+ * autoplay off — and pressing it would then do the one thing a press of Next
+ * must never do (`skipToNext`). Enabling a control by promising something the
+ * action refuses to deliver is worse than disabling it.
  */
-export const useHasNext = (): boolean =>
-  usePlayerStore(
-    (s) =>
-      s.repeatMode === 'one' ||
-      nextQueueIndex({
-        queueLength: s.queue.length,
-        currentIndex: s.currentIndex,
-        shuffle: s.shuffle,
-        shuffleOrder: s.shuffleOrder,
-        repeatMode: s.repeatMode,
-      }) !== null,
-  )
+export function selectCanSkipNext(s: PlayerState): boolean {
+  const index = nextQueueIndex({
+    queueLength: s.queue.length,
+    currentIndex: s.currentIndex,
+    shuffle: s.shuffle,
+    shuffleOrder: s.shuffleOrder,
+    repeatMode: s.repeatMode,
+  })
+  if (index !== null && index !== s.currentIndex) return true
+  return s.autoplaySimilar && s.currentTrack !== null
+}
+
+export const useCanSkipNext = (): boolean => usePlayerStore(selectCanSkipNext)
 
 export const useHasPrevious = (): boolean =>
   usePlayerStore(

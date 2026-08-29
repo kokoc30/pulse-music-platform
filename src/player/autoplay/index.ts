@@ -41,15 +41,17 @@ export {
   planNextTrack,
 } from './planner'
 
-export { MAX_REQUESTS_PER_REFILL, MAX_SESSION_CANDIDATES, collectCandidates } from './candidates'
+export {
+  GENRE_FALLBACK_LIMIT,
+  MAX_REQUESTS_PER_REFILL,
+  MAX_REQUESTS_PER_REFILL_WITH_FALLBACK,
+  MAX_SESSION_CANDIDATES,
+  collectCandidates,
+  collectFallbackCandidates,
+} from './candidates'
 export type { CandidatePool, CandidateSources } from './candidates'
 
-export {
-  SESSION_POOL_LIMIT,
-  clearSessionPool,
-  rememberTracks,
-  sessionTracks,
-} from './session-pool'
+export { SESSION_POOL_LIMIT, clearSessionPool, rememberTracks, sessionTracks } from './session-pool'
 
 export {
   affinityForAutoplay,

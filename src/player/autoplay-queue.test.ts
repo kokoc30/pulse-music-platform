@@ -43,10 +43,26 @@ function track(overrides: Partial<Track> = {}): Track {
   }
 }
 
+/**
+ * Closes the last door autoplay has.
+ *
+ * The session pool is only the first place it looks: an exhausted refill may
+ * also spend one genre-scoped request. A test that means "nothing is available"
+ * has to mean nothing is available *anywhere*, so these tests say so explicitly
+ * rather than relying on what a stubbed catalogue happens to return.
+ */
+function withNoGenreCandidates() {
+  setMusicProvider({ ...createAudiusProvider(), getTrendingTracks: () => Promise.resolve([]) })
+}
+
 /** Puts a track on screen as the current one, with the given queue. */
 function seatPlayer(current: Track, queue: Track[] = [current]) {
   const state = usePlayerStore.getState()
-  state.setQueue(queue, queue.findIndex((t) => t.id === current.id), null)
+  state.setQueue(
+    queue,
+    queue.findIndex((t) => t.id === current.id),
+    null,
+  )
   state.setStatus('playing')
 }
 
@@ -135,6 +151,7 @@ describe('when the explicit queue is exhausted', () => {
 
   it('stops when nothing similar is available', async () => {
     const current = track({ providerId: 'current' })
+    withNoGenreCandidates()
     seatPlayer(current)
 
     await playNext()
@@ -146,6 +163,7 @@ describe('when the explicit queue is exhausted', () => {
   it('never generates the track that just played', async () => {
     const current = track({ providerId: 'current' })
     rememberTracks([current])
+    withNoGenreCandidates()
     seatPlayer(current)
 
     await playNext()
