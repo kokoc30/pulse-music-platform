@@ -229,18 +229,17 @@ test.describe('YouTube continues through the results it already has', () => {
 
     await endCurrent(page)
 
-    await expect(page.getByTestId('youtube-stage')).toBeVisible()
-    await expect(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible()
+    await expect(page.locator('.music-player [data-testid="youtube-stage"]')).toBeVisible()
     expect(await currentVideoId(page)).toBe('bbbbbbbbbbb')
   })
 
   test('continuous play can be switched off, and then it stops', async ({ page }) => {
     await startFirstResult(page)
 
-    // The setting moved into the expanded view when the floating player was
-    // removed — it is the visitor's own preference, and that is where a
-    // preference belongs now that there is one player. The view is already open:
-    // starting a video opens it, because that is where the player is mounted.
+    // The setting lives in the expanded view — it is the visitor's own
+    // preference, and that is where a preference belongs. The view has to be
+    // asked for now: starting a video plays it in the bar and opens nothing.
+    await page.getByRole('button', { name: 'Open Now Playing' }).click()
     await expect(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible()
     await page.getByLabel('Continuous play').uncheck()
 

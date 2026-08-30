@@ -70,15 +70,22 @@
    layout for it. The artwork slot holds a live player instead of a still
    cover, and that is the whole of the visible difference.
 
-   One behavioural difference remains, and it is functional rather than
-   cosmetic. The embedded player is mounted here and nowhere else, so this view
-   is on screen for as long as a video plays. Dimming the page and swallowing
-   its clicks for that whole time would mean a visitor cannot search, browse or
-   switch to a track without stopping the video first. So for video the scrim
-   paints nothing and takes no pointer events; only the panel itself does, and
-   the component skips the scroll lock to match. The page behind stays visible,
-   scrollable and clickable. Nothing about the panel's geometry changes with
-   it.
+   Two behavioural differences remain, and both are functional rather than
+   cosmetic.
+
+   **The panel does not dim or swallow the page.** A video keeps playing while
+   this view is open, and dimming the page for that whole time would mean a
+   visitor cannot search, browse or switch to a track without stopping the video
+   first. So for video the scrim paints nothing and takes no pointer events; only
+   the panel itself does, and the component skips the scroll lock to match.
+
+   **The panel stops short of the bar instead of covering it.** The player is
+   mounted in the bar's slot — that is what lets a video start there rather than
+   forcing this view open — so covering the bar would hide the very player the
+   developer policies require to stay displayed. The bar publishes its own
+   measured height, and the panel is inset by it. For audio nothing is inset:
+   there is no player down there to keep visible, only a cover the sheet is
+   already showing larger.
    ========================================================================== */
 
 .now-playing-scrim[data-engine='youtube'] {
@@ -86,10 +93,16 @@
   backdrop-filter: none;
   /* Clicks fall straight through the empty area to the page underneath. */
   pointer-events: none;
+  /* The gap the bar occupies, kept clear so the player stays on screen. The
+     gutter matches the bar's own offset from the bottom of the viewport. */
+  padding-bottom: calc(var(--player-bar-height) + var(--frame-gutter));
 }
 
 .now-playing-scrim[data-engine='youtube'] .now-playing {
   pointer-events: auto;
+  /* `100%` is the scrim, which is already short by the bar. Restated so the
+     panel scrolls inside the space it actually has rather than under the bar. */
+  max-height: 100%;
 }
 
 .now-playing {
@@ -481,6 +494,12 @@
 
   .player-track {
     gap: 8px;
+  }
+
+  /* The bar goes full-bleed below 560px — `right/bottom/left: 0`, no gutter —
+     so the space kept clear for it loses the gutter too. */
+  .now-playing-scrim[data-engine='youtube'] {
+    padding-bottom: var(--player-bar-height);
   }
 }
 

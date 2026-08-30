@@ -281,37 +281,46 @@
    The embedded stage
 
    The one place a YouTube player is ever mounted: the artwork slot of the
-   expanded sheet, and nowhere else. It is an ordinary in-flow element — not
-   fixed, not measured against anything, not moved between parents — because the
-   bottom bar shows YouTube's own thumbnail in its ordinary 56px cover slot like
-   any other album art. The bar has no stage, no reserved box and no taller
-   variant, which is what makes it identical for all three providers.
+   bottom bar, in place of the 56px cover a track shows there, and nowhere else.
+   It is an ordinary in-flow element — not fixed, not measured against anything,
+   not moved between parents.
+
+   It used to live in the expanded sheet, which meant the sheet had to be forced
+   open before a video could play at all. The bar is `position: fixed` and always
+   on screen, so putting the stage there is what lets a YouTube result start the
+   way an Audius result does: in the bar, with the sheet left alone.
+
+   The bar is therefore taller for a video — a 200px box where a 56px cover would
+   be. Nothing else about it changes: same controls, same order, same sizes, same
+   spacing.
 
    Policy rules encoded here, not preferences:
 
    · A hard 200 x 200 floor at every breakpoint (Required Minimum Functionality;
      the IFrame API reference).
-   · The stage holds the API-created iframe and nothing else. Every control in
-     the sheet is a sibling *below* it, so nothing is drawn over the player or
-     over its native controls.
+   · The stage holds the API-created iframe and nothing else. Every control is a
+     sibling *beside* it, so nothing is drawn over the player or over its native
+     controls.
    · There is no `display: none`, no zero opacity and no offscreen parking
-     anywhere in this file. When the sheet is closed the element is not rendered
-     and playback has already been paused on the way down.
+     anywhere in this file. The element is rendered for exactly as long as
+     YouTube holds the engine claim.
    ========================================================================== */
 
-.now-playing-stage {
-  flex: none;
-  align-self: center;
-  width: min(456px, 100%);
-  min-width: 200px;
+.player-stage {
+  /* The documented floor is square, so the slot is square. A 16:9 frame inside
+     it is letterboxed by the player itself — never cropped, which agents/25
+     forbids for the same reason the bar's `object-fit: contain` exists. */
+  flex: 0 0 auto;
+  width: var(--yt-stage-min);
+  height: var(--yt-stage-min);
 }
 
 .yt-stage {
   width: 100%;
-  aspect-ratio: 16 / 9;
+  height: 100%;
   /* Restated from the component's inline style so neither can be lost alone. */
-  min-width: 200px;
-  min-height: 200px;
+  min-width: var(--yt-stage-min);
+  min-height: var(--yt-stage-min);
   overflow: hidden;
   border-radius: var(--radius-art-md);
   background: #000;

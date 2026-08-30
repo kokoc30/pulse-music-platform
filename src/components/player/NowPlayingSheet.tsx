@@ -17,7 +17,6 @@ import { useUiStore } from '@/app/ui-store'
 import { LikeButton } from '@/components/library/LikeButton'
 import { TrackMenu } from '@/components/library/TrackMenu'
 import { Artwork } from '@/components/track/Artwork'
-import { YouTubeStageHost } from '@/components/youtube/YouTubeStageHost'
 import { usePlayerStore } from '@/player/player-store'
 import { REPEAT_LABELS } from '@/player/queue-order'
 import {
@@ -42,24 +41,27 @@ import { useVerticalSwipe } from './swipe'
  * because the video had its own floating surface with its own controls, and two
  * full-screen surfaces would have fought for the screen. That surface is gone,
  * and this sheet is now the expanded view for all three providers: same layout,
- * same transport, same heart, same scrubber. A YouTube item differs in one
- * visible way, that the artwork slot holds a live player.
+ * same transport, same heart, same scrubber.
  *
- * **This is the only place an embed is ever mounted.** The bottom bar shows
- * YouTube's own thumbnail in its ordinary 56px cover slot, exactly as it shows a
- * track's artwork, so the bar is byte-for-byte the same shape for every
- * provider. Because the player exists only while this sheet is open, collapsing
- * pauses it — see `unifiedExpand`. There is no state in which a video plays
- * without its player on screen.
+ * **It hosts no player, and that is what makes it optional.** The embed was
+ * mounted here once, which meant this sheet had to be forced open before a video
+ * could play at all — press a YouTube result and a full-screen panel took over,
+ * where an Audius result simply started the bar. The stage moved into the bar's
+ * artwork slot, so a video starts the way a track does and this view is opened
+ * only when it is asked for.
+ *
+ * Two consequences follow, and both are load-bearing:
+ *
+ * · **It is laid out above the bar, not over it** (see `now-playing.css`), so
+ *   the player it expanded stays displayed. Covering it would put a video in the
+ *   state the developer policies prohibit.
+ * · **Collapsing pauses nothing.** There is no longer anything to hide from.
  *
  * **It owns no playback.** Every control calls the same `unified*` action the
  * bottom bar calls, and every value it shows comes from the same snapshot. There
  * is no second engine, no second queue, no second progress state and no second
  * "next", which is what makes repeat, shuffle, playlist continuation and
  * autoplay behave identically whether the sheet is open or shut.
- *
- * Every control is a sibling *below* the stage, never an overlay over it, which
- * is the layout rule the developer policies actually impose.
  */
 export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
   const open = useUiStore((state) => state.nowPlayingOpen)
@@ -70,11 +72,11 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
   const closeRef = useRef<HTMLButtonElement>(null)
 
   /**
-   * Collapsing goes through the unified action rather than straight to the UI
-   * store, because for a video it is not only a change of view: this panel is
-   * where the player lives, so collapsing takes it off the page. The action
-   * pauses YouTube on the way down. Audio is untouched by it — there, collapsing
-   * really is only a change of view over a running `HTMLAudioElement`.
+   * Collapsing still goes through the unified action rather than straight to the
+   * UI store, so there is one answer to "what does expanding mean" for both
+   * engines. For a video it used to mean rather more than a change of view — the
+   * player lived here, so collapsing took it off the page and had to pause it.
+   * Now it is a change of view either way, over a player that goes on running.
    */
   const close = useCallback(() => unifiedExpand(false), [])
   const swipe = useVerticalSwipe({ onSwipeDown: close })
@@ -180,15 +182,13 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
           </button>
         </header>
 
-        {snapshot.isEmbeddedStage && snapshot.stageItem ? (
-          /* The live player, in the slot a track's cover occupies — full width,
-             16:9, and the only place in the application an embed is ever
-             mounted. Every control is a sibling *below* it, never an overlay
-             over it, which is the rule the whole layout answers to. */
-          <div className="now-playing-stage">
-            <YouTubeStageHost item={snapshot.stageItem} />
-          </div>
-        ) : (
+        {/* No stage here, and that is the point.
+            The player is mounted once, in the bar, and this sheet is laid out
+            *above* the bar rather than over it — so the video the visitor
+            expanded is still playing, still visible, and still the same iframe.
+            Rendering a second stage would mean either two players or one
+            reparented mid-playback, and reparenting an iframe reloads it. */}
+        {snapshot.isEmbeddedStage ? null : (
           <div className="now-playing-art">
             {/* The same component and the same mirror failover every other cover
                 uses, asked for the largest safe candidate. No second resolver. */}
@@ -340,7 +340,6 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
             {can.continuous ? <ContinuousPlayToggle /> : null}
           </div>
         ) : null}
-
       </section>
     </div>
   )

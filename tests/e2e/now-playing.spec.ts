@@ -258,7 +258,8 @@ test.describe('navigation and playback', () => {
 })
 
 test.describe('it is the video player’s own view', () => {
-  test('hosts the player, and never draws over it', async ({ page }) => {
+  /** Starts a video, which now plays in the bar, then opens the detail view. */
+  async function playVideoAndExpand(page: Page) {
     await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
     await page.goto('/search?q=night')
     await page.getByTestId('youtube-fallback').click()
@@ -267,15 +268,26 @@ test.describe('it is the video player’s own view', () => {
       .filter({ hasText: 'Night Signal (Official Video)' })
       .click()
 
-    // The view opens with the video, because that is where the player is
-    // mounted — the surface is on screen before anything is asked to play.
+    // Playing a video no longer opens anything: it starts the bar, exactly as
+    // an Audius result does. The sheet is a detail view, reached on request.
+    await expect(page.getByTestId('youtube-stage')).toBeVisible()
+    await expect(sheet(page)).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Open Now Playing' }).click()
     await expect(sheet(page)).toBeVisible()
-    const stage = page.getByTestId('youtube-stage')
-    await expect(stage).toBeVisible()
-    await expect(sheet(page).getByTestId('youtube-stage')).toBeVisible()
+  }
+
+  test('leaves the player in the bar, and never draws over it', async ({ page }) => {
+    await playVideoAndExpand(page)
+
+    // One player, in the bar, and the sheet hosts none of its own — a second
+    // stage would mean either two iframes or one reparented mid-playback.
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
+    await expect(sheet(page).getByTestId('youtube-stage')).toHaveCount(0)
 
     // Above the documented minimum, in the rendered layout rather than in a
-    // stylesheet, and with nothing of ours painted in front of it.
+    // stylesheet, and with nothing of ours painted in front of it — including
+    // the sheet, which is why the sheet stops short of the bar.
     const rendered = await stageHitTest(page)
     expect(rendered.width).toBeGreaterThanOrEqual(200)
     expect(rendered.height).toBeGreaterThanOrEqual(200)
@@ -290,14 +302,7 @@ test.describe('it is the video player’s own view', () => {
    * assumed, at both widths.
    */
   test('is a panel, not a modal — nothing behind it is blocked', async ({ page }) => {
-    await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
-    await page.goto('/search?q=night')
-    await page.getByTestId('youtube-fallback').click()
-    await page
-      .getByTestId('youtube-result')
-      .filter({ hasText: 'Night Signal (Official Video)' })
-      .click()
-    await expect(sheet(page)).toBeVisible()
+    await playVideoAndExpand(page)
 
     // Not announced as modal…
     await expect(sheet(page)).not.toHaveAttribute('aria-modal', 'true')
@@ -330,14 +335,7 @@ test.describe('it is the video player’s own view', () => {
       'the expanded sheet is the whole viewport at this width',
     )
 
-    await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
-    await page.goto('/search?q=night')
-    await page.getByTestId('youtube-fallback').click()
-    await page
-      .getByTestId('youtube-result')
-      .filter({ hasText: 'Night Signal (Official Video)' })
-      .click()
-    await expect(sheet(page)).toBeVisible()
+    await playVideoAndExpand(page)
 
     await page.getByRole('link', { name: 'Pulse home' }).click()
     await expect(page.getByRole('heading', { name: 'Trending songs' })).toBeVisible()

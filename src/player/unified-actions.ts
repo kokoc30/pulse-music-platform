@@ -18,8 +18,6 @@ import { usePlayerStore } from './player-store'
 import { selectSnapshotState } from './use-playback-snapshot'
 import {
   closeYouTubeSurface,
-  hasLiveYouTubePlayer,
-  requestYouTubeResume,
   playYouTubeSessionStep,
   playYouTubeVideo,
   seekYouTube,
@@ -56,28 +54,20 @@ export { SEEK_STEP_SECONDS }
 /**
  * Play or pause whatever currently holds the engine claim.
  *
- * The YouTube branch has one extra case, and it follows from where the embed
- * lives: the player exists only while the expanded sheet is open, so a video
- * paused by collapsing has no player behind it. Pressing play then means
- * *make it visible again* — the sheet opens, the stage mounts, restores the
- * position, and resumes. Anything else would press play against nothing, and
- * playing a video whose player is not on screen is the one thing the developer
- * policies flatly prohibit.
+ * Two lines again, as an address book entry should be. It used to carry a third
+ * case for YouTube: the player existed only while the expanded sheet was open,
+ * so a video paused by collapsing had no player behind it, and a press of play
+ * had to mean *reopen the sheet, rebuild the player, restore the position and
+ * resume*. The stage lives in the bar now and is never torn down while a video
+ * is loaded, so there is nothing to rebuild and no sheet to reopen — pressing
+ * play presses play.
  */
 export function unifiedPlayPause(): void {
-  if (activeEngine() !== 'youtube') {
-    void togglePlay()
+  if (activeEngine() === 'youtube') {
+    toggleYouTubePlayback()
     return
   }
-
-  const youtube = useYouTubeStore.getState()
-  if (youtube.item && youtube.status !== 'playing' && !hasLiveYouTubePlayer()) {
-    requestYouTubeResume()
-    useUiStore.getState().setNowPlayingOpen(true)
-    return
-  }
-
-  toggleYouTubePlayback()
+  void togglePlay()
 }
 
 /**
@@ -167,20 +157,23 @@ export function unifiedLikeToggle(): void {
 /**
  * Opens or closes the expanded Now Playing view.
  *
- * **Collapsing while a video is playing pauses it**, and that is a policy
- * requirement rather than a preference. The embed is mounted by the expanded
- * view and by nothing else, so collapsing removes the player from the page — and
- * the developer policies prohibit content continuing in a player "not displayed
- * in the page, tab, or screen that the user is viewing". Pausing on the way down
- * is what makes that impossible rather than merely unlikely.
+ * **Collapsing no longer pauses anything, and that is the fix rather than a
+ * relaxation.** It used to pause a playing video, because the embed was mounted
+ * by this view and by nothing else — collapsing removed the player from the
+ * page, and the developer policies prohibit content continuing in a player "not
+ * displayed in the page, tab, or screen that the user is viewing". Pausing was
+ * the only honest answer to a layout that put the player somewhere it could
+ * vanish from.
  *
- * Audio is untouched by this: collapsing the sheet is a change of view over a
- * running `HTMLAudioElement`, exactly as it was before.
+ * The stage is in the bar now. The bar is always on screen while something is
+ * loaded, and the sheet is laid out above it rather than over it, so a video is
+ * displayed whether this view is open or shut and the prohibition is satisfied
+ * by construction instead of by stopping the music.
+ *
+ * One line for both engines, which is what it should always have been: this is
+ * a change of view, over a running player either way.
  */
 export function unifiedExpand(open: boolean): void {
-  if (!open && activeEngine() === 'youtube' && useYouTubeStore.getState().status === 'playing') {
-    toggleYouTubePlayback()
-  }
   useUiStore.getState().setNowPlayingOpen(open)
 }
 

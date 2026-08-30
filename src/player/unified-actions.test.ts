@@ -159,23 +159,28 @@ describe('expanding and collapsing', () => {
   })
 
   /**
-   * A docked stage is small and easily scrolled past, and the developer
-   * policies prohibit a player that is not displayed in the screen the user is
-   * viewing. Pausing on the way down means playback never continues into a
-   * state this application cannot guarantee is visible.
+   * This asserted the opposite until the stage moved into the bar.
+   *
+   * Collapsing used to pause a playing video, and it had to: the embed was
+   * mounted by the expanded view and by nothing else, so collapsing removed the
+   * player from the page — and the policies prohibit content continuing in a
+   * player "not displayed in the page, tab, or screen that the user is viewing".
+   * With the stage in a bar that is always on screen, the prohibition is
+   * satisfied by the layout, and stopping the music would be a cost paid for
+   * nothing.
    */
-  it('pauses a playing video on the way down', () => {
+  it('pauses nothing on the way down, for either engine', () => {
     engine.current = 'youtube'
     useYouTubeStore.getState().openWith(VIDEO, 'playing')
     useYouTubeStore.getState().setStatus('playing')
 
     unifiedExpand(false)
 
-    expect(youtube.toggleYouTubePlayback).toHaveBeenCalledTimes(1)
+    expect(youtube.toggleYouTubePlayback).not.toHaveBeenCalled()
     expect(useUiStore.getState().nowPlayingOpen).toBe(false)
   })
 
-  it('leaves an already-paused video alone', () => {
+  it('leaves an already-paused video alone too', () => {
     engine.current = 'youtube'
     useYouTubeStore.getState().openWith(VIDEO, 'paused')
     unifiedExpand(false)

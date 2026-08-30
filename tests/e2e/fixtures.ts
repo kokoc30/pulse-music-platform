@@ -942,20 +942,22 @@ export async function transport(page: Page): Promise<Locator> {
  * centre and its corners — both measured in one pass, inside the page.
  *
  * Measuring from Node and then hit-testing in a second round trip is a race.
- * The sheet rises over 260ms, so a box captured while that animation is still
- * running describes a position the stage has already left by the time the
- * probes run, and the lower corner lands just below it on the sheet's own
- * padding. Letting the animations settle and then doing both in the same
- * evaluate closes the gap, rather than papering over it with a sleep.
+ * The bar rises, and the sheet over it rises for 260ms more, so a box captured
+ * while either animation is still running describes a position the stage has
+ * already left by the time the probes run. Letting every animation on the page
+ * settle and then doing both in the same evaluate closes the gap, rather than
+ * papering over it with a sleep.
+ *
+ * Settled across the whole document rather than on one container, because the
+ * stage moved: it lives in the bar now, and the sheet it used to live in is not
+ * necessarily on the page at all.
  */
 export async function stageHitTest(
   page: Page,
 ): Promise<{ width: number; height: number; covering: string[] }> {
-  await page
-    .locator('.now-playing')
-    .evaluate((node) =>
-      Promise.all(node.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => {}))),
-    )
+  await page.evaluate(() =>
+    Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => {}))),
+  )
 
   return page.evaluate(() => {
     const selector = '[data-testid="youtube-stage"]'

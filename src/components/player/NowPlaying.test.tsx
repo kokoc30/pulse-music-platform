@@ -432,7 +432,13 @@ describe('it is the expanded view for the video player too', () => {
     expect(within(sheet()!).queryByText('Midnight Signal')).not.toBeInTheDocument()
   })
 
-  it('hosts the embedded player in the artwork slot, with nothing over it', async () => {
+  /**
+   * This used to assert the player was *in* the sheet, and the move out of it is
+   * the fix. The embed has to be mounted and at least 200 x 200 while it plays,
+   * so hosting it here meant this sheet had to be forced open before a video
+   * could play at all. It lives in the bar now; the sheet shows the detail.
+   */
+  it('hosts no player of its own — there is one, and it is in the bar', async () => {
     const { user } = await playFirstSearchResult()
     await openSheet(user)
     await playYouTubeVideo(
@@ -442,18 +448,18 @@ describe('it is the expanded view for the video player too', () => {
 
     await waitFor(() => expect(within(sheet()!).getByText('Barov Ari')).toBeInTheDocument())
 
-    // The player sits in the sheet's artwork slot, in normal flow.
-    const stage = screen.getByTestId('youtube-stage')
-    expect(sheet()!.contains(stage)).toBe(true)
+    const stages = screen.getAllByTestId('youtube-stage')
+    expect(stages).toHaveLength(1)
+    expect(sheet()!.contains(stages[0])).toBe(false)
     // It holds the API-created node and nothing else, so nothing of ours is
     // ever drawn over the player or over its native controls.
-    expect(stage.children).toHaveLength(1)
-    expect(stage.firstElementChild).toHaveClass('yt-stage-mount')
-    // And the sheet shows no still artwork where the player is.
+    expect(stages[0].children).toHaveLength(1)
+    expect(stages[0].firstElementChild).toHaveClass('yt-stage-mount')
+    // And the sheet shows no still artwork standing in for it either.
     expect(sheet()!.querySelector('.now-playing-art')).toBeNull()
   })
 
-  it('keeps every control a sibling below the player, never on top of it', async () => {
+  it('keeps every control out of the player, never on top of it', async () => {
     const { user } = await playFirstSearchResult()
     await openSheet(user)
     await playYouTubeVideo(
@@ -463,7 +469,7 @@ describe('it is the expanded view for the video player too', () => {
     await waitFor(() => expect(within(sheet()!).getByText('Yars Ari')).toBeInTheDocument())
 
     const stage = screen.getByTestId('youtube-stage')
-    for (const control of within(sheet()!).getAllByRole('button')) {
+    for (const control of screen.getAllByRole('button')) {
       expect(stage.contains(control)).toBe(false)
     }
     expect(stage.contains(within(sheet()!).getByRole('slider', { name: 'Seek' }))).toBe(false)
@@ -494,7 +500,16 @@ describe('it is the expanded view for the video player too', () => {
     expect(within(dialog).getByRole('button', { name: /Save .* to Liked Songs/i })).toBeInTheDocument()
   })
 
-  it('pauses the video on the way down, because a docked stage is easy to lose', async () => {
+  /**
+   * The reverse of what this asserted before, and the reason is the layout.
+   *
+   * Collapsing used to pause a video, because collapsing destroyed the player —
+   * the policies prohibit content continuing in a player the visitor cannot see,
+   * and pausing was the only honest answer to a stage that vanished. The stage
+   * is in the bar now, which is on screen either way, so there is nothing to
+   * hide from and no reason to stop.
+   */
+  it('does not pause the video on the way down — the player is still on screen', async () => {
     const { user } = await playFirstSearchResult()
     await openSheet(user)
     await playYouTubeVideo(
@@ -505,7 +520,9 @@ describe('it is the expanded view for the video player too', () => {
 
     await user.click(screen.getByRole('button', { name: 'Collapse Now Playing' }))
 
-    await waitFor(() => expect(useYouTubeStore.getState().status).toBe('paused'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(useYouTubeStore.getState().status).toBe('playing')
+    expect(screen.getByTestId('youtube-stage')).toBeInTheDocument()
   })
 
   it('does not pause audio on the way down — that is only a change of view', async () => {

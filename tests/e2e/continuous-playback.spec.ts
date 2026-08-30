@@ -158,15 +158,17 @@ test.describe('a video keeps going in the sheet it is already in', () => {
     await expect(page.getByTestId('youtube-stage')).toBeVisible()
   }
 
-  test('a different video loads, and the sheet never closes', async ({ page }) => {
+  test('a different video loads, in the same bar, with nothing opened', async ({ page }) => {
     await startFirstResult(page)
     await expect.poll(() => currentVideoId(page)).toBe('aaaaaaaaaaa')
 
     await endCurrent(page)
 
     await expect.poll(() => currentVideoId(page)).toBe('bbbbbbbbbbb')
-    await expect(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible()
-    await expect(page.getByTestId('youtube-stage')).toBeVisible()
+    // The player is where it was — in the bar — and the sheet was never opened,
+    // not for the first video and not for the one that followed it.
+    await expect(page.getByRole('dialog', { name: 'Now playing' })).toHaveCount(0)
+    await expect(page.locator('.music-player [data-testid="youtube-stage"]')).toBeVisible()
     await expect(page.locator('.player-track b')).toHaveText('Night Drive Live')
   })
 
@@ -212,7 +214,7 @@ test.describe('a video keeps going in the sheet it is already in', () => {
     await endCurrent(page)
 
     await expect.poll(() => currentVideoId(page)).toBe('eeeeeeeeeee')
-    await expect(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible()
+    await expect(page.locator('.music-player [data-testid="youtube-stage"]')).toBeVisible()
   })
 
   /**

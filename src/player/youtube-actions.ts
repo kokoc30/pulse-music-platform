@@ -31,22 +31,22 @@ import type { YouTubePlaybackState, YouTubeStatus } from './youtube-store'
 type Store = typeof useYouTubeStore
 
 /**
- * Puts the player on screen, before anything is asked to load or play.
+ * Where the player is revealed, now that nothing has to reveal it.
  *
- * The embed is mounted by the expanded Now Playing view and by nothing else, so
- * "reveal the player" and "expand the sheet" are now the same act. Every
- * function below that loads a video calls this *first*, which is the ordering
- * agents/24 has always specified — render the visible surface, then wait for
- * player readiness, then load — and which the Required Minimum Functionality
- * visibility rule depends on.
+ * There used to be a `revealYouTubePlayer()` here, and every function that
+ * loaded a video called it first: the embed lived in the expanded sheet and
+ * nowhere else, so "put the player on screen" and "open the sheet" were the same
+ * act. That is what made a YouTube result behave unlike every other result —
+ * press one and a full-screen sheet took over, where an Audius result simply
+ * started playing in the bar.
  *
- * It is also what makes the deferral in `youtube-engine` resolve: a video asked
- * to play before its container exists is held, and flushed the moment the stage
- * attaches. Without this the request would be held forever.
+ * The stage moved to the bar, so opening the bar *is* revealing the player.
+ * `openWith` already does that by giving the read model an item, which is what
+ * mounts the stage and flushes the engine's deferred request. The ordering
+ * agents/24 specifies — render the visible surface, then wait for readiness,
+ * then load — still holds; it is simply the bar that renders now, and the sheet
+ * has gone back to being what its name says it is.
  */
-function revealYouTubePlayer(): void {
-  useUiStore.getState().setNowPlayingOpen(true)
-}
 
 /**
  * How visible the player must be before *scripted* playback may begin.
@@ -125,7 +125,6 @@ export async function playYouTubeVideo(
   // The surface is opened *first*, so the player is on screen before anything
   // is asked to play. `agents/24` → "Audio -> YouTube" step 2.
   store.getState().openWith(item, autoplay ? 'loading' : 'cued')
-  revealYouTubePlayer()
   activateYouTube()
   notePlayed(item.id)
 
@@ -158,7 +157,6 @@ export async function cueYouTubeVideo(
     return false
   }
   store.getState().openWith(item, 'cued')
-  revealYouTubePlayer()
   activateYouTube()
   try {
     await getYouTubeEngine().cue(item)
@@ -233,40 +231,20 @@ export function getYouTubeSnapshot(
 }
 
 /**
- * Whether a player actually exists behind the store's item.
+ * Gone with the layout that needed them: `hasLiveYouTubePlayer`,
+ * `requestYouTubeResume` and `consumeYouTubeResume`.
  *
- * The embed is destroyed whenever the expanded sheet closes, because that sheet
- * is the only place it is ever mounted. The store keeps the item, the position
- * and the session across that, so "there is a video loaded" and "there is a
- * player to talk to" became two different questions, and a transport that
- * confused them would press play against nothing.
+ * All three existed to paper over one thing — the embed was destroyed whenever
+ * the expanded sheet closed, so "there is a video loaded" and "there is a player
+ * to talk to" were two different questions, and a press of play had to be
+ * carried across a remount as a one-shot intent.
+ *
+ * The stage lives in the bar and is torn down only when YouTube stops being the
+ * active engine, at which point there is nothing to resume anyway. The two
+ * questions have become one again, so the answer is no longer worth a function.
+ * Deleted rather than left in place: a helper whose name still describes the old
+ * arrangement is how the next reader learns something untrue.
  */
-export function hasLiveYouTubePlayer(): boolean {
-  return getYouTubeEngine().getCurrentItem() !== null
-}
-
-/**
- * One-shot intent: the visitor pressed play while the player did not exist.
- *
- * Lives outside React and outside the store — the store's shape is a public
- * contract and this is a message between two moments of one gesture, not state
- * anybody renders. The bar sets it and expands the sheet; the stage consumes it
- * once it has mounted, cued and restored the position.
- *
- * It is only ever set from a real press, which is what makes the play that
- * follows a user-initiated one rather than a scripted autoplay.
- */
-let resumeOnAttach = false
-
-export function requestYouTubeResume(): void {
-  resumeOnAttach = true
-}
-
-export function consumeYouTubeResume(): boolean {
-  const requested = resumeOnAttach
-  resumeOnAttach = false
-  return requested
-}
 
 /** The surface's own play/pause control. Always a direct user gesture. */
 export function toggleYouTubePlayback(store: Store = useYouTubeStore): void {
@@ -390,7 +368,6 @@ async function playSessionItem(
   const autoplay = mayAutoplay({ ...options, documentHidden: hidden })
 
   store.getState().openWith(item, autoplay ? 'loading' : 'cued')
-  revealYouTubePlayer()
   if (index >= 0) store.getState().setSessionIndex(index)
   activateYouTube()
 
@@ -418,7 +395,6 @@ async function cueSessionItem(
   store: Store,
 ): Promise<boolean> {
   store.getState().openWith(item, 'cued')
-  revealYouTubePlayer()
   store.getState().setSessionIndex(index)
   activateYouTube()
   try {

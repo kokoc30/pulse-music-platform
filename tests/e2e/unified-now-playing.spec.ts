@@ -186,7 +186,7 @@ test.describe('the bar follows the engine that is playing', () => {
     expect(stage.covering).toEqual(['stage', 'stage', 'stage'])
   })
 
-  test('the same expanded sheet opens for a video', async ({ page }) => {
+  test('the same expanded sheet opens for a video, on request', async ({ page }) => {
     await page.goto('/search?q=night')
     await page.locator('.song-row').first().click()
     await expect(barTitle(page)).toHaveText('Night Signal')
@@ -196,18 +196,25 @@ test.describe('the bar follows the engine that is playing', () => {
     await page.locator('[data-testid="youtube-result"]').first().click()
     await expect(barTitle(page)).toHaveText('Sourp Sarkis')
 
-    // The sheet used to be withheld outright while a video was on screen. It is
-    // the video's own view now, and starting a video opens it — that is where
-    // the player is mounted, so the surface is on screen before anything plays.
+    // Starting a video opens nothing. It used to open this sheet, because the
+    // player was mounted there and nowhere else — which made a YouTube result
+    // take over the screen where an Audius result simply started the bar.
     const dialog = page.getByRole('dialog', { name: 'Now playing' })
+    await expect(dialog).toHaveCount(0)
+
+    // Exactly one player, and it is in the bar, playing.
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
+    await expect(bar(page).getByTestId('youtube-stage')).toBeVisible()
+
+    // The chevron opens the same sheet a track gets, and does not move or
+    // rebuild the player to do it.
+    await page.getByRole('button', { name: 'Open Now Playing' }).click()
     await expect(dialog).toBeVisible()
     await expect(dialog.getByRole('heading', { name: 'Sourp Sarkis' })).toBeVisible()
     await expect(dialog).not.toContainText('Night Signal')
-
-    // Exactly one player, and it is inside that view rather than in the bar.
     await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
-    await expect(dialog.getByTestId('youtube-stage')).toBeVisible()
-    await expect(bar(page).locator('iframe')).toHaveCount(0)
+    await expect(bar(page).getByTestId('youtube-stage')).toBeVisible()
+    await expect(dialog.getByTestId('youtube-stage')).toHaveCount(0)
 
     // It is a panel, not a modal — the one way the video sheet still differs
     // from the track sheet it now matches pixel for pixel.
@@ -220,5 +227,113 @@ test.describe('the bar follows the engine that is playing', () => {
     await page.getByRole('link', { name: 'Pulse home' }).click()
     await expect(page.getByRole('heading', { name: 'Trending songs' })).toBeVisible()
     await expect(barTitle(page)).toHaveText('Sourp Sarkis')
+  })
+})
+
+/**
+ * Where playback starts, and what expanding does to it.
+ *
+ * The reported complaint in one line: pressing an audio result started the
+ * collapsed bar, and pressing a YouTube result took over the screen. The bar is
+ * the playback surface for every provider now, and the sheet is a detail view
+ * that can be opened and closed over a running player without touching it.
+ */
+test.describe('the bar is where playback starts', () => {
+  test.beforeEach(async ({ page }) => {
+    await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
+  })
+
+  async function playFirstVideo(page: Page) {
+    await page.goto('/search?q=aram asatryan')
+    await page.getByTestId('youtube-fallback').click()
+    await page.locator('[data-testid="youtube-result"]').first().click()
+    await expect(page.getByTestId('youtube-stage')).toBeVisible()
+  }
+
+  test('a YouTube result starts in the bar, with the sheet shut', async ({ page }) => {
+    await playFirstVideo(page)
+
+    await expect(page.getByRole('dialog', { name: 'Now playing' })).toHaveCount(0)
+    await expect(bar(page).getByTestId('youtube-stage')).toBeVisible()
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __pulseYouTube?: { playing?: boolean } }).__pulseYouTube
+              ?.playing ?? false,
+        ),
+      )
+      .toBe(true)
+  })
+
+  test('the player is at least 200 x 200 in the bar, before anything is expanded', async ({
+    page,
+  }) => {
+    await playFirstVideo(page)
+
+    const box = await page.getByTestId('youtube-stage').boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.width).toBeGreaterThanOrEqual(200)
+    expect(box!.height).toBeGreaterThanOrEqual(200)
+  })
+
+  test('expanding and collapsing never rebuilds or stops the player', async ({ page }) => {
+    await playFirstVideo(page)
+
+    // Read as two numbers rather than as the whole recorder object: it also
+    // carries a function, which does not survive serialisation, and it does not
+    // exist at all until the doubled IFrame API script has run.
+    const counts = () =>
+      page.evaluate(() => {
+        const recorder = (
+          window as unknown as { __pulseYouTube?: { created?: number; destroyed?: number } }
+        ).__pulseYouTube
+        return { created: recorder?.created ?? 0, destroyed: recorder?.destroyed ?? 0 }
+      })
+
+    await expect.poll(() => counts().then((c) => c.created)).toBe(1)
+    const before = await counts()
+
+    await page.getByRole('button', { name: 'Open Now Playing' }).click()
+    await expect(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Collapse Now Playing' }).click()
+    await expect(page.getByRole('dialog', { name: 'Now playing' })).toHaveCount(0)
+
+    // No second iframe, no destroyed one, and still playing — reparenting an
+    // iframe reloads it, which is why the sheet hosts no stage of its own.
+    expect(await counts()).toEqual(before)
+    await expect(bar(page).getByTestId('youtube-stage')).toBeVisible()
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __pulseYouTube?: { playing?: boolean } }).__pulseYouTube
+              ?.playing ?? false,
+        ),
+      )
+      .toBe(true)
+  })
+
+  test('the sheet stops short of the bar, so the player stays on screen', async ({ page }) => {
+    await playFirstVideo(page)
+    await page.getByRole('button', { name: 'Open Now Playing' }).click()
+    await expect(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible()
+
+    // The compositor's answer, not a rectangle comparison: whatever is at the
+    // stage's centre and corners is the stage, with the sheet above it.
+    const rendered = await stageHitTest(page)
+    expect(rendered.width).toBeGreaterThanOrEqual(200)
+    expect(rendered.height).toBeGreaterThanOrEqual(200)
+    expect(rendered.covering).toEqual(['stage', 'stage', 'stage'])
+  })
+
+  test('an audio result still starts in the bar, exactly as before', async ({ page }) => {
+    await stubAllProviders(page)
+    await page.goto('/search?q=night')
+    await page.locator('.song-row').first().click()
+
+    await expect(barTitle(page)).toHaveText('Night Signal')
+    await expect(page.getByRole('dialog', { name: 'Now playing' })).toHaveCount(0)
   })
 })

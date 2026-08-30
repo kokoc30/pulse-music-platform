@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import {
   ChevronUp,
   ExternalLink,
@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { LikeButton } from '@/components/library/LikeButton'
 import { Artwork } from '@/components/track/Artwork'
+import { YouTubeStageHost } from '@/components/youtube/YouTubeStageHost'
 import { usePlayerStore } from '@/player/player-store'
 import { REPEAT_LABELS } from '@/player/queue-order'
 import {
@@ -33,23 +34,30 @@ import { isInteractiveTarget, useVerticalSwipe } from './swipe'
  * The bottom bar. **One component, every provider.**
  *
  * An Audius track, a Jamendo track and a YouTube video render the same DOM tree
- * through the same code path here — the same 56px artwork, the same title
- * cluster, the same heart, the same seek rail, the same transport, the same
- * expand affordance, at the same height. A visitor cannot tell which provider a
- * track came from by looking at this bar, and that is the point.
+ * through the same code path here — the same title cluster, the same heart, the
+ * same seek rail, the same transport, the same expand affordance, in the same
+ * order, at the same sizes.
  *
- * **The live player is not here.** It lives in the expanded sheet, and the bar
- * shows YouTube's own thumbnail in the ordinary artwork slot like any other
- * cover. So there is no stage, no iframe, no reserved 200px box and no taller
- * variant in this file, and nothing here asks whether the item is a video.
+ * **The live player is here, in the artwork slot.** That is the one thing a
+ * video changes about this bar, and it is forced by a policy rather than
+ * chosen: the embed must be mounted and at least 200 x 200 while it plays, so
+ * it cannot live inside a sheet that is closed most of the time. Putting it in
+ * the slot a cover occupies makes the bar the playback surface for every
+ * provider — press a result, the bar appears and plays, and the sheet stays shut
+ * until it is asked for.
  *
- * **Nothing here knows which engine is playing.** There is no `engine ===
- * 'youtube'` in this file. Every control asks the snapshot's `capabilities`
- * whether it can honestly be offered, and every press goes to a `unified*`
- * action that does the dispatching. That is the whole mechanism that stops the
- * bar drifting back into two implementations — the previous split existed
- * precisely because the container branched and each branch then had to grow its
- * own copy of every affordance.
+ * So the slot is 56px of artwork for a track and a 200px stage for a video, and
+ * the bar is correspondingly taller for one. **Nothing else differs**: not the
+ * controls, not their order, not their sizes, not the spacing around them.
+ *
+ * **It still does not know which engine is playing.** There is no `engine ===
+ * 'youtube'` in this file. The slot asks `isEmbeddedStage` — a property of the
+ * item, answered once by the read model — and every control asks the snapshot's
+ * `capabilities` whether it can honestly be offered, then presses a `unified*`
+ * action that does the dispatching. That is the mechanism that stops the bar
+ * drifting back into two implementations: the previous split existed precisely
+ * because the *container* branched, and each branch then grew its own copy of
+ * every affordance.
  *
  * A control the active item cannot support is **not rendered**, rather than
  * rendered disabled. A YouTube result session has no running order, so a shuffle
@@ -59,6 +67,7 @@ import { isInteractiveTarget, useVerticalSwipe } from './swipe'
 export function PlayerBar({ snapshot }: { snapshot: PlaybackSnapshot }) {
   const { capabilities: can } = snapshot
   const expand = useCallback(() => unifiedExpand(true), [])
+  const barRef = usePublishedBarHeight()
 
   /**
    * Swiping up on the info region opens Now Playing.
@@ -79,11 +88,12 @@ export function PlayerBar({ snapshot }: { snapshot: PlaybackSnapshot }) {
 
   return (
     <section
+      ref={barRef}
       className="music-player"
       aria-label="Now playing"
       // A presentational hook for styling and test targeting only. Nothing in
       // this component branches on it, and nothing in the stylesheet changes the
-      // bar's size, layout or artwork slot because of it.
+      // bar's layout, controls or spacing because of it.
       data-engine={snapshot.engine}
     >
       <div className="player-track" {...swipe}>
@@ -101,7 +111,18 @@ export function PlayerBar({ snapshot }: { snapshot: PlaybackSnapshot }) {
           </button>
         ) : null}
 
-        <Artwork artwork={snapshot.artwork ?? {}} size="small" loading="eager" />
+        {/* The slot, and the only thing in this bar a video changes.
+            A track gets its 56px cover; a video gets the live player at the
+            documented 200px floor. Both are the first element after the expand
+            button, both are `flex: 0 0 auto`, and everything after them is
+            byte-for-byte the same tree. */}
+        {snapshot.isEmbeddedStage && snapshot.stageItem ? (
+          <div className="player-stage">
+            <YouTubeStageHost item={snapshot.stageItem} />
+          </div>
+        ) : (
+          <Artwork artwork={snapshot.artwork ?? {}} size="small" loading="eager" />
+        )}
 
         {/* Mouse convenience only, the same arrangement `TrackRow` uses: the
             keyboard and assistive-technology route is the real button above, so
@@ -227,6 +248,46 @@ export function PlayerBar({ snapshot }: { snapshot: PlaybackSnapshot }) {
       <BackgroundPolicyNotice />
     </section>
   )
+}
+
+/**
+ * Publishes the bar's real height as `--player-bar-height`.
+ *
+ * The bar is `position: fixed` at the bottom, so anything that must not cover it
+ * needs to know how tall it is — and it now has two heights, because a video's
+ * slot is a 200px player where a track's is a 56px cover. The expanded sheet is
+ * the one consumer: for a video it sits *above* the bar rather than over it,
+ * since covering the bar would hide the very player the policies require to stay
+ * visible.
+ *
+ * Measured rather than computed from tokens. The alternative is a constant that
+ * has to be kept in step with the stage size, the padding, the border and two
+ * breakpoints — four ways to be silently wrong, against one `ResizeObserver`.
+ */
+function usePublishedBarHeight() {
+  const ref = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    const bar = ref.current
+    if (!bar || typeof ResizeObserver === 'undefined') return
+
+    const root = bar.ownerDocument.documentElement
+    const publish = () => {
+      root.style.setProperty('--player-bar-height', `${Math.round(bar.offsetHeight)}px`)
+    }
+    publish()
+
+    const observer = new ResizeObserver(publish)
+    observer.observe(bar)
+    return () => {
+      observer.disconnect()
+      // A bar that is gone has no height, and a stale value would leave the next
+      // sheet floating above nothing.
+      root.style.removeProperty('--player-bar-height')
+    }
+  }, [])
+
+  return ref
 }
 
 /**

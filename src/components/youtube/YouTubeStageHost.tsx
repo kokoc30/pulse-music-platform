@@ -1,26 +1,31 @@
 import { useEffect, useRef } from 'react'
 import type { YouTubeVideoItem } from '@/music/types'
-import {
-  bindYouTubeEngineEvents,
-  consumeYouTubeResume,
-  handleDocumentVisibility,
-} from '@/player/youtube-actions'
+import { bindYouTubeEngineEvents, handleDocumentVisibility } from '@/player/youtube-actions'
 import { MINIMUM_DIMENSION, getYouTubeEngine } from '@/player/youtube-engine'
 import { resetYouTubeVisibility, setYouTubeVisibleRatio } from '@/player/youtube-visibility'
 import { useYouTubeStore } from '@/player/youtube-store'
 
 /**
- * The one place a YouTube player is ever mounted — inside the expanded sheet.
+ * The one place a YouTube player is ever mounted — in the bottom bar's slot.
  *
  * A **stage only**: it owns the embed's lifecycle and its visibility
  * measurement, and it renders no transport of its own. Play, pause, stepping,
  * seeking and the title all live in the shared bar and sheet, which is what
  * makes a video and a track look like the same player.
  *
- * It is an ordinary in-flow element in the sheet's artwork slot. Nothing about
+ * It used to live in the expanded sheet, and that was the wrong home for one
+ * decisive reason: the sheet is closed most of the time, so the sheet had to be
+ * *forced open* for a video to play at all. Pressing a YouTube result took over
+ * the screen where pressing an Audius result simply started the bar. The stage
+ * moved into the bar's artwork slot, in place of the 56px cover, and the sheet
+ * went back to being an optional detail view.
+ *
+ * It is still an ordinary in-flow element with exactly one home. Nothing about
  * it is fixed-position, measured against another element, or moved between
- * parents: the bar shows YouTube's thumbnail like any other cover, so this has
- * exactly one home and never needs to travel to a second one.
+ * parents — the sheet renders no second stage and is laid out above the bar
+ * rather than over it, so the one player stays on screen either way. Reparenting
+ * an iframe reloads it, and a video that restarted every time the sheet opened
+ * would be a worse bug than the one this replaces.
  *
  * ## Policy obligations this component owns
  *
@@ -28,16 +33,17 @@ import { useYouTubeStore } from '@/player/youtube-store'
  *   the stylesheet, so no future CSS edit can shrink it below the documented
  *   minimum.
  * · **Never hidden.** There is no `display: none`, no zero opacity and no
- *   offscreen parking anywhere in its lifecycle. When the sheet is closed the
- *   component is not rendered *and playback has been paused* — collapsing goes
- *   through `unifiedExpand`, which pauses a playing video on the way down.
- *   There is no state in which a video plays without this element on screen.
+ *   offscreen parking anywhere in its lifecycle. It is rendered for exactly as
+ *   long as YouTube is the engine holding the claim, and the bar it sits in is
+ *   `position: fixed` and always on screen. There is no state in which a video
+ *   plays without this element displayed.
  * · **No children but the player.** The mount node holds the API-created iframe
- *   and nothing else. Every control is a sibling below it in the sheet.
+ *   and nothing else. Every control is a sibling beside or below it.
  * · **The visibility gate.** The `IntersectionObserver` that authorises scripted
  *   autoplay measures *this* element, so the number `advanceYouTubeSession`
  *   reads is a real measurement of the real player.
- * · **Background playback.** A hidden document pauses, always.
+ * · **Background playback.** A hidden document pauses, always — and, since the
+ *   player is on screen again the moment the app is, it resumes.
  *
  * React never owns the element the IFrame API replaces: the API swaps the node
  * it is given for its own iframe, and handing it a React-rendered node would
@@ -116,22 +122,18 @@ export function YouTubeStageHost({ item }: { item: YouTubeVideoItem }) {
 
     /**
      * A stage that mounts with the engine holding nothing is a stage that has
-     * come back after the sheet was collapsed and this player destroyed. The
-     * store still knows which video was loaded and how far in it was, so cue it
-     * and restore the position: the alternative is a transport pointing at a
-     * player that no longer exists, and a video that silently restarts from zero
-     * every time the sheet is reopened.
+     * come back after YouTube lost the engine claim to an audio track and this
+     * player was destroyed. The store still knows which video was loaded and how
+     * far in it was, so cue it and restore the position: the alternative is a
+     * transport pointing at a player that no longer exists, and a video that
+     * silently restarts from zero.
      *
      * Cue, never play. A remount is not a user gesture.
      */
     if (!engine.getCurrentItem()) {
       const resumeAt = useYouTubeStore.getState().currentTime
-      const resume = consumeYouTubeResume()
       void engine.cue(itemRef.current).then(() => {
         if (resumeAt > 0) engine.seek(resumeAt)
-        // Only ever true because a real press asked for it, which is what makes
-        // this a user-initiated play rather than a scripted autoplay.
-        if (resume) engine.resume()
       })
     }
 

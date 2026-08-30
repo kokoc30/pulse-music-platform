@@ -261,32 +261,29 @@ test.describe('the visible player', () => {
   })
 
   /**
-   * What survives a route change is the **loaded item**, not the iframe.
+   * What survives a route change is now the **player itself**, not just the
+   * loaded item.
    *
-   * The embed is mounted in the expanded sheet and nowhere else, so collapsing
-   * destroys the player by design — there is no state in which a video plays
-   * without its player on screen. What must not be lost is the store's idea of
-   * which video is loaded, so that re-expanding brings back that video rather
-   * than a transport pointing at nothing.
+   * This used to assert the opposite: the embed was mounted in the expanded
+   * sheet and nowhere else, so collapsing destroyed it by design and a route
+   * change left only the store's idea of which video was loaded. The stage lives
+   * in the bar, and the bar is rendered once above the router, so navigating is
+   * a change of page around a player that never stops.
    */
-  test('keeps the loaded video across a route change', async ({ page }) => {
+  test('keeps the video playing across a route change', async ({ page }) => {
     await page.locator(rows).first().click()
     await expect(page.locator(surface)).toBeVisible()
     const title = await page.locator('.player-track b').innerText()
+    const players = (await page.evaluate(readYouTubeGlobals)).created
 
-    // The sheet covers the header on a phone, so it comes down first — and that
-    // is the gesture that pauses the video.
-    await collapseSheet(page)
     await page.locator('.brand').click()
     await expect(page).toHaveURL(/\/$/)
 
-    // The bar still holds the video across the navigation, named and paused.
+    // Same bar, same title, same single player — not a rebuilt one.
     await expect(page.locator('.player-track b')).toHaveText(title)
-    await expect(page.locator(surface)).toHaveCount(0)
-
-    // Re-expanding rebuilds a player for the same video.
-    await page.getByRole('button', { name: 'Open Now Playing' }).click()
     await expect(page.locator(surface)).toBeVisible()
+    await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
+    expect((await page.evaluate(readYouTubeGlobals)).created).toBe(players)
     await expect
       .poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.lastVideoId))
       .toBe('aaaaaaaaaaa')

@@ -119,44 +119,66 @@ describe('the bar follows whichever engine is playing', () => {
     expect(within(dialog).getByRole('heading', { name: 'Sourp Sarkis' })).toBeInTheDocument()
   })
 
-  it('mounts exactly one player, and only inside the expanded view', async () => {
+  /**
+   * The two halves of the fix, in one test, because they are one idea.
+   *
+   * Starting a video no longer takes over the screen — it starts the bar, like
+   * every other result — and the player it starts is not destroyed by opening
+   * or closing the sheet. The old arrangement had both faults, and they were the
+   * same fault: the embed lived in the sheet, so the sheet had to be forced open
+   * to play at all and taken away (and paused) to close.
+   */
+  it('mounts exactly one player, in the bar, and keeps it across the sheet', async () => {
     const { user } = await playAudioTrack()
     await playYouTubeResult([SOURP, BAROV], SOURP, 'aram asatryan')
     await waitFor(() => expect(within(bar()).getByText('Sourp Sarkis')).toBeInTheDocument())
 
-    // Starting a video expands the view, because that is where the player is —
-    // the surface is on screen before anything is asked to play.
-    const dialog = await screen.findByRole('dialog', { name: 'Now playing' })
+    // The sheet was never opened.
+    expect(screen.queryByRole('dialog', { name: 'Now playing' })).not.toBeInTheDocument()
+
     const stages = screen.getAllByTestId('youtube-stage')
     expect(stages).toHaveLength(1)
-    expect(dialog.contains(stages[0])).toBe(true)
+    expect(bar().contains(stages[0])).toBe(true)
 
-    // And never in the bar, which shows the thumbnail like any other cover.
-    expect(within(bar()).queryByTestId('youtube-stage')).not.toBeInTheDocument()
-    expect(bar().querySelector('iframe')).toBeNull()
+    // Expanding does not build a second one, and does not move the first.
+    await user.click(within(bar()).getByRole('button', { name: 'Open Now Playing' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Now playing' })
+    expect(screen.getAllByTestId('youtube-stage')).toHaveLength(1)
+    expect(screen.getByTestId('youtube-stage')).toBe(stages[0])
+    expect(dialog.contains(stages[0])).toBe(false)
 
-    // Collapsing takes the player away *and pauses it*, so there is no state in
-    // which a video is playing without its player on screen.
+    // And collapsing neither removes it nor stops it.
     await user.click(within(dialog).getByRole('button', { name: 'Collapse Now Playing' }))
-    await waitFor(() => expect(screen.queryByTestId('youtube-stage')).not.toBeInTheDocument())
-    expect(useYouTubeStore.getState().status).not.toBe('playing')
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Now playing' })).not.toBeInTheDocument(),
+    )
+    expect(screen.getByTestId('youtube-stage')).toBe(stages[0])
+    expect(useYouTubeStore.getState().status).not.toBe('paused')
   })
 
-  it('shows the same 56px cover for a video that it shows for a track', async () => {
+  /**
+   * The slot is the one thing a video changes about this bar, and it changes it
+   * because a policy says so: the embed must be mounted and at least 200 x 200
+   * while it plays, which a 56px cover slot cannot hold.
+   */
+  it('swaps the cover for the player, in the same position in the row', async () => {
+    const slotIndex = () => {
+      const row = [...bar().querySelectorAll('.player-track > *')]
+      return row.findIndex((node) => node.matches('img, .player-stage'))
+    }
+
     await playAudioTrack()
-    const audioArt = bar().querySelector<HTMLImageElement>('.player-track img')!
-    expect(audioArt).toBeInTheDocument()
+    expect(bar().querySelector('.player-track img')).toBeInTheDocument()
+    const audioSlot = slotIndex()
 
     await playYouTubeResult([SOURP], SOURP, 'aram asatryan')
     await waitFor(() => expect(within(bar()).getByText('Sourp Sarkis')).toBeInTheDocument())
 
-    const videoArt = bar().querySelector<HTMLImageElement>('.player-track img')!
-    // The same element in the same slot — YouTube's own thumbnail, unmodified
-    // and served from its own CDN, presented exactly as a cover is.
-    expect(videoArt).toBeInTheDocument()
-    expect(videoArt.getAttribute('src')).toBe(
-      'https://i.ytimg.com/vi/aram0000001/mqdefault.jpg',
-    )
+    // The image is gone, the stage is in its place, and the expand button still
+    // precedes it — so the row reads the same left to right for either provider.
+    expect(bar().querySelector('.player-track img')).not.toBeInTheDocument()
+    expect(bar().querySelector('.player-track > .player-stage')).toBeInTheDocument()
+    expect(slotIndex()).toBe(audioSlot)
   })
 })
 

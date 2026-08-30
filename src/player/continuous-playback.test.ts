@@ -319,17 +319,21 @@ describe('a video running out', () => {
   })
 
   /**
-   * The sheet is the only place an embed is ever mounted, so closing it on an
-   * ending would take the player off the page — and leaving the visitor on
-   * YouTube's replay screen is the reported symptom itself.
+   * Continuing is a bar event, not a sheet event.
+   *
+   * A video that ends loads the next one into the same player, in the same
+   * place, and the expanded view's state is not part of that — it was shut when
+   * playback started and it stays shut. This assertion used to read the other
+   * way round, because starting a video forced the sheet open; that is the very
+   * thing this change removes.
    */
-  it('leaves the sheet open, showing the new video', async () => {
-    expect(useUiStore.getState().nowPlayingOpen).toBe(true)
+  it('loads the next video without opening or closing anything', async () => {
+    expect(useUiStore.getState().nowPlayingOpen).toBe(false)
 
     endCurrentVideo()
     await vi.waitFor(() => expect(videoId()).toBe('bbbbbbbbbbb'))
 
-    expect(useUiStore.getState().nowPlayingOpen).toBe(true)
+    expect(useUiStore.getState().nowPlayingOpen).toBe(false)
     expect(useYouTubeStore.getState().item?.videoId).toBe('bbbbbbbbbbb')
   })
 

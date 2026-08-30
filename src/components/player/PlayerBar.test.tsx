@@ -73,17 +73,29 @@ describe('the artwork slot', () => {
     expect(img).toHaveAttribute('src', 'https://art.example/t1.jpg')
   })
 
-  it('holds YouTube’s own thumbnail for a video — no iframe, no reserved box', () => {
+  /**
+   * This used to assert a thumbnail and *no* iframe, and the reversal is the
+   * whole of the change.
+   *
+   * The embed must be mounted and at least 200 x 200 while it plays. Keeping it
+   * in the expanded sheet meant the sheet had to be forced open before a video
+   * could play at all — press a YouTube result and a full-screen panel took
+   * over, where an Audius result simply started the bar. The player moved into
+   * the slot the cover occupies, so the bar plays every provider and the sheet
+   * is opened only when it is asked for.
+   */
+  it('holds the live player for a video, in the slot a cover occupies', () => {
     const { container } = renderBar(videoSnapshot())
-    const img = container.querySelector('.player-track img')
-    expect(img).not.toBeNull()
-    expect(img).toHaveAttribute('src', 'https://i.ytimg.com/vi/aram0000001/mqdefault.jpg')
 
-    expect(container.querySelector('iframe')).toBeNull()
-    expect(container.querySelector('[data-testid="youtube-stage"]')).toBeNull()
+    const stage = container.querySelector('.player-track > .player-stage')
+    expect(stage).not.toBeNull()
+    expect(stage?.querySelector('[data-testid="youtube-stage"]')).not.toBeNull()
+
+    // And no still image standing in for it.
+    expect(container.querySelector('.player-track img')).toBeNull()
   })
 
-  it('renders the identical DOM shape whichever provider is playing', () => {
+  it('renders the identical DOM shape apart from that slot', () => {
     const shapeOf = (snapshot: PlaybackSnapshot) => {
       const { container, unmount } = renderBar(snapshot)
       const shape = [...container.querySelectorAll<HTMLElement>('.player-track > *')].map(
@@ -93,16 +105,21 @@ describe('the artwork slot', () => {
       return shape
     }
 
-    // Same children, in the same order, with the same classes. The only thing
-    // that differs between an Audius track and a YouTube video in this bar is
-    // the text and the image URL.
-    expect(shapeOf(videoSnapshot())).toEqual(shapeOf(audioSnapshot(jamendoTrackFixture())))
+    const video = shapeOf(videoSnapshot())
+    const audio = shapeOf(audioSnapshot(jamendoTrackFixture()))
+
+    // Same children, in the same order, with the same classes — except at the
+    // one index that is the slot. A video's is a stage; a track's is an image.
+    expect(video).toHaveLength(audio.length)
+    const differences = video.filter((node, index) => node !== audio[index])
+    expect(differences).toEqual(['DIV.player-stage'])
+    expect(audio[video.indexOf('DIV.player-stage')]).toBe('IMG.')
   })
 
-  it('adds no height-changing marker for a video', () => {
+  it('adds no engine-specific class or marker to the bar itself', () => {
     const { container } = renderBar(videoSnapshot())
     const section = container.querySelector<HTMLElement>('.music-player')!
-    // The bar must not be able to style itself taller for one provider.
+    // The height follows from the slot's content, never from a variant hook.
     expect(section.getAttribute('data-stage')).toBeNull()
     expect(section.className).toBe('music-player')
   })
