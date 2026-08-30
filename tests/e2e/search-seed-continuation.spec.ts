@@ -124,9 +124,11 @@ test.describe('a search result is a seed, not a queue', () => {
     await expect(page.locator('.player-track b')).toHaveText('Night Signal')
 
     // A collection keeps sequential queue semantics — this is the behaviour the
-    // seed change must not have touched.
+    // seed change must not have touched. Polled rather than read once: starting
+    // a track now also tops the autoplay supply up in the background, so the
+    // panel can commit a frame later than the title in the bar does.
     await openQueue(page)
-    expect(await queueTitles(page)).toEqual(['Night Signal', 'Night Drive'])
+    await expect.poll(() => queueTitles(page)).toEqual(['Night Signal', 'Night Drive'])
   })
 })
 
@@ -176,25 +178,29 @@ test.describe('YouTube continues through the results it already has', () => {
     await startFirstResult(page)
     await expect.poll(() => currentVideoId(page)).toBe('aaaaaaaaaaa')
 
-    const calls = recordYouTubeApiTraffic(page)
     await endCurrent(page)
 
     // Skips the made-for-kids and embedding-disabled fixtures on the way.
     await expect.poll(() => currentVideoId(page)).toBe('bbbbbbbbbbb')
-    expect(calls).toEqual([])
   })
 
-  test('it never asks YouTube for anything to do so', async ({ page }) => {
+  /**
+   * The advance itself asks YouTube for nothing: it is answered entirely from
+   * results the page already had.
+   *
+   * What it may do is start *one* lookahead, because `bbbbbbbbbbb` is the last
+   * eligible row of this four-row fixture and a session about to run dry is
+   * exactly when a search is worth spending. One, and never one per video —
+   * `continuous-playback.spec.ts` pins the zero-cost case with a longer list.
+   */
+  test('it asks YouTube for at most one lookahead, never one per video', async ({ page }) => {
     await startFirstResult(page)
     const calls = recordYouTubeApiTraffic(page)
 
     await endCurrent(page)
     await expect.poll(() => currentVideoId(page)).toBe('bbbbbbbbbbb')
-    await endCurrent(page)
 
-    // No search.list, no videos.list, no related-video lookup — the whole
-    // continuation runs on metadata the page already had.
-    expect(calls).toEqual([])
+    expect(calls.filter((url) => url.includes('/api/youtube')).length).toBeLessThanOrEqual(1)
   })
 
   test('never embeds a result it may not embed', async ({ page }) => {
@@ -209,16 +215,23 @@ test.describe('YouTube continues through the results it already has', () => {
     expect(await currentVideoId(page)).not.toBe('ddddddddddd')
   })
 
-  test('stops at the end of the session instead of searching again', async ({ page }) => {
+  /**
+   * The end of the session is no longer the end of the story — but when the
+   * search brings back nothing the page does not already have, the ending is
+   * still an ending. What must never happen is the video restarting.
+   */
+  test('holds the player open at the end of the session rather than replaying', async ({
+    page,
+  }) => {
     await startFirstResult(page)
     await endCurrent(page)
     await expect.poll(() => currentVideoId(page)).toBe('bbbbbbbbbbb')
 
-    const calls = recordYouTubeApiTraffic(page)
     await endCurrent(page)
 
     await expect(page.getByTestId('youtube-stage')).toBeVisible()
-    expect(calls).toEqual([])
+    await expect(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible()
+    expect(await currentVideoId(page)).toBe('bbbbbbbbbbb')
   })
 
   test('continuous play can be switched off, and then it stops', async ({ page }) => {
@@ -256,7 +269,9 @@ test.describe('YouTube continues through the results it already has', () => {
     await controls.getByRole('button', { name: 'Previous track' }).click()
     await expect.poll(() => currentVideoId(page)).toBe('aaaaaaaaaaa')
 
-    expect(calls).toEqual([])
+    // Stepping spends nothing of its own. Reaching the last result of a session
+    // does start one lookahead, which is the whole of what the pair may cost.
+    expect(calls.filter((url) => url.includes('/api/youtube')).length).toBeLessThanOrEqual(1)
     // Every control is a sibling of the stage, never drawn over the player.
     const inStage = await page.evaluate(
       () => document.querySelectorAll('[data-testid="youtube-stage"] button').length,

@@ -4,7 +4,6 @@ import { isYouTubeVideoItem } from '@/music/types'
 import type { YouTubeVideoItem } from '@/music/types'
 import { activateYouTube, releasePlayback } from './playback-coordinator'
 import {
-  MIN_QUEUE_DEPTH,
   NO_MORE_TRACKS_MESSAGE,
   RELATED_RETRY_DELAY_MS,
   describeSeed,
@@ -510,7 +509,7 @@ export function hasYouTubeSessionStep(
  * spend all of it is not, because the next visitor's explicit search is what
  * would fail.
  *
- * Six, with `MIN_QUEUE_DEPTH` triggering each one and ten results coming back,
+ * Six, with `YOUTUBE_PREFETCH_DEPTH` triggering each one and ten results back,
  * covers roughly sixty videos in a sitting before the bar has to say it is out.
  * The cap is per page load and is not persisted: it bounds a runaway session,
  * not a person.
@@ -573,25 +572,57 @@ export async function extendYouTubeSession(store: Store = useYouTubeStore): Prom
 }
 
 /**
- * Keeps three playable videos standing ahead of the listener.
+ * How thin the session may get before the next video is looked up.
+ *
+ * The audio side keeps three ahead (`MIN_QUEUE_DEPTH`) because an Audius or
+ * Jamendo search is an ordinary request. A YouTube search is a hundredth of the
+ * whole deployment's day, and the two rules that make three right for audio
+ * pull opposite ways here:
+ *
+ * · **One search returns ten videos.** Extending on the *last* one still spends
+ *   about one search per ten videos played, so a listener never waits.
+ * · **Extending at three would spend one search per video**, because each seed
+ *   is a different act and so a different query. A sitting would exhaust its
+ *   allowance in six videos and the day's in a hundred.
+ *
+ * One, then: the lookup runs while the final video of the session is playing,
+ * which is early enough to be inaudible and late enough to be affordable.
+ */
+export const YOUTUBE_PREFETCH_DEPTH = 1
+
+/**
+ * Keeps a playable video standing ahead of the listener.
  *
  * Called when a video *starts*, so the search runs over the video already
- * playing and the quota is spent well before the moment it is needed. Counting
- * only *eligible* items is what makes the depth honest: a session whose
- * remaining three entries are all made-for-kids has nothing ahead of it at all.
+ * playing rather than in the pause after it. Counting only *eligible* items is
+ * what makes the depth honest: a session whose remaining entries are all
+ * made-for-kids has nothing ahead of it at all.
  */
 export async function ensureYouTubeSessionDepth(store: Store = useYouTubeStore): Promise<void> {
   const state = store.getState()
   if (!state.continuousPlay || !state.item) return
 
+  /**
+   * A single video opened from Recently Played or the library gets no lookahead.
+   *
+   * It still continues — `advanceYouTubeSession` searches when it ends — but the
+   * search is spent then rather than now. The difference is who pays: a listener
+   * who opens a saved video and skips away from it after ten seconds would
+   * otherwise have spent one of the deployment's hundred daily searches on a
+   * continuation nobody reached. Inside a session there is a list being worked
+   * through and the lookahead is nearly certain to be used, so it runs early
+   * enough to be inaudible; here it waits until it is certainly wanted.
+   */
+  if (state.sessionItems.length === 0) return
+
   let ahead = 0
   let index = state.sessionIndex
-  while (ahead < MIN_QUEUE_DEPTH) {
+  while (ahead < YOUTUBE_PREFETCH_DEPTH) {
     index = nextEligibleIndex(state.sessionItems, index, 1)
     if (index < 0) break
     ahead += 1
   }
-  if (ahead >= MIN_QUEUE_DEPTH) return
+  if (ahead >= YOUTUBE_PREFETCH_DEPTH) return
 
   await extendYouTubeSession(store)
 }
@@ -682,6 +713,11 @@ function advanceOnce(store: Store): void {
   advancing = advanceYouTubeSession(store).finally(() => {
     advancing = null
   })
+}
+
+/** True while an advance is in flight. Tests and diagnostics. */
+export function isYouTubeAdvancing(): boolean {
+  return advancing !== null
 }
 
 /** Test seam. */

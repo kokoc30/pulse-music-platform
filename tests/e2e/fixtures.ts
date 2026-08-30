@@ -162,6 +162,17 @@ export interface StubOptions {
   emptySearch?: boolean
   /** Make the stream-URL lookup fail. */
   failStream?: boolean
+  /**
+   * Rows every search answers with. Defaults to `SEARCH_RESULTS`.
+   *
+   * Autoplay searches the catalogue for something in the same vein when the
+   * queue runs low, so a spec that means "there is exactly one track in the
+   * world" has to say so here — otherwise the continuation finds the other
+   * search rows and is quite right to play them.
+   */
+  searchResults?: TrackSpec[]
+  /** Rows the trending shelves answer with. Defaults to `TRENDING`. */
+  trending?: TrackSpec[]
 }
 
 export async function stubAudius(page: Page, options: StubOptions = {}): Promise<void> {
@@ -195,14 +206,17 @@ export async function stubAudius(page: Page, options: StubOptions = {}): Promise
       return json(route, { data: STREAM_PATH })
     }
 
+    const searchRows = options.searchResults ?? SEARCH_RESULTS
+    const trendingRows = options.trending ?? TRENDING
+
     if (path === '/v1/tracks/search') {
-      const results = options.emptySearch ? [] : SEARCH_RESULTS
+      const results = options.emptySearch ? [] : searchRows
       return json(route, { data: results.map(rawTrack) })
     }
 
     // The smart-search layer reads tracks and artists from one combined index.
     if (path === '/v1/search/full') {
-      const results = options.emptySearch ? [] : SEARCH_RESULTS
+      const results = options.emptySearch ? [] : searchRows
       return json(route, {
         ...ENVELOPE,
         data: { tracks: results.map(rawTrack), users: [], playlists: [], albums: [] },
@@ -218,11 +232,11 @@ export async function stubAudius(page: Page, options: StubOptions = {}): Promise
     }
 
     if (path === '/v1/tracks/trending/underground') {
-      return json(route, { ...ENVELOPE, data: TRENDING.slice(0, 3).map(rawTrack) })
+      return json(route, { ...ENVELOPE, data: trendingRows.slice(0, 3).map(rawTrack) })
     }
 
     if (path === '/v1/tracks/trending') {
-      return json(route, { ...ENVELOPE, data: TRENDING.map(rawTrack) })
+      return json(route, { ...ENVELOPE, data: trendingRows.map(rawTrack) })
     }
 
     // A single track by id. Recently Played re-resolves an Audius row through
