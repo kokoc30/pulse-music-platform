@@ -127,8 +127,7 @@ export const useYouTubeStore = create<YouTubePlaybackState & YouTubePlaybackActi
       awaitingUserPlay: status === 'playing' ? false : state.awaitingUserPlay,
       // …and answers the background-pause explanation, which is only about a
       // playback that was interrupted.
-      pausedForBackgroundPolicy:
-        status === 'playing' ? false : state.pausedForBackgroundPolicy,
+      pausedForBackgroundPolicy: status === 'playing' ? false : state.pausedForBackgroundPolicy,
       error: status === 'error' ? state.error : null,
     })),
 
@@ -149,8 +148,7 @@ export const useYouTubeStore = create<YouTubePlaybackState & YouTubePlaybackActi
    * about how the visitor wants results to behave, not a property of the list
    * they just closed.
    */
-  close: () =>
-    set((state) => ({ ...initialYouTubeState, continuousPlay: state.continuousPlay })),
+  close: () => set((state) => ({ ...initialYouTubeState, continuousPlay: state.continuousPlay })),
 
   startSession: (sessionItems, sessionIndex, sessionQuery) =>
     set({ sessionItems, sessionIndex, sessionQuery }),
@@ -167,8 +165,7 @@ export const useYouTubeStore = create<YouTubePlaybackState & YouTubePlaybackActi
 
   setContinuousPlay: (continuousPlay) => set({ continuousPlay }),
 
-  setPausedForBackgroundPolicy: (pausedForBackgroundPolicy) =>
-    set({ pausedForBackgroundPolicy }),
+  setPausedForBackgroundPolicy: (pausedForBackgroundPolicy) => set({ pausedForBackgroundPolicy }),
 
   clearSession: () => set({ sessionItems: [], sessionIndex: -1, sessionQuery: null }),
 }))

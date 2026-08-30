@@ -114,9 +114,9 @@ describe('detecting a language', () => {
   })
 
   it('believes a provider tag over the alphabet', () => {
-    expect(
-      detectLanguage({ title: 'Corazon', artist: 'Luz', tags: ['reggaeton', 'dance'] }),
-    ).toBe('es')
+    expect(detectLanguage({ title: 'Corazon', artist: 'Luz', tags: ['reggaeton', 'dance'] })).toBe(
+      'es',
+    )
   })
 })
 
@@ -129,9 +129,7 @@ describe('building the query', () => {
   })
 
   it('does not say it twice when a tag already does', () => {
-    const seed = describeSeed(
-      audiusTrack({ title: 'Косандра', tags: ['russian', 'rap'] }),
-    )
+    const seed = describeSeed(audiusTrack({ title: 'Косандра', tags: ['russian', 'rap'] }))
     expect(relatedQuery(seed)).toBe('russian rap')
   })
 
@@ -168,7 +166,11 @@ describe('building the query', () => {
 
   it('drops a tag that only repeats the title or the artist', () => {
     const seed = describeSeed(
-      audiusTrack({ title: 'Harbour Lights', artistName: 'Otavo', tags: ['otavo', 'harbour', 'dub'] }),
+      audiusTrack({
+        title: 'Harbour Lights',
+        artistName: 'Otavo',
+        tags: ['otavo', 'harbour', 'dub'],
+      }),
     )
     expect(relatedQuery(seed)).toBe('dub')
   })

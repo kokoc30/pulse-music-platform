@@ -312,10 +312,7 @@ export function closeYouTubeSurface(store: Store = useYouTubeStore): void {
  * only an *explanation*: a flag the surface can read to tell the visitor why the
  * video stopped, and that Audius and Jamendo do not have this restriction.
  */
-export function handleDocumentVisibility(
-  hidden: boolean,
-  store: Store = useYouTubeStore,
-): void {
+export function handleDocumentVisibility(hidden: boolean, store: Store = useYouTubeStore): void {
   if (!hidden) return
   const state = store.getState()
   if (state.status !== 'playing') return
@@ -455,7 +452,11 @@ export async function playYouTubeSessionStep(
   direction: 1 | -1,
   store: Store = useYouTubeStore,
 ): Promise<boolean> {
-  let next = nextEligibleIndex(store.getState().sessionItems, store.getState().sessionIndex, direction)
+  let next = nextEligibleIndex(
+    store.getState().sessionItems,
+    store.getState().sessionIndex,
+    direction,
+  )
 
   if (next < 0 && direction === 1) {
     if ((await extendYouTubeSession(store)) === 0) {
@@ -478,10 +479,7 @@ export async function playYouTubeSessionStep(
  * else would grey out a control whose action is perfectly able to answer it,
  * which is the exact defect `useHasNext` was deleted for on the audio side.
  */
-export function hasYouTubeSessionStep(
-  direction: 1 | -1,
-  store: Store = useYouTubeStore,
-): boolean {
+export function hasYouTubeSessionStep(direction: 1 | -1, store: Store = useYouTubeStore): boolean {
   const state = store.getState()
   if (nextEligibleIndex(state.sessionItems, state.sessionIndex, direction) >= 0) return true
   if (direction === -1) return false

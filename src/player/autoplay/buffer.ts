@@ -2,7 +2,11 @@ import { buildProfile } from '@/personalization/profile'
 import { usePersonalizationStore } from '@/personalization/store'
 import type { Track } from '@/music/types'
 import { MIN_QUEUE_DEPTH } from '../related-fetcher'
-import { collectCandidates, collectFallbackCandidates, collectRelatedCandidates } from './candidates'
+import {
+  collectCandidates,
+  collectFallbackCandidates,
+  collectRelatedCandidates,
+} from './candidates'
 import type { CandidateSources } from './candidates'
 import { BUFFER_TARGET, planAutoplay } from './planner'
 import { sessionTracks } from './session-pool'
