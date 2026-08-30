@@ -4,6 +4,7 @@ import { renderApp } from '@/test/render'
 import { audiusRef, libraryWith, playlist } from '@/test/fixtures/library'
 import { useLibraryStore } from '@/library/store'
 import { usePlayerStore } from '@/player/player-store'
+import { collectionSession } from '@/player/collection-session'
 import { playNext, playPrevious } from '@/player/player-actions'
 
 /**
@@ -76,9 +77,10 @@ describe('Play', () => {
 
     await waitFor(() => expect(currentTitle()).toBe('Paper Lanterns'))
     await waitFor(() => expect(player().queue.length).toBeGreaterThan(1))
-    // The continuation is the playlist order from that point, wrapping round.
-    expect(queueTitles()[0]).toBe('Paper Lanterns')
-    expect(queueTitles()[1]).toBe('No Artwork Here')
+    // The continuation is the playlist order from that point onward. It does not
+    // rotate: with Repeat off, a list started at row two ends at the last row
+    // rather than wrapping quietly back to the first.
+    expect(queueTitles()).toEqual(['Paper Lanterns', 'No Artwork Here'])
   })
 
   it('advances through the playlist on Next', async () => {
@@ -192,9 +194,16 @@ describe('Shuffle', () => {
     await user.click(await screen.findByRole('button', { name: /Shuffle/ }))
     await waitFor(() => expect(queueTitles()).toHaveLength(3))
 
-    const order = [...player().shuffleOrder]
+    // The permutation belongs to the collection session now, which is what lets
+    // it survive an engine change; the queue is materialized in it, so what is
+    // asserted is that neither is redrawn by an advance.
+    const order = [...collectionSession().order]
+    const queue = [...queueTitles()]
+    expect([...order].sort()).toEqual([0, 1, 2])
+
     await playNext()
-    expect(player().shuffleOrder).toEqual(order)
+    expect(collectionSession().order).toEqual(order)
+    expect(queueTitles()).toEqual(queue)
   })
 
   it('is turned off again by pressing Play', async () => {

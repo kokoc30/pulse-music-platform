@@ -3,6 +3,8 @@ import {
   heartFor,
   likedKeys,
   menuFor,
+  nextTrack,
+  playbackModes,
   playlistOrder,
   readLibrary,
   readPersonalization,
@@ -24,61 +26,6 @@ import {
  */
 
 const LIKED = 'Liked Songs'
-
-/**
- * Advances the queue through whichever control the viewport actually offers.
- *
- * Below 560px the reference collapses the player to a mini-player showing only
- * play/pause, so Next lives in the queue panel there. Both routes reach the same
- * player action, which is the property under test.
- */
-async function openQueue(page: import('@playwright/test').Page) {
-  if ((await page.locator('.queue-panel').count()) > 0) return
-  const sidebar = page.getByRole('button', { name: 'Open the play queue' })
-  if (await sidebar.isVisible()) {
-    await sidebar.click()
-    return
-  }
-  // Below 830px the reference hides the sidebar entirely, and the drawer behind
-  // the hamburger is the only route to anything.
-  await page.getByRole('button', { name: 'Open menu' }).click()
-  await page.getByRole('button', { name: 'Play queue' }).click()
-}
-
-/** The panel and its backdrop share the label; the panel's own control is the one to press. */
-async function closeQueue(page: import('@playwright/test').Page) {
-  await page.locator('.queue-panel').getByRole('button', { name: 'Close queue' }).click()
-  await expect(page.locator('.queue-panel')).toHaveCount(0)
-}
-
-async function nextTrack(page: import('@playwright/test').Page) {
-  const bar = page.getByRole('button', { name: 'Next track' })
-  if (await bar.isVisible()) {
-    await bar.click()
-    return
-  }
-  // Leave the panel exactly as it was found: some tests keep it open for the
-  // playback-mode controls it also carries.
-  const wasOpen = (await page.locator('.queue-panel').count()) > 0
-  await openQueue(page)
-  const list = page.getByTestId('queue-list')
-  await expect(list).toBeVisible()
-  const rows = list.locator('.song-row')
-  const currentIndex = await rows.evaluateAll((nodes) =>
-    nodes.findIndex((node) => node.getAttribute('data-current') === 'true'),
-  )
-  await rows.nth(currentIndex + 1).click()
-  if (!wasOpen) await closeQueue(page)
-}
-
-/** Shuffle and repeat, wherever this viewport puts them. */
-async function playbackModes(page: import('@playwright/test').Page) {
-  const inBar = page.locator('.player-controls .player-toggle').first()
-  if (await inBar.isVisible()) return page.locator('.player-controls')
-  if ((await page.locator('.queue-modes').count()) === 0) await openQueue(page)
-  await expect(page.locator('.queue-modes')).toBeVisible()
-  return page.locator('.queue-modes')
-}
 
 test.describe('A — like something and come back to it', () => {
   test.beforeEach(async ({ page }) => {
@@ -320,8 +267,11 @@ test.describe('C — playing a playlist', () => {
     const first = await page.locator('.player-track b').innerText()
 
     await nextTrack(page)
+    // Polled rather than read once: the collection resolves a bounded look-ahead
+    // rather than the whole list, so an advance that reaches past the resolved
+    // window costs one provider lookup before the bar can name what it landed on.
+    await expect(page.locator('.player-track b')).not.toHaveText(first)
     const second = await page.locator('.player-track b').innerText()
-    expect(second).not.toBe(first)
 
     // Starting the same playlist again keeps the session's running order rather
     // than drawing a new one.

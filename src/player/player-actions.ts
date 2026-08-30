@@ -6,6 +6,14 @@ import { MusicError, assertAudioTrack } from '@/music/types'
 import type { Track } from '@/music/types'
 import { getAudioEngine } from './audio-engine'
 import { bufferedCandidates, clearAutoplayBuffer, refillBuffer, takeFromBuffer } from './autoplay'
+import {
+  advanceCollection,
+  clearCollectionUnlessContext,
+  hasActiveCollection,
+  noteCollectionTrackStarted,
+  retreatCollection,
+  topUpCollection,
+} from './collection-session'
 import { activateAudio } from './playback-coordinator'
 import { usePlayerStore } from './player-store'
 import type { PlayerState, QueueContext } from './player-store'
@@ -114,7 +122,24 @@ export async function playTrack(
   const index = resolvedIndex >= 0 ? resolvedIndex : 0
   const nextQueue = resolvedIndex >= 0 ? queue : [track, ...queue.filter((t) => t.id !== track.id)]
 
-  state.setQueue(nextQueue, index, playContext.context ?? state.queueContext)
+  const queueContext = playContext.context ?? state.queueContext
+
+  /**
+   * Starting something under a different context ends the collection session.
+   *
+   * A search seed, a shelf, a chart or a single saved item is a different
+   * explicit intent, and the list the visitor left behind must not resurface
+   * three tracks later. An advance *within* the collection — including a
+   * generated autoplay candidate appended to its queue — carries the same
+   * context and leaves the session alone.
+   */
+  clearCollectionUnlessContext(queueContext?.id ?? null)
+
+  state.setQueue(nextQueue, index, queueContext)
+  // Keeps the collection's cursor in step with an ordinary queue advance.
+  // Silent for anything the collection did not put in the queue, which is what
+  // lets a manually queued track play without moving the visitor's place.
+  noteCollectionTrackStarted(track.id)
   state.setCurrentTime(0)
   state.setDuration(track.durationSeconds)
   state.setError(null)
@@ -274,19 +299,32 @@ export const MAX_AUTOPLAY_ATTEMPTS = 3
  *
  *   1. repeat one — replay the current track
  *   2. the explicit queue, in the running order in force — whatever the visitor
- *      actually asked for, including a playlist continuation
- *   3. repeat playlist — wrap to the start of that same list
- *   4. autoplay's generated candidate, when the preference is on
- *   5. stop
+ *      actually asked for, including the resolved part of a saved collection
+ *   3. the collection session — the next *saved item*, on whichever engine owns
+ *      it, including the Repeat-playlist wrap of that collection
+ *   4. repeat playlist — wrap the queue itself, when no collection is playing
+ *   5. autoplay's generated candidate, when the preference is on
+ *   6. stop
  *
  * Every rule the visitor set outranks everything the app generated. Autoplay is
  * consulted last and unconditionally last, so it can neither jump ahead of a
- * queued item nor pre-empt a repeat. Steps 2 and 3 are one call into
- * `nextQueueIndex`, which is what keeps shuffle and repeat-playlist from being
- * two competing notions of "next".
+ * queued item nor pre-empt a repeat.
  *
- * `skipTrackId` exists for the one case that could otherwise loop: a track that
- * has just failed to play. It is excluded from being chosen again by repeat one.
+ * **Step 3 is what makes a saved list a list rather than a queue.** The queue
+ * holds only what the audio engine can play, and a collection may continue past
+ * it — into a YouTube item, or simply into the part of the list not resolved
+ * yet. Asking the collection *before* autoplay is what stops a generated track
+ * appearing while Liked Songs still has songs in it.
+ *
+ * The wrap is split between 3 and 4 for the same reason: while a collection is
+ * playing, Repeat playlist means *that collection*, not the window of it the
+ * queue happens to hold. So the queue is asked with the wrap suppressed and the
+ * collection performs it instead. With no collection, step 4 is the original
+ * behaviour, unchanged.
+ *
+ * `skipRepeatOne` exists for the one case that could otherwise loop: a track
+ * that has just failed to play. It is excluded from being chosen again by
+ * repeat one.
  */
 export async function playNext(
   store: Store = usePlayerStore,
@@ -308,17 +346,38 @@ export async function playNext(
     return
   }
 
-  // 2 and 3. The explicit queue in its running order, wrapping only when the
-  //    visitor turned Repeat playlist on.
-  const nextIndex = nextQueueDestination(state, reason)
+  // 2, and 4 when no collection is playing. The explicit queue in its running
+  //    order, carrying its own Repeat-playlist wrap — except while a collection
+  //    is playing, where the wrap is withheld here and performed at step 3
+  //    instead, so Repeat playlist repeats the saved list rather than the
+  //    resolved window of it that the queue happens to hold.
+  const collection = hasActiveCollection()
+  const nextIndex = nextQueueDestination(state, reason, collection)
   const next = nextIndex === null ? undefined : state.queue[nextIndex]
 
   if (next && nextIndex !== null) {
     await playTrack(next, { queue: state.queue, index: nextIndex }, store)
+    // Not awaited: the music is already playing and the window is refilled over
+    // it. Makes no request at all while the look-ahead is still deep enough.
+    void topUpCollection()
     return
   }
 
-  // 4. Generated similar audio, when the visitor left autoplay on.
+  // 3. The saved collection, on whichever engine owns the next item. This is
+  //    ahead of autoplay unconditionally: an explicit list the visitor chose
+  //    outranks anything the app would generate.
+  if (
+    collection &&
+    (await advanceCollection({
+      reason,
+      repeatMode: state.repeatMode,
+      userInitiated: reason === 'user',
+    }))
+  ) {
+    return
+  }
+
+  // 5. Generated similar audio, when the visitor left autoplay on.
   if (state.autoplaySimilar && state.currentTrack) {
     if (await playAutoplayNext(store)) return
     /**
@@ -340,7 +399,7 @@ export async function playNext(
     }
   }
 
-  // 5. Stop cleanly instead of looping.
+  // 6. Stop cleanly instead of looping.
   engine().pause()
   store.getState().setCurrentTime(0)
   store.getState().setStatus('paused')
@@ -383,13 +442,19 @@ export type AdvanceReason = 'ended' | 'user'
  * the current song. Returning `null` there lets the caller fall through to
  * autoplay instead of restarting what is already playing.
  */
-function nextQueueDestination(state: PlayerState, reason: AdvanceReason): number | null {
+function nextQueueDestination(
+  state: PlayerState,
+  reason: AdvanceReason,
+  collectionActive = false,
+): number | null {
   const index = nextQueueIndex({
     queueLength: state.queue.length,
     currentIndex: state.currentIndex,
     shuffle: state.shuffle,
     shuffleOrder: state.shuffleOrder,
-    repeatMode: state.repeatMode,
+    // A collection owns its own wrap, over the whole saved list rather than the
+    // resolved window of it. Wrapping here as well would restart the window.
+    repeatMode: collectionActive ? 'off' : state.repeatMode,
   })
   if (index === null) return null
   if (reason === 'user' && index === state.currentIndex) return null
@@ -485,6 +550,12 @@ export async function playPrevious(store: Store = usePlayerStore): Promise<void>
   })
   const previous = previousIndex === null ? undefined : state.queue[previousIndex]
   if (!previous || previousIndex === null) {
+    // The start of the *queue* is not the start of the collection: the window
+    // behind the listener may have been a later run of a longer saved list, or a
+    // YouTube item they stepped past. Ask the collection before giving up.
+    if (hasActiveCollection() && (await retreatCollection({ repeatMode: state.repeatMode }))) {
+      return
+    }
     seek(0, store)
     return
   }

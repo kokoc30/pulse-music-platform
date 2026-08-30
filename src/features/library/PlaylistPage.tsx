@@ -10,10 +10,7 @@ import { usePlaylistSummary, usePlaylistTracks } from '@/library/hooks'
 import { LIBRARY_ROUTES, libraryMessage, playPlaylist } from '@/library/library-actions'
 import { filterTrackRefs } from '@/library/selectors'
 import { useLibraryStore } from '@/library/store'
-import {
-  MAX_PLAYLIST_DESCRIPTION_LENGTH,
-  MAX_PLAYLIST_NAME_LENGTH,
-} from '@/library/types'
+import { MAX_PLAYLIST_DESCRIPTION_LENGTH, MAX_PLAYLIST_NAME_LENGTH } from '@/library/types'
 import { useCurrentTrack, useIsPlaying } from '@/player/player-selectors'
 import { usePlayerStore } from '@/player/player-store'
 import { useYouTubeStore } from '@/player/youtube-store'
@@ -22,14 +19,16 @@ import { useYouTubeStore } from '@/player/youtube-store'
  * One playlist.
  *
  * **Play uses the app's one player.** Both buttons call `playPlaylist`, which
- * resolves references through the existing provider path and hands the result to
+ * opens a collection session over the saved references and materializes it into
  * the existing queue. There is no playlist audio element, no second engine and
  * no separate Next — which is what makes the lock screen's Next behave
- * identically to the one on the bar (agents/45 → "One playback path").
+ * identically to the one on the bar (agents/45 → "One playback path"), and it is
+ * the same session Liked Songs uses, so a playlist holding a saved video
+ * continues through it rather than round it.
  *
- * **Shuffle never rewrites the playlist.** It switches on a running order over
- * the queue before the queue is built; the stored `itemKeys` are untouched, and
- * the rows below stay in their custom order while shuffled playback runs.
+ * **Shuffle never rewrites the playlist.** It draws one running order over the
+ * session and follows it; the stored `itemKeys` are untouched, and the rows
+ * below stay in their custom order while shuffled playback runs.
  *
  * **Deleting asks first, and deletes only the list.** Its songs stay liked if
  * they were liked and stay in other playlists if they were in them.
@@ -92,6 +91,14 @@ export function PlaylistPage() {
    * Playing a *filtered* view would silently play something other than the
    * playlist, so playback always uses the real stored order and maps the clicked
    * row back to its position in it.
+   *
+   * This is the one place a playlist and Liked Songs deliberately differ, and
+   * the difference is what the list *is*. A playlist has a single curated order
+   * the visitor built by hand and can reorder — filtering it is a way of finding
+   * a row in that order, and the note above the rows says as much ("Reordering is
+   * available in the full list"). Liked Songs has no authored order at all: it is
+   * presented through a sort control and a filter, so the arrangement on screen
+   * *is* the collection, and that is what plays there.
    */
   const play = (trackKey: string) => {
     const index = Math.max(

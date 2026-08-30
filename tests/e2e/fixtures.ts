@@ -42,7 +42,14 @@ const rawTrack = (spec: TrackSpec) => ({
   followee_favorites: [],
   track_segments: [],
   remix_of: null,
-  field_visibility: { mood: true, tags: true, genre: true, share: true, remixes: true, play_count: true },
+  field_visibility: {
+    mood: true,
+    tags: true,
+    genre: true,
+    share: true,
+    remixes: true,
+    play_count: true,
+  },
   is_original_available: false,
   is_downloadable: false,
   repost_count: 1,
@@ -180,7 +187,10 @@ export async function stubAudius(page: Page, options: StubOptions = {}): Promise
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
 
   await page.route('https://api.audius.co/health_check', (route) =>
-    json(route, { data: { healthy: true, network: { content_nodes: [] } }, comms: { healthy: true } }),
+    json(route, {
+      data: { healthy: true, network: { content_nodes: [] } },
+      comms: { healthy: true },
+    }),
   )
 
   await page.route('https://api.audius.co/v1/**', async (route) => {
@@ -269,7 +279,13 @@ export async function stubAudius(page: Page, options: StubOptions = {}): Promise
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ provider: 'jamendo', action: 'search', query: '', count: 0, results: [] }),
+      body: JSON.stringify({
+        provider: 'jamendo',
+        action: 'search',
+        query: '',
+        count: 0,
+        results: [],
+      }),
     }),
   )
 
@@ -332,7 +348,9 @@ const jamendoPayload = (spec: JamendoTrackSpec) => ({
   ...(spec.streamable === false ? {} : { audioUrl: `${JAMENDO_AUDIO_ORIGIN}/?trackid=${spec.id}` }),
   ...(spec.sourceUrl === false
     ? {}
-    : { sourceUrl: `https://www.jamendo.com/track/${spec.id}/${spec.title.toLowerCase().replace(/\s+/g, '-')}` }),
+    : {
+        sourceUrl: `https://www.jamendo.com/track/${spec.id}/${spec.title.toLowerCase().replace(/\s+/g, '-')}`,
+      }),
   licenseUrl: 'https://creativecommons.org/licenses/by-nc-nd/3.0/',
   releaseDate: '2023-04-11',
 })
@@ -437,7 +455,12 @@ export const YOUTUBE_RESULTS: YouTubeSpec[] = [
     channelTitle: 'Aster Vale',
     durationSeconds: 213,
   },
-  { videoId: 'bbbbbbbbbbb', title: 'Night Drive Live', channelTitle: 'Ilo Rhen', durationSeconds: 245 },
+  {
+    videoId: 'bbbbbbbbbbb',
+    title: 'Night Drive Live',
+    channelTitle: 'Ilo Rhen',
+    durationSeconds: 245,
+  },
   {
     videoId: 'ccccccccccc',
     title: 'Night Songs For Kids',
@@ -566,7 +589,10 @@ export async function stubYouTube(page: Page, options: YouTubeStubOptions = {}):
         status: 429,
         contentType: 'application/json',
         body: JSON.stringify({
-          error: { code: 'QUOTA', message: 'YouTube search is temporarily unavailable. Try again later.' },
+          error: {
+            code: 'QUOTA',
+            message: 'YouTube search is temporarily unavailable. Try again later.',
+          },
         }),
       })
     }
@@ -765,9 +791,7 @@ export async function seedPersonalization(page: Page, options: SeedOptions = {})
 }
 
 /** Reads whatever the application has actually persisted. */
-export async function readPersonalization(
-  page: Page,
-): Promise<Record<string, unknown> | null> {
+export async function readPersonalization(page: Page): Promise<Record<string, unknown> | null> {
   return page.evaluate((key) => {
     const raw = window.localStorage.getItem(key)
     return raw ? (JSON.parse(raw) as Record<string, unknown>) : null
@@ -996,4 +1020,89 @@ export async function stageHitTest(
 export async function clickBesideSheet(locator: Locator): Promise<void> {
   await locator.scrollIntoViewIfNeeded()
   await locator.click({ position: { x: 12, y: 12 } })
+}
+
+/* ==========================================================================
+   Reaching the transport, at whatever width the test is running
+
+   The reference moves two controls as the viewport narrows: below 830px the
+   sidebar (and its queue button) disappears behind the hamburger, and below
+   560px the player bar collapses to a mini-player showing only play/pause, so
+   Next lives in the queue panel. Both routes reach the same unified action, so
+   which one a test takes is never the property under test — it is only a
+   question of what this viewport actually offers.
+
+   These lived in `library.spec.ts` and now live here, because a second spec
+   needed them and two copies of "where is the queue button" is exactly how the
+   two copies drift.
+   ========================================================================== */
+
+/** Opens the play queue through whichever control this viewport offers. */
+export async function openQueue(page: Page): Promise<void> {
+  if ((await page.locator('.queue-panel').count()) > 0) return
+  const sidebar = page.getByRole('button', { name: 'Open the play queue' })
+  if (await sidebar.isVisible()) {
+    await sidebar.click()
+    return
+  }
+  // Below 830px the reference hides the sidebar entirely, and the drawer behind
+  // the hamburger is the only route to anything.
+  await page.getByRole('button', { name: 'Open menu' }).click()
+  await page.getByRole('button', { name: 'Play queue' }).click()
+}
+
+/** The panel and its backdrop share the label; the panel's own control is the one to press. */
+export async function closeQueue(page: Page): Promise<void> {
+  await page.locator('.queue-panel').getByRole('button', { name: 'Close queue' }).click()
+  await page.locator('.queue-panel').waitFor({ state: 'detached' })
+}
+
+/** Advances the queue through whichever control this viewport offers. */
+export async function nextTrack(page: Page): Promise<void> {
+  const bar = page.getByRole('button', { name: 'Next track' })
+  if (await bar.isVisible()) {
+    await bar.click()
+    return
+  }
+  // Leave the panel exactly as it was found: some tests keep it open for the
+  // playback-mode controls it also carries.
+  const wasOpen = (await page.locator('.queue-panel').count()) > 0
+  await openQueue(page)
+  const list = page.getByTestId('queue-list')
+  const rows = list.locator('.song-row')
+  const currentIndex = await rows.evaluateAll((nodes) =>
+    nodes.findIndex((node) => node.getAttribute('data-current') === 'true'),
+  )
+  await rows.nth(currentIndex + 1).click()
+  if (!wasOpen) await closeQueue(page)
+}
+
+/**
+ * Whether Next can be pressed at all right now.
+ *
+ * On a narrow viewport the bar has no Next button, so "is Next available" is a
+ * question about the queue rather than about a control: the panel's own rows are
+ * the affordance there.
+ */
+export async function canGoNext(page: Page): Promise<boolean> {
+  const bar = page.getByRole('button', { name: 'Next track' })
+  if (await bar.isVisible()) return bar.isEnabled()
+
+  const wasOpen = (await page.locator('.queue-panel').count()) > 0
+  await openQueue(page)
+  const rows = page.getByTestId('queue-list').locator('.song-row')
+  const total = await rows.count()
+  const currentIndex = await rows.evaluateAll((nodes) =>
+    nodes.findIndex((node) => node.getAttribute('data-current') === 'true'),
+  )
+  if (!wasOpen) await closeQueue(page)
+  return currentIndex >= 0 && currentIndex < total - 1
+}
+
+/** Shuffle and repeat, wherever this viewport puts them. */
+export async function playbackModes(page: Page): Promise<Locator> {
+  const inBar = page.locator('.player-controls .player-toggle').first()
+  if (await inBar.isVisible()) return page.locator('.player-controls')
+  if ((await page.locator('.queue-modes').count()) === 0) await openQueue(page)
+  return page.locator('.queue-modes')
 }

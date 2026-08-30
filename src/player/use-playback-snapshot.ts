@@ -4,6 +4,14 @@ import { providerLabel } from '@/music/provider-labels'
 import type { Artwork, Track, YouTubeVideoItem } from '@/music/types'
 import { trackRefFromTrack, trackRefFromYouTube } from '@/library/track-ref'
 import type { LibraryTrackRef } from '@/library/types'
+import {
+  collectionOwnsItemKey,
+  collectionSession,
+  nextCollectionPosition,
+  previousCollectionPosition,
+  useCollectionStore,
+} from './collection-session'
+import type { CollectionSessionState } from './collection-session'
 import type { EngineKind } from './playback-coordinator'
 import { selectCanSkipNext, selectHasPrevious } from './player-selectors'
 import { usePlayerStore } from './player-store'
@@ -188,6 +196,20 @@ export interface SnapshotInput {
   engine: EngineKind
   audio: PlayerState
   youtube: YouTubePlaybackState
+  /**
+   * The collection session, when one is playing.
+   *
+   * Needed for one question only, and it is the same question on both engines:
+   * *is there another saved item after this one*. A collection can continue past
+   * the end of the resolved audio queue and past the end of an empty YouTube
+   * result session, so without it the two transport buttons would be greyed out
+   * over an action perfectly able to answer — the exact defect `useHasNext` was
+   * deleted for.
+   *
+   * Defaulted from the store so the imperative callers stay one-liners; the hook
+   * passes the value it has subscribed to, which is what makes it reactive.
+   */
+  collection?: CollectionSessionState
 }
 
 /**
@@ -207,9 +229,15 @@ export interface SnapshotInput {
  */
 export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
   const { engine, audio, youtube } = input
+  const collection = input.collection ?? collectionSession()
+  const collectionHasNext = nextCollectionPosition(collection, audio.repeatMode, 'user') !== null
+  const collectionHasPrevious = previousCollectionPosition(collection, audio.repeatMode) !== null
 
   if (engine === 'youtube' && youtube.item) {
     const item = youtube.item
+    // Origin decides who answers Next. A video a saved list routed here steps
+    // through that list; one opened from a search steps through the results.
+    const fromCollection = collectionOwnsItemKey(item.id, collection)
     return {
       engine: 'youtube',
       title: item.title,
@@ -246,10 +274,13 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
       // on, because the action behind it can still answer. Previous only ever
       // walks backwards through what is already there; there is no such thing as
       // searching for the video that came before.
-      canNext:
-        nextEligibleIndex(youtube.sessionItems, youtube.sessionIndex, 1) >= 0 ||
-        youtube.continuousPlay,
-      canPrevious: nextEligibleIndex(youtube.sessionItems, youtube.sessionIndex, -1) >= 0,
+      canNext: fromCollection
+        ? collectionHasNext
+        : nextEligibleIndex(youtube.sessionItems, youtube.sessionIndex, 1) >= 0 ||
+          youtube.continuousPlay,
+      canPrevious: fromCollection
+        ? collectionHasPrevious
+        : nextEligibleIndex(youtube.sessionItems, youtube.sessionIndex, -1) >= 0,
       capabilities: {
         seek: true,
         like: true,
@@ -288,8 +319,8 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
       currentTime: audio.currentTime,
       duration: audio.duration,
       error: audio.error,
-      canNext: selectCanSkipNext(audio),
-      canPrevious: selectHasPrevious(audio),
+      canNext: selectCanSkipNext(audio, collectionHasNext),
+      canPrevious: selectHasPrevious(audio, collectionHasPrevious),
       capabilities: {
         seek: true,
         like: true,
@@ -361,7 +392,8 @@ export function usePlaybackSnapshot(): PlaybackSnapshot {
   const engine = useActiveEngine()
   const audio = usePlayerStore()
   const youtube = useYouTubeStore()
-  const snapshot = selectSnapshotState({ engine, audio, youtube })
+  const collection = useCollectionStore()
+  const snapshot = selectSnapshotState({ engine, audio, youtube, collection })
   const status = useSettledStatus(snapshot.status)
   return status === snapshot.status ? snapshot : { ...snapshot, status }
 }

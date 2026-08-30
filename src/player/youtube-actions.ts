@@ -2,7 +2,16 @@ import { useUiStore } from '@/app/ui-store'
 import { canEmbedYouTubeItem, embedBlockReason } from '@/music/youtube/normalize'
 import { isYouTubeVideoItem } from '@/music/types'
 import type { YouTubeVideoItem } from '@/music/types'
+import {
+  advanceCollection,
+  collectionOwnsItemKey,
+  collectionSession,
+  nextCollectionPosition,
+  previousCollectionPosition,
+  retreatCollection,
+} from './collection-session'
 import { activateYouTube, activeEngine, releasePlayback } from './playback-coordinator'
+import { usePlayerStore } from './player-store'
 import {
   NO_MORE_TRACKS_MESSAGE,
   RELATED_RETRY_DELAY_MS,
@@ -507,6 +516,11 @@ export async function playYouTubeSessionStep(
   direction: 1 | -1,
   store: Store = useYouTubeStore,
 ): Promise<boolean> {
+  // A video playing because a saved list routed it here belongs to that list,
+  // not to whatever search was open before. Its Next is the next *saved item* —
+  // which may well be a catalogue track, on the other engine entirely.
+  if (collectionOwnsCurrentVideo(store)) return stepCollectionFromVideo(direction)
+
   let next = nextEligibleIndex(
     store.getState().sessionItems,
     store.getState().sessionIndex,
@@ -526,6 +540,39 @@ export async function playYouTubeSessionStep(
   return playSessionItem(next, item, { userInitiated: true }, store)
 }
 
+/* --------------------------------------------------------------------------
+   Collection origin
+
+   The same video reached from two places is two different things. From a search
+   it is one of a page of results and Next means the next result; from Liked
+   Songs or a playlist it is one item of a saved list and Next means the next
+   saved item. Origin decides, and these three functions are where it does.
+   -------------------------------------------------------------------------- */
+
+/** True when the loaded video is the saved item a collection session is on. */
+export function collectionOwnsCurrentVideo(store: Store = useYouTubeStore): boolean {
+  const item = store.getState().item
+  return item !== null && collectionOwnsItemKey(item.id)
+}
+
+/**
+ * Steps the *collection* while a video is on screen.
+ *
+ * Nothing here can reach `/api/youtube`: a saved list is a list the visitor
+ * already has, so a transition inside one never spends a `search.list` and never
+ * asks for related videos. When the list has no more to give, the bar says so
+ * rather than quietly extending the session with results nobody asked for.
+ */
+async function stepCollectionFromVideo(direction: 1 | -1): Promise<boolean> {
+  const { repeatMode } = usePlayerStore.getState()
+  const moved =
+    direction === 1
+      ? await advanceCollection({ reason: 'user', repeatMode, userInitiated: true })
+      : await retreatCollection({ repeatMode })
+  if (!moved && direction === 1) useUiStore.getState().showNotice(NO_MORE_TRACKS_MESSAGE)
+  return moved
+}
+
 /**
  * True when a press of Next or Previous would go somewhere.
  *
@@ -536,6 +583,13 @@ export async function playYouTubeSessionStep(
  */
 export function hasYouTubeSessionStep(direction: 1 | -1, store: Store = useYouTubeStore): boolean {
   const state = store.getState()
+  if (collectionOwnsCurrentVideo(store)) {
+    const session = collectionSession()
+    const { repeatMode } = usePlayerStore.getState()
+    return direction === 1
+      ? nextCollectionPosition(session, repeatMode, 'user') !== null
+      : previousCollectionPosition(session, repeatMode) !== null
+  }
   if (nextEligibleIndex(state.sessionItems, state.sessionIndex, direction) >= 0) return true
   if (direction === -1) return false
   return (
@@ -655,6 +709,12 @@ export async function ensureYouTubeSessionDepth(store: Store = useYouTubeStore):
   const state = store.getState()
   if (!state.continuousPlay || !state.item) return
 
+  // A video playing from a saved list never prefetches: the list is already on
+  // the device, and its continuation costs no YouTube quota at all. The
+  // `sessionItems.length` guard below would catch this too — a collection clears
+  // the session — but the rule is worth stating where it is decided.
+  if (collectionOwnsCurrentVideo(store)) return
+
   /**
    * A single video opened from Recently Played or the library gets no lookahead.
    *
@@ -706,11 +766,34 @@ export async function ensureYouTubeSessionDepth(store: Store = useYouTubeStore):
  * starting again.
  */
 export async function advanceYouTubeSession(store: Store = useYouTubeStore): Promise<boolean> {
-  if (!store.getState().continuousPlay) return false
   // Nothing loaded means nothing to be related *to* — after the surface was
   // closed, for instance. There is no continuation to attempt and no request to
   // make for one.
   if (!store.getState().item) return false
+
+  /**
+   * A saved list continues before anything else is considered, and it is not
+   * gated by `continuousPlay`.
+   *
+   * That setting answers "should the next *search result* follow this one", and
+   * a collection is not a search result — the visitor asked for this list by
+   * opening it and pressing a row. The next item is routed to whichever engine
+   * owns it, so a video ending inside Liked Songs can hand straight back to the
+   * audio element.
+   *
+   * Repeat is deliberately not consulted for a video beyond the wrap
+   * `advanceCollection` already performs: the YouTube surface offers no repeat
+   * control (`capabilities.repeat` is false), so honouring Repeat one here would
+   * act on a setting the visitor cannot see from this player.
+   */
+  if (collectionOwnsCurrentVideo(store)) {
+    const { repeatMode } = usePlayerStore.getState()
+    const moved = await advanceCollection({ reason: 'ended', repeatMode, userInitiated: false })
+    if (!moved) useUiStore.getState().showNotice(NO_MORE_TRACKS_MESSAGE)
+    return moved
+  }
+
+  if (!store.getState().continuousPlay) return false
 
   let next = nextEligibleIndex(store.getState().sessionItems, store.getState().sessionIndex, 1)
 
@@ -840,7 +923,9 @@ export function bindYouTubeEngineEvents(store: Store = useYouTubeStore): () => v
       store.getState().setError(message)
       consecutiveFailures += 1
       if (consecutiveFailures > MAX_CONSECUTIVE_VIDEO_FAILURES) return
-      if (!store.getState().continuousPlay) return
+      // A saved list continues over a dead item whatever the result-session
+      // setting says, for the same reason it continues over a withdrawn track.
+      if (!store.getState().continuousPlay && !collectionOwnsCurrentVideo(store)) return
       advanceOnce(store)
     },
     onAutoplayBlocked: () => {

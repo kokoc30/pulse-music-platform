@@ -48,7 +48,7 @@ export const useQueueContextLabel = (): string | null =>
  * must never do (`skipToNext`). Enabling a control by promising something the
  * action refuses to deliver is worse than disabling it.
  */
-export function selectCanSkipNext(s: PlayerState): boolean {
+export function selectCanSkipNext(s: PlayerState, collectionHasNext = false): boolean {
   const index = nextQueueIndex({
     queueLength: s.queue.length,
     currentIndex: s.currentIndex,
@@ -57,6 +57,11 @@ export function selectCanSkipNext(s: PlayerState): boolean {
     repeatMode: s.repeatMode,
   })
   if (index !== null && index !== s.currentIndex) return true
+  // A saved collection can continue past the end of the resolved queue — into a
+  // YouTube item, or into the part of the list not looked up yet — so it is a
+  // fourth genuine destination. Passed in rather than read here, because it
+  // lives in a different store and this must stay a pure selector.
+  if (collectionHasNext) return true
   return s.autoplaySimilar && s.currentTrack !== null
 }
 
@@ -69,9 +74,10 @@ export const useCanSkipNext = (): boolean => usePlayerStore(selectCanSkipNext)
  * snapshot can reuse it rather than restating it. A duplicated transport
  * predicate is exactly what put `useHasNext` and `playNext` out of step.
  */
-export function selectHasPrevious(s: PlayerState): boolean {
+export function selectHasPrevious(s: PlayerState, collectionHasPrevious = false): boolean {
   return (
     s.currentTime > 0 ||
+    collectionHasPrevious ||
     previousQueueIndex({
       queueLength: s.queue.length,
       currentIndex: s.currentIndex,

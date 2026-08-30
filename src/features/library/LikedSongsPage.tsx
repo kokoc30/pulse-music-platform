@@ -42,6 +42,19 @@ export function LikedSongsPage() {
   const rows = useMemo(() => filterTrackRefs(liked, query), [liked, query])
   const currentKey = youtubeItem?.id ?? currentTrack?.id ?? null
 
+  /**
+   * Playback follows the rows **as they are on screen**.
+   *
+   * `rows` already carries the chosen sort and the current filter, and that is
+   * deliberately what plays: the visitor picked a song out of a list they could
+   * see, so the list they could see is the one that continues. Sorting by Title
+   * and pressing the third row plays the third row and then the fourth, not
+   * whatever happens to sit beside it in storage.
+   *
+   * The collection layer snapshots this list at the moment playback starts, so
+   * re-sorting, typing in the filter, or liking and unliking afterwards changes
+   * what plays *next time* rather than rewriting a session already running.
+   */
   const play = (index: number) => void playPlaylist(rows, index, CONTEXT)
 
   return (
@@ -73,8 +86,10 @@ export function LikedSongsPage() {
               className="library-shuffle"
               disabled={rows.length === 0}
               onClick={() => {
-                // Shuffle is a running order over the queue, so it is switched on
-                // before the queue is built and never rewrites what is stored.
+                // One permutation of the visible list, drawn once when the
+                // session starts and followed by every Next and Previous after
+                // it. Nothing here touches what is stored: the rows below stay
+                // exactly as they are while shuffled playback runs.
                 setShuffle(true)
                 play(0)
               }}

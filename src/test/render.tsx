@@ -20,6 +20,7 @@ import type { FakeAudioEngine } from '@/player/fake-audio-engine'
 import { resetMediaRetries } from '@/player/player-actions'
 import { initialPlayerState, usePlayerStore } from '@/player/player-store'
 import { clearAutoplayBuffer, clearSessionPool } from '@/player/autoplay'
+import { clearCollection } from '@/player/collection-session'
 import { resetPlaybackCoordinator } from '@/player/playback-coordinator'
 import { createFakeYouTubeFactory } from '@/player/youtube/fake-adapter'
 import type { FakeYouTubeFactory } from '@/player/youtube/fake-adapter'
@@ -97,6 +98,10 @@ export function resetAppState(): FakeAudioEngine {
 
   useYouTubeStore.setState({ ...initialYouTubeState })
   resetPlaybackCoordinator()
+  // The collection session is a module-level singleton like every other line
+  // here. One left running would keep answering "what plays next" in a test that
+  // never started a collection at all.
+  clearCollection()
   clearYouTubeSessionCache()
   youtubeFactory = createFakeYouTubeFactory()
   setYouTubeEngine(

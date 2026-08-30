@@ -3,6 +3,7 @@ import { useLibraryStore } from '@/library/store'
 import { LIKE_ADDED_MESSAGE, LIKE_REMOVED_MESSAGE } from '@/library/types'
 import { isYouTubeVideoItem } from '@/music/types'
 import type { MediaItem } from '@/music/types'
+import { clearCollection } from './collection-session'
 import { activeEngine } from './playback-coordinator'
 import {
   SEEK_STEP_SECONDS,
@@ -201,6 +202,17 @@ export function unifiedDismiss(): void {
  * engine plays this" is answered in one place.
  */
 export async function unifiedPlay(item: MediaItem, context?: QueueContext): Promise<void> {
+  /**
+   * A play with no list behind it ends whatever collection was running.
+   *
+   * Recently Played and the single-saved-item path both come through here
+   * without a context, and both mean *just this one*. Leaving the session in
+   * place would let a collection the visitor stepped out of quietly resume when
+   * this item finished. A play that carries a context is handled one layer down,
+   * where the ids can be compared.
+   */
+  if (!context) clearCollection()
+
   if (isYouTubeVideoItem(item)) {
     await playYouTubeVideo(item, { userInitiated: true })
     return

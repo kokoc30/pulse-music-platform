@@ -48,6 +48,21 @@ export interface PlayerState {
 export interface PlayerActions {
   setStatus: (status: PlayerStatus) => void
   setQueue: (queue: Track[], index: number, context: QueueContext | null) => void
+  /**
+   * Replaces the queue with a list that is *already* in its running order.
+   *
+   * The one thing that separates it from `setQueue` is that it clears
+   * `shuffleOrder`, and that is the whole point: a collection session owns its
+   * own permutation and materializes the queue in it (collection-session.ts).
+   * Leaving a queue-level running order in place on top of that would shuffle an
+   * already-shuffled list — twice per top-up, since every append changes the
+   * queue length and would redraw the permutation.
+   *
+   * `effectiveOrder` treats a `shuffleOrder` whose length does not match the
+   * queue as absent, so an empty one plays the queue straight through while the
+   * visitor's own Shuffle toggle stays exactly as they left it.
+   */
+  setOrderedQueue: (queue: Track[], index: number, context: QueueContext | null) => void
   setCurrentIndex: (index: number) => void
   setCurrentTrack: (track: Track | null) => void
   setCurrentTime: (currentTime: number) => void
@@ -226,6 +241,15 @@ export const usePlayerStore = create<PlayerState & PlayerActions>((set, get) => 
         currentTrack: queue[index] ?? null,
         shuffleOrder,
       }
+    }),
+
+  setOrderedQueue: (queue, index, context) =>
+    set({
+      queue,
+      currentIndex: index,
+      queueContext: context,
+      currentTrack: queue[index] ?? null,
+      shuffleOrder: [],
     }),
 
   setCurrentIndex: (index) =>

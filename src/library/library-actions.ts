@@ -1,11 +1,16 @@
 import { showNotice } from '@/app/ui-store'
-import { multiProviderSearch } from '@/music/aggregator'
-import { getMusicProvider } from '@/music/provider'
 import { MusicError } from '@/music/types'
-import type { MediaItem, Track } from '@/music/types'
+import type { MediaItem } from '@/music/types'
 import { usePersonalizationStore } from '@/personalization/store'
-import { usePlayerStore } from '@/player/player-store'
 import { unifiedPlay } from '@/player/unified-actions'
+import { playCollection } from './collection-playback'
+import { resolveLibraryTrack } from './resolve'
+
+/**
+ * Re-exported so `resolveLibraryTrack` keeps its one public address while the
+ * implementation lives beside the other resolution helpers in `resolve.ts`.
+ */
+export { resolveLibraryTrack }
 import { trackRefFromMediaItem, youTubeItemFromRef } from './track-ref'
 import { useLibraryStore } from './store'
 import { LIKE_ADDED_MESSAGE, LIKE_REMOVED_MESSAGE } from './types'
@@ -25,91 +30,6 @@ export const LIBRARY_ROUTES = {
   liked: '/library/liked',
   playlist: (id: string) => `/playlist/${encodeURIComponent(id)}`,
 } as const
-
-/**
- * How many saved items one Play may resolve.
- *
- * A saved reference deliberately carries no playable URL, so starting a playlist
- * means asking the providers for its tracks again. That is bounded here and it
- * happens only on an explicit Play — rendering the library costs zero requests
- * (agents/44 → "Opening Library … no background API storm"). A longer playlist
- * plays its first hundred; the rest stay visible and are reachable by starting
- * from a later row.
- */
-export const MAX_PLAYLIST_QUEUE = 100
-
-/** Simultaneous provider lookups. Enough to feel instant, small enough to be polite. */
-export const RESOLVE_CONCURRENCY = 4
-
-/**
- * Consecutive unavailable items Play will step over before giving up.
- *
- * A withdrawn track must not end the session, and it must not become a retry
- * loop either (agents/45 → "skip it during Play All after one bounded attempt").
- */
-export const MAX_UNAVAILABLE_SKIPS = 5
-
-/* --------------------------------------------------------------------------
-   Resolution
-   -------------------------------------------------------------------------- */
-
-/**
- * Re-resolves one saved reference to a playable `Track`.
- *
- * The same strategy Recently Played uses, and for the same reason: Audius stream
- * URLs are signed, node-specific and expiring, and Jamendo's are `streamUrl`s
- * that may not be persisted at all. So a saved item is re-asked for at play
- * time. Audius has a lookup by id; Jamendo's proxy exposes only search, so the
- * item is found by one bounded search and matched on its *provider id* — never
- * on title similarity, which would risk playing a different recording than the
- * one that was saved.
- */
-export async function resolveLibraryTrack(ref: LibraryTrackRef): Promise<Track | null> {
-  if (ref.provider === 'audius') {
-    return getMusicProvider().getTrack(ref.providerItemId)
-  }
-  if (ref.provider === 'jamendo') {
-    const result = await multiProviderSearch(`${ref.title} ${ref.artist}`)
-    return (
-      result.tracks.find(
-        (track) => track.provider === 'jamendo' && track.providerId === ref.providerItemId,
-      ) ?? null
-    )
-  }
-  // A YouTube reference is never a `Track`. It plays in YouTube's own embedded
-  // player or not at all, which is what keeps it off the audio element.
-  return null
-}
-
-async function resolveQuietly(ref: LibraryTrackRef): Promise<Track | null> {
-  try {
-    const track = await resolveLibraryTrack(ref)
-    return track?.isStreamable ? track : null
-  } catch {
-    // One item that has left the catalogue must not fail the whole playlist.
-    return null
-  }
-}
-
-/** Resolves many references, preserving order, with bounded concurrency. */
-async function resolveMany(refs: readonly LibraryTrackRef[]): Promise<(Track | null)[]> {
-  const results: (Track | null)[] = refs.map(() => null)
-  let cursor = 0
-
-  const worker = async () => {
-    for (;;) {
-      const index = cursor
-      cursor += 1
-      if (index >= refs.length) return
-      results[index] = await resolveQuietly(refs[index])
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: Math.min(RESOLVE_CONCURRENCY, refs.length) }, () => worker()),
-  )
-  return results
-}
 
 /* --------------------------------------------------------------------------
    Playback
@@ -162,72 +82,31 @@ export async function playLibraryRef(
 /**
  * Plays a saved list from a chosen position.
  *
- * Two phases, because a visitor should hear something before the whole list has
- * been re-resolved:
+ * The whole of it now lives in `collection-playback.ts`, over the session in
+ * `player/collection-session.ts`, and the difference that matters is what the
+ * list *is*:
  *
- * 1. Walk forward from the chosen row until something actually plays, skipping a
- *    bounded number of unavailable items, and start it immediately.
- * 2. Resolve the remainder and hand the player the full continuation.
+ * · It used to become the audio queue, which meant it had to be something the
+ *   audio engine could hold. Every YouTube item was filtered out of the middle
+ *   of the list, and starting on one threw the rest of the list away.
+ * · It is now a session of saved *references* that outranks generated autoplay
+ *   in its own right, materializing into the audio queue only as far as the
+ *   audio engine can reach, and routing each item to whichever engine owns it.
  *
- * The list becomes the *explicit* queue, which is what makes it outrank Phase 6
- * autoplay: `playNext` consults the queue before it ever asks the autoplay
- * planner, so a generated track cannot appear until the saved list is exhausted
- * (agents/45 → "Autoplay transition").
+ * Two more corrections travel with that. The list no longer rotates — Repeat off
+ * started at C runs C, D, E and stops, instead of quietly wrapping round to A —
+ * and the whole list is no longer resolved up front, only a bounded look-ahead
+ * that is topped back up as playback advances.
  *
- * A visitor who navigates or presses Next during phase 2 keeps control: the
- * continuation is applied only while the track started in phase 1 is still the
- * one loaded.
+ * `refs` is the collection **as the visitor can see it**: the page applies its
+ * sort and its filter first, and that order is what plays.
  */
 export async function playPlaylist(
   refs: readonly LibraryTrackRef[],
   startIndex: number,
   context: LibraryPlayContext,
 ): Promise<void> {
-  const playable = refs.slice(0, MAX_PLAYLIST_QUEUE)
-  if (playable.length === 0) return
-
-  const from = Math.min(Math.max(startIndex, 0), playable.length - 1)
-  const ordered = [...playable.slice(from), ...playable.slice(0, from)]
-
-  // A YouTube item cannot join an audio queue, so starting a saved list *on* one
-  // plays just that item in its own player and leaves the queue alone.
-  const head = ordered[0]
-  if (head.provider === 'youtube') {
-    await playLibraryRef(head, context)
-    return
-  }
-
-  const audioRefs = ordered.filter((ref) => ref.provider !== 'youtube')
-  if (audioRefs.length === 0) {
-    showNotice('Nothing in this list can play through the audio player.')
-    return
-  }
-
-  let first: Track | null = null
-  let firstAt = 0
-  for (; firstAt < Math.min(audioRefs.length, MAX_UNAVAILABLE_SKIPS); firstAt += 1) {
-    first = await resolveQuietly(audioRefs[firstAt])
-    if (first) break
-  }
-
-  if (!first) {
-    showNotice("These tracks aren't available to stream right now.")
-    return
-  }
-
-  await unifiedPlay(first, context)
-
-  const remaining = audioRefs.slice(firstAt + 1)
-  if (remaining.length === 0) return
-
-  const resolved = await resolveMany(remaining)
-  const queue = [first, ...resolved.filter((track): track is Track => track !== null)]
-
-  // Still the same track the visitor started? If they have moved on, their
-  // choice wins and the continuation is dropped rather than forced.
-  const player = usePlayerStore.getState()
-  if (player.currentTrack?.id !== first.id) return
-  player.setQueue(queue, 0, context)
+  await playCollection(refs, startIndex, context)
 }
 
 /* --------------------------------------------------------------------------
@@ -274,9 +153,7 @@ export function addRefToPlaylist(playlistId: string, ref: LibraryTrackRef): Libr
   const store = useLibraryStore.getState()
   const playlist = store.state.playlists[playlistId]
   const result = store.addToPlaylist(playlistId, ref)
-  showNotice(
-    libraryMessage(result, `Added to ${playlist?.name ?? 'playlist'}`),
-  )
+  showNotice(libraryMessage(result, `Added to ${playlist?.name ?? 'playlist'}`))
   return result
 }
 

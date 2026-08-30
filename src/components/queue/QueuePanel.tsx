@@ -1,13 +1,20 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Repeat, Repeat1, Shuffle, X } from 'lucide-react'
 import { useUiStore } from '@/app/ui-store'
+import { LibraryTrackRow } from '@/components/library/LibraryTrackRow'
 import { TrackList } from '@/components/track/TrackList'
+import {
+  playCollectionPosition,
+  remainingCollectionItems,
+  useCollectionStore,
+} from '@/player/collection-session'
 import { playQueueIndex } from '@/player/player-actions'
 import {
   useCurrentTrack,
   useIsPlaying,
   useQueue,
   useQueueContextLabel,
+  useQueueIndex,
   useRepeatMode,
   useShuffle,
 } from '@/player/player-selectors'
@@ -18,11 +25,21 @@ import { REPEAT_LABELS } from '@/player/queue-order'
  * Production addition: the reference has no queue UI, but the contract requires
  * working queue behaviour with a visible surface. Built from the player's own
  * surface tokens (docs/reference-deviations.md D-09).
+ *
+ * **One surface, two halves of the same list.** The queue holds the catalogue
+ * tracks that have been resolved — the current one plus the collection's
+ * look-ahead — and below it come the saved items the collection will reach
+ * next: the ones beyond the resolved window, and the YouTube items that can
+ * never enter an audio queue at all. Both halves are the *same* running order,
+ * in order, and generated autoplay appears in neither: it is consulted only once
+ * both have run out, so nothing invented can be shown ahead of something saved.
  */
 export function QueuePanel() {
   const open = useUiStore((s) => s.queueOpen)
   const setQueueOpen = useUiStore((s) => s.setQueueOpen)
   const queue = useQueue()
+  const queueIndex = useQueueIndex()
+  const collection = useCollectionStore()
   const currentTrack = useCurrentTrack()
   const isPlaying = useIsPlaying()
   const contextLabel = useQueueContextLabel()
@@ -31,6 +48,24 @@ export function QueuePanel() {
   const setShuffle = usePlayerStore((state) => state.setShuffle)
   const cycleRepeatMode = usePlayerStore((state) => state.cycleRepeatMode)
   const closeRef = useRef<HTMLButtonElement>(null)
+
+  /**
+   * The saved items the queue does not already stand for.
+   *
+   * A track that has been resolved appears once, as a queue row; everything else
+   * still ahead in the collection appears here. Positions rather than keys do
+   * the matching, so the same song saved twice in a playlist cannot make its
+   * second appearance vanish.
+   */
+  const laterInCollection = useMemo(() => {
+    if (!collection.context) return []
+    const shown = new Set<number>()
+    for (const track of queue.slice(queueIndex + 1)) {
+      const position = collection.queuePositions[track.id]
+      if (position !== undefined) shown.add(position)
+    }
+    return remainingCollectionItems(collection).filter((item) => !shown.has(item.position))
+  }, [collection, queue, queueIndex])
 
   useEffect(() => {
     if (!open) return
@@ -59,7 +94,12 @@ export function QueuePanel() {
             <h2>Queue</h2>
             <p>{contextLabel ? `From ${contextLabel}` : 'Up next'}</p>
           </div>
-          <button ref={closeRef} type="button" onClick={() => setQueueOpen(false)} aria-label="Close queue">
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={() => setQueueOpen(false)}
+            aria-label="Close queue"
+          >
             <X size={18} aria-hidden="true" />
           </button>
         </div>
@@ -107,9 +147,29 @@ export function QueuePanel() {
               isPlaying={isPlaying}
               onPlay={(_track, index) => void playQueueIndex(index)}
             />
-          ) : (
+          ) : null}
+
+          {laterInCollection.length ? (
+            <section className="queue-later" data-testid="queue-collection-rest">
+              <h3>Later from {collection.context?.label}</h3>
+              <div className="song-list">
+                {laterInCollection.map((item, index) => (
+                  <LibraryTrackRow
+                    key={`${item.position}:${item.ref.key}`}
+                    trackRef={item.ref}
+                    index={index}
+                    isCurrent={false}
+                    isPlaying={false}
+                    onPlay={() => void playCollectionPosition(item.position)}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {!queue.length && !laterInCollection.length ? (
             <p className="queue-empty">Nothing queued yet. Play a track to build a queue.</p>
-          )}
+          ) : null}
         </div>
       </aside>
     </>
