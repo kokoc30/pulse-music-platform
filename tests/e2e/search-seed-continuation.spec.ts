@@ -334,7 +334,10 @@ test.describe('YouTube still stops in the background — by design', () => {
       .toBe(false)
     expect(calls).toEqual([])
 
-    // …and it explains itself once the visitor comes back.
+    // …and picks it back up once the visitor comes back, rather than explaining
+    // itself. The explanation was the best that could be offered while returning
+    // to a stopped video was the end of the story; it is not any more, and it is
+    // kept for the case where the resume genuinely cannot happen.
     await page.evaluate(() => {
       Object.defineProperty(document, 'visibilityState', {
         configurable: true,
@@ -342,8 +345,19 @@ test.describe('YouTube still stops in the background — by design', () => {
       })
       document.dispatchEvent(new Event('visibilitychange'))
     })
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __pulseYouTube?: { playing: boolean } }).__pulseYouTube
+              ?.playing ?? null,
+        ),
+      )
+      .toBe(true)
     await expect(
       page.getByText(/YouTube playback pauses when Pulse is in the background/),
-    ).toBeVisible()
+    ).toHaveCount(0)
+    // Still no request: resuming is a press against a player already loaded.
+    expect(calls).toEqual([])
   })
 })

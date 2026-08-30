@@ -63,14 +63,34 @@ export function YouTubeStageHost({ item }: { item: YouTubeVideoItem }) {
   useEffect(() => bindYouTubeEngineEvents(), [])
 
   /**
-   * A hidden document pauses YouTube. This is the background-playback rule and
-   * it is not optional — it applies whatever caused the tab to go away.
+   * A hidden document pauses YouTube, and a visible one picks it up again.
+   *
+   * The pause is the background-playback rule and it is not optional — it
+   * applies whatever caused the tab to go away. The resume is the other half of
+   * the same rule rather than an exception to it: an app switch or a locked
+   * screen is not a decision to stop listening, and coming back to a silent
+   * video the visitor never paused is the behaviour that was reported. Only a
+   * pause this rule caused is ever undone; `handleDocumentVisibility` owns that
+   * distinction.
+   *
+   * Two events, because they answer different questions and neither covers the
+   * other. `visibilitychange` is what a phone sends when the app is backgrounded
+   * or the screen locks. `focus` is what a desktop sends when the window comes
+   * forward from behind another one, which can happen with no visibility change
+   * at all — and is harmless when nothing was paused, since the handler then
+   * finds no background pause to undo.
    */
   useEffect(() => {
     if (typeof document === 'undefined') return
     const onVisibilityChange = () => handleDocumentVisibility(document.visibilityState === 'hidden')
+    const onFocus = () => handleDocumentVisibility(false)
+
     document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [])
 
   /**

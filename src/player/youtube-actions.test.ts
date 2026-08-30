@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { normalizeYouTubeVideo } from '@/music/youtube'
 import { youtubePayload } from '@/test/fixtures/youtube'
-import { activeEngine, resetPlaybackCoordinator } from './playback-coordinator'
+import { activateAudio, activeEngine, resetPlaybackCoordinator } from './playback-coordinator'
 import { createFakeYouTubeFactory } from './youtube/fake-adapter'
 import type { FakeYouTubeFactory } from './youtube/fake-adapter'
 import {
@@ -10,7 +10,9 @@ import {
   closeYouTubeSurface,
   cueYouTubeVideo,
   handleDocumentVisibility,
+  isPausedByBackgroundRule,
   mayAutoplay,
+  resetBackgroundPause,
   playYouTubeVideo,
   toggleYouTubePlayback,
 } from './youtube-actions'
@@ -33,6 +35,7 @@ beforeEach(() => {
   unbind = bindYouTubeEngineEvents()
   useYouTubeStore.setState(initialYouTubeState)
   resetPlaybackCoordinator()
+  resetBackgroundPause()
 })
 
 afterEach(() => {
@@ -120,12 +123,88 @@ describe('background playback is prevented', () => {
     expect(useYouTubeStore.getState().status).toBe('paused')
   })
 
-  it('does nothing when the document becomes visible again — no auto-resume', async () => {
+  /**
+   * The reverse of what this asserted before, and the reason is which half of
+   * the rule each half of the event answers.
+   *
+   * The pause stands: nothing plays while the app is away. What it used to do on
+   * the way back was nothing at all, which meant returning to the app to find
+   * the audio still going and the video silently stopped — an asymmetry that
+   * reads as a bug because, from the visitor's side, it is one. They never
+   * pressed pause. Undoing a pause this rule caused, in a visible document with
+   * the player on screen, is not background playback; it is the end of one.
+   */
+  it('resumes when the document becomes visible again', async () => {
     await playYouTubeVideo(video(), { userInitiated: true })
     handleDocumentVisibility(true)
-    handleDocumentVisibility(false)
-    // Resuming on its own would be scripted playback with no visibility proof.
     expect(factory.current()?.playing).toBe(false)
+
+    handleDocumentVisibility(false)
+
+    expect(factory.current()?.playing).toBe(true)
+  })
+
+  it('does not resume a video the visitor paused themselves', async () => {
+    await playYouTubeVideo(video(), { userInitiated: true })
+
+    // Their own press, not the background rule.
+    toggleYouTubePlayback()
+    expect(factory.current()?.playing).toBe(false)
+
+    handleDocumentVisibility(true)
+    handleDocumentVisibility(false)
+
+    expect(factory.current()?.playing).toBe(false)
+  })
+
+  it('does not resume a video that was already paused when the app went away', async () => {
+    await playYouTubeVideo(video(), { userInitiated: true })
+    toggleYouTubePlayback()
+    expect(isPausedByBackgroundRule()).toBe(false)
+
+    handleDocumentVisibility(true)
+    // Nothing was playing, so the rule paused nothing and has nothing to undo.
+    expect(isPausedByBackgroundRule()).toBe(false)
+
+    handleDocumentVisibility(false)
+    expect(factory.current()?.playing).toBe(false)
+  })
+
+  it('does not resume once an audio track has taken the engine', async () => {
+    await playYouTubeVideo(video(), { userInitiated: true })
+    handleDocumentVisibility(true)
+
+    // A track claimed playback while the app was away — a lock-screen press, or
+    // the visitor starting one before this handler ran.
+    activateAudio()
+    handleDocumentVisibility(false)
+
+    expect(factory.current()?.playing).toBe(false)
+  })
+
+  it('does not resume a video that has been dismissed', async () => {
+    await playYouTubeVideo(video(), { userInitiated: true })
+    handleDocumentVisibility(true)
+    closeYouTubeSurface()
+
+    handleDocumentVisibility(false)
+
+    expect(factory.current()?.playing).toBe(false)
+  })
+
+  /**
+   * The explanation exists for a video that stayed stopped. Leaving it set
+   * through a resume would flash it on screen every time the app is reopened, to
+   * explain something in the middle of being undone.
+   */
+  it('clears the background explanation when it picks the video back up', async () => {
+    await playYouTubeVideo(video(), { userInitiated: true })
+
+    handleDocumentVisibility(true)
+    expect(useYouTubeStore.getState().pausedForBackgroundPolicy).toBe(true)
+
+    handleDocumentVisibility(false)
+    expect(useYouTubeStore.getState().pausedForBackgroundPolicy).toBe(false)
   })
 
   it('is a no-op when nothing is playing', () => {

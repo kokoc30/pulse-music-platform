@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import {
   clickBesideSheet,
   collapseSheet,
@@ -247,17 +248,63 @@ test.describe('the visible player', () => {
     expect(state.destroyed).toBeGreaterThan(0)
   })
 
+  /** Exactly what a phone sends when the app is backgrounded or the screen locks. */
+  const setDocumentHidden = (page: Page, hidden: boolean) =>
+    page.evaluate((value) => {
+      Object.defineProperty(document, 'visibilityState', {
+        value: value ? 'hidden' : 'visible',
+        configurable: true,
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    }, hidden)
+
   test('pauses when the document becomes hidden', async ({ page }) => {
     await page.locator(rows).first().click()
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
     await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(true)
 
-    await page.evaluate(() => {
-      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
-      document.dispatchEvent(new Event('visibilitychange'))
-    })
+    await setDocumentHidden(page, true)
 
     await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(false)
+  })
+
+  /**
+   * The other half of the same rule.
+   *
+   * Coming back to the app and finding the audio still going and the video
+   * silently stopped is the behaviour that was reported, and it reads as a bug
+   * because the visitor never pressed pause. The pause itself is untouched —
+   * nothing plays while the app is away.
+   */
+  test('picks the video back up when the app returns', async ({ page }) => {
+    await page.locator(rows).first().click()
+    await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(true)
+
+    await setDocumentHidden(page, true)
+    await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(false)
+
+    await setDocumentHidden(page, false)
+
+    await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(true)
+    // And without the background explanation flashing up to explain something
+    // that is in the middle of being undone.
+    await expect(page.locator('.player-policy')).toHaveCount(0)
+  })
+
+  test('leaves a video the visitor paused exactly as they left it', async ({ page }) => {
+    await page.locator(rows).first().click()
+    await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(true)
+
+    await page.getByRole('button', { name: 'Pause' }).click()
+    await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(false)
+    const pressed = (await page.evaluate(readYouTubeGlobals)).playCalls
+
+    await setDocumentHidden(page, true)
+    await setDocumentHidden(page, false)
+
+    // Not resumed, and not even asked to play: their pause is their decision.
+    expect((await page.evaluate(readYouTubeGlobals)).playing).toBe(false)
+    expect((await page.evaluate(readYouTubeGlobals)).playCalls).toBe(pressed)
   })
 
   /**
@@ -287,6 +334,35 @@ test.describe('the visible player', () => {
     await expect
       .poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.lastVideoId))
       .toBe('aaaaaaaaaaa')
+  })
+})
+
+test.describe('audio is unaffected by any of that', () => {
+  /**
+   * The regression guard for the rule above.
+   *
+   * The background pause and the resume that undoes it are YouTube's alone. An
+   * `HTMLAudioElement` has no such restriction — the browser keeps it playing
+   * while the app is away — and nothing in this application pauses it on the way
+   * out or presses play on the way back.
+   */
+  test('a track keeps playing across a background and a return', async ({ page }) => {
+    await stubProviders(page)
+    await page.goto('/search?q=night')
+    await page.locator('.song-row').first().click()
+    await expect.poll(() => page.evaluate(audioState).then((s) => s.paused)).toBe(false)
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect((await page.evaluate(audioState)).paused).toBe(false)
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect((await page.evaluate(audioState)).paused).toBe(false)
   })
 })
 

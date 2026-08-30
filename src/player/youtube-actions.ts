@@ -2,7 +2,7 @@ import { useUiStore } from '@/app/ui-store'
 import { canEmbedYouTubeItem, embedBlockReason } from '@/music/youtube/normalize'
 import { isYouTubeVideoItem } from '@/music/types'
 import type { YouTubeVideoItem } from '@/music/types'
-import { activateYouTube, releasePlayback } from './playback-coordinator'
+import { activateYouTube, activeEngine, releasePlayback } from './playback-coordinator'
 import {
   NO_MORE_TRACKS_MESSAGE,
   RELATED_RETRY_DELAY_MS,
@@ -122,8 +122,10 @@ export async function playYouTubeVideo(
   const hidden = documentIsHidden(options.documentHidden)
   const autoplay = mayAutoplay({ ...options, documentHidden: hidden })
 
-  // The surface is opened *first*, so the player is on screen before anything
-  // is asked to play. `agents/24` → "Audio -> YouTube" step 2.
+  // Giving the read model an item is what mounts the stage in the bar, and that
+  // is where the player is revealed — before anything is asked to play, which is
+  // the ordering agents/24 → "Audio -> YouTube" step 2 specifies. Nothing here
+  // opens the sheet.
   store.getState().openWith(item, autoplay ? 'loading' : 'cued')
   activateYouTube()
   notePlayed(item.id)
@@ -254,6 +256,8 @@ export function toggleYouTubePlayback(store: Store = useYouTubeStore): void {
   if (state.status === 'playing') {
     engine.pause()
     state.setStatus('paused')
+    // A pause the visitor asked for is not one to undo on the way back.
+    noteExplicitPause()
     return
   }
   activateYouTube()
@@ -272,6 +276,8 @@ export function toggleYouTubePlayback(store: Store = useYouTubeStore): void {
 export function closeYouTubeSurface(store: Store = useYouTubeStore): void {
   const engine = getYouTubeEngine()
   engine.stop()
+  // A dismissed video has nothing to come back to.
+  noteExplicitPause()
   releasePlayback('youtube')
   store.getState().close()
   // The expanded view *is* the player's surface, so dismissing the video closes
@@ -281,22 +287,95 @@ export function closeYouTubeSurface(store: Store = useYouTubeStore): void {
 }
 
 /**
- * `document.visibilitychange` handler. A hidden document pauses YouTube — this
- * is the background-playback rule, and it is not optional.
+ * Whether the *background rule* is what stopped the video.
  *
- * The developer policies prohibit an API client from allowing the player to
- * continue when the client's window is closed or minimised, so this is the
- * behaviour rather than a limitation to be worked around. What Phase 8 adds is
- * only an *explanation*: a flag the surface can read to tell the visitor why the
- * video stopped, and that Audius and Jamendo do not have this restriction.
+ * Not "was it playing" — "did this application stop it because the app went
+ * away". That distinction is the whole of the auto-resume rule below: a video
+ * the visitor paused themselves must stay paused when they come back, and a
+ * video the policy paused for them should not need a second press to undo
+ * something they never asked for.
+ *
+ * Module-level and deliberately not in the store: it is not state any surface
+ * renders, and it must not be persisted. A reload has no video to resume.
+ */
+let pausedByBackgroundRule = false
+
+/**
+ * Set wherever the visitor's own intent stops playback, so the rule above can
+ * tell the two kinds of pause apart.
+ */
+function noteExplicitPause(): void {
+  pausedByBackgroundRule = false
+}
+
+/** True while a background-paused video is waiting to be resumed. Tests. */
+export function isPausedByBackgroundRule(): boolean {
+  return pausedByBackgroundRule
+}
+
+/** Test seam. */
+export function resetBackgroundPause(): void {
+  pausedByBackgroundRule = false
+}
+
+/**
+ * `visibilitychange` and `focus` handler: pause on the way out, resume on the
+ * way back.
+ *
+ * **The pause is not optional and has not changed.** The developer policies
+ * prohibit an API client from allowing the player to continue when its window is
+ * closed or minimised, so a hidden document stops the video. That is the
+ * behaviour, not a limitation to be worked around, and nothing here weakens it.
+ *
+ * **The resume is the fix.** What the reports described is coming back to the
+ * app and finding the audio still going and the video silently stopped — an
+ * asymmetry that reads as a bug, because from the visitor's side it is one: they
+ * never pressed pause. Restarting a video whose player is on screen, in a
+ * document that is visible, is not background playback; it is the end of a
+ * background pause. The prohibition is about what happens while the app is away,
+ * and this happens only once it is back.
+ *
+ * Three conditions, all of which say the same thing — *undo what the rule did,
+ * and nothing else*:
+ *
+ * · The background rule is what paused it. A video the visitor paused stays
+ *   paused, which is why every explicit pause clears the flag.
+ * · YouTube still holds the engine claim. If a track took over while the app was
+ *   away, the video is not what the visitor is listening to.
+ * · There is still an item loaded, and it is not already playing.
+ *
+ * The browser may still refuse the play. That is not worked around either: the
+ * engine reports it through `onAutoplayBlocked`, which asks for a press.
  */
 export function handleDocumentVisibility(hidden: boolean, store: Store = useYouTubeStore): void {
-  if (!hidden) return
   const state = store.getState()
-  if (state.status !== 'playing') return
-  getYouTubeEngine().pause()
-  state.setStatus('paused')
-  state.setPausedForBackgroundPolicy(true)
+
+  if (hidden) {
+    if (state.status !== 'playing') return
+    getYouTubeEngine().pause()
+    state.setStatus('paused')
+    state.setPausedForBackgroundPolicy(true)
+    pausedByBackgroundRule = true
+    return
+  }
+
+  if (!pausedByBackgroundRule) return
+  pausedByBackgroundRule = false
+  if (!state.item || state.status === 'playing') return
+  if (activeEngine() !== 'youtube') return
+
+  /**
+   * Cleared before the attempt rather than after it.
+   *
+   * The flag drives an explanation of why playback stopped, and the resume takes
+   * a few hundred milliseconds to be reflected in the player's own state — so
+   * leaving it set would flash that explanation on screen every single time the
+   * app is reopened, to explain something that is in the middle of being undone.
+   * If the browser refuses the play, `onAutoplayBlocked` asks for a press, which
+   * is the honest affordance for that case.
+   */
+  state.setPausedForBackgroundPolicy(false)
+  getYouTubeEngine().resume()
 }
 
 /* --------------------------------------------------------------------------
