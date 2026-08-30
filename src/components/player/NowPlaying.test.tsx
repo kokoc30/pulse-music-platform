@@ -75,9 +75,30 @@ describe('opening and collapsing', () => {
     await waitFor(() => expect(sheet()).toBeNull())
   })
 
-  it('leaves the mini-player in place underneath', async () => {
+  /**
+   * The reverse of what this asserted before, and the reversal is the fix.
+   *
+   * The mini-player used to stay on screen underneath the expanded view, which
+   * meant a second Play, a second Next and Previous, a second heart and a second
+   * progress rail sat behind the panel — visible under it on a phone, and
+   * reachable by Tab and by a screen reader at every width. Hiding it in CSS
+   * would have left every one of those controls in the accessibility tree, so it
+   * is not hidden: expanded and collapsed are alternatives, and only one of them
+   * is rendered.
+   */
+  it('replaces the mini-player rather than leaving it underneath', async () => {
     const { user } = await playFirstSearchResult()
-    await openSheet(user)
+    const dialog = await openSheet(user)
+
+    expect(screen.queryByRole('region', { name: 'Now playing' })).not.toBeInTheDocument()
+    expect(document.querySelector('.music-player')).toBeNull()
+    // One transport, and it is this one.
+    expect(screen.getAllByRole('button', { name: /^(Play|Pause)$/ })).toHaveLength(1)
+    expect(within(dialog).getByRole('button', { name: 'Pause' })).toBeInTheDocument()
+
+    // Coming down brings exactly one mini-player back.
+    await user.click(within(dialog).getByRole('button', { name: 'Collapse Now Playing' }))
+    await waitFor(() => expect(sheet()).toBeNull())
     expect(screen.getByRole('region', { name: 'Now playing' })).toBeInTheDocument()
   })
 })
@@ -382,9 +403,18 @@ describe('accessibility', () => {
     expect(dialog).toHaveAccessibleName('Now playing')
   })
 
+  /**
+   * Focus goes in on open and comes back out on close — to the control that
+   * opens the view, which is a *fresh element* now.
+   *
+   * The expanded view replaces the mini-player rather than covering it, so the
+   * chevron the visitor pressed is unmounted on the way up and rebuilt on the
+   * way down. "The same node regains focus" is therefore the wrong assertion;
+   * "the visitor ends up back on the control they pressed" is the right one, and
+   * is what a keyboard user actually experiences.
+   */
   it('moves focus into the sheet and back out again', async () => {
     const { user } = await playFirstSearchResult()
-    const trigger = screen.getByRole('button', { name: 'Open Now Playing' })
 
     const dialog = await openSheet(user)
     await waitFor(() =>
@@ -392,7 +422,10 @@ describe('accessibility', () => {
     )
 
     await user.keyboard('{Escape}')
-    await waitFor(() => expect(trigger).toHaveFocus())
+    await waitFor(() => expect(sheet()).toBeNull())
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Open Now Playing' })).toHaveFocus(),
+    )
   })
 
   it('names every transport control', async () => {
@@ -433,12 +466,21 @@ describe('it is the expanded view for the video player too', () => {
   })
 
   /**
-   * This used to assert the player was *in* the sheet, and the move out of it is
-   * the fix. The embed has to be mounted and at least 200 x 200 while it plays,
-   * so hosting it here meant this sheet had to be forced open before a video
-   * could play at all. It lives in the bar now; the sheet shows the detail.
+   * The video is the expanded view's primary media region, where a track's large
+   * cover goes.
+   *
+   * This assertion has been written three ways, and the third is the one that
+   * matches what a visitor should see. It first asserted the player was *in* the
+   * sheet, which was true and meant the sheet had to be forced open before a
+   * video could play at all. It then asserted the sheet did *not* contain it,
+   * because the player had moved to the bar — true again, and the reason the
+   * expanded view ended up stacked on top of a bar that still held the video.
+   *
+   * The stage is a stable child of the player shell now, so it is inside
+   * whichever presentation is up, without ever being reparented. Here that is
+   * the expanded one, in the slot the cover occupies for a track.
    */
-  it('hosts no player of its own — there is one, and it is in the bar', async () => {
+  it('gives the video the primary media region, where a cover would be', async () => {
     const { user } = await playFirstSearchResult()
     await openSheet(user)
     await playYouTubeVideo(
@@ -450,12 +492,12 @@ describe('it is the expanded view for the video player too', () => {
 
     const stages = screen.getAllByTestId('youtube-stage')
     expect(stages).toHaveLength(1)
-    expect(sheet()!.contains(stages[0])).toBe(false)
+    expect(sheet()!.contains(stages[0])).toBe(true)
     // It holds the API-created node and nothing else, so nothing of ours is
     // ever drawn over the player or over its native controls.
     expect(stages[0].children).toHaveLength(1)
     expect(stages[0].firstElementChild).toHaveClass('yt-stage-mount')
-    // And the sheet shows no still artwork standing in for it either.
+    // And no still artwork standing in for it beside the live one.
     expect(sheet()!.querySelector('.now-playing-art')).toBeNull()
   })
 
@@ -497,7 +539,9 @@ describe('it is the expanded view for the video player too', () => {
 
     // What every provider does get, it still gets.
     expect(within(dialog).getByRole('slider', { name: 'Seek' })).toBeInTheDocument()
-    expect(within(dialog).getByRole('button', { name: /Save .* to Liked Songs/i })).toBeInTheDocument()
+    expect(
+      within(dialog).getByRole('button', { name: /Save .* to Liked Songs/i }),
+    ).toBeInTheDocument()
   })
 
   /**

@@ -8,7 +8,11 @@ import { initialPlayerState, usePlayerStore } from './player-store'
 import { mapAudioStatus, mapYouTubeStatus } from './types'
 import type { UnifiedStatus } from './types'
 import { activateAudio, resetPlaybackCoordinator } from './playback-coordinator'
-import { BUFFERING_GRACE_MS, selectSnapshotState, usePlaybackSnapshot } from './use-playback-snapshot'
+import {
+  BUFFERING_GRACE_MS,
+  selectSnapshotState,
+  usePlaybackSnapshot,
+} from './use-playback-snapshot'
 import type { SnapshotInput } from './use-playback-snapshot'
 import type { YouTubeStatus } from './youtube-store'
 import { initialYouTubeState } from './youtube-store'
@@ -31,9 +35,7 @@ const VIDEO = normalizeYouTubeVideo(
   }),
 )
 
-const OTHER = normalizeYouTubeVideo(
-  youtubePayload({ videoId: 'aram0000002', title: 'Barov Ari' }),
-)
+const OTHER = normalizeYouTubeVideo(youtubePayload({ videoId: 'aram0000002', title: 'Barov Ari' }))
 
 function input(overrides: Partial<SnapshotInput> = {}): SnapshotInput {
   return {
@@ -121,11 +123,24 @@ describe('capabilities', () => {
       // Not ours to set — native controls own the embed's volume.
       volume: false,
       expand: true,
-      // The video's own equivalent of autoplay-similar.
-      continuous: true,
+      // The video's own equivalent of autoplay-similar — withheld here, because
+      // a standalone video has no result list to continue into.
+      continuous: false,
       // And the way back to the audio track preserved underneath.
       dismiss: true,
     })
+  })
+
+  it('offers continuous play only once there is a session to continue into', () => {
+    expect(selectSnapshotState(withVideo()).capabilities.continuous).toBe(false)
+    expect(
+      selectSnapshotState(withVideo({ sessionItems: [VIDEO], sessionIndex: 0 })).capabilities
+        .continuous,
+    ).toBe(false)
+    expect(
+      selectSnapshotState(withVideo({ sessionItems: [VIDEO, OTHER], sessionIndex: 0 })).capabilities
+        .continuous,
+    ).toBe(true)
   })
 
   it('offers nothing at all when nothing is loaded', () => {

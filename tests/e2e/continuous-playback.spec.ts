@@ -118,7 +118,7 @@ test.describe('an empty catalogue explains itself instead of looping', () => {
   })
 })
 
-test.describe('a video keeps going in the sheet it is already in', () => {
+test.describe('a video keeps going in the presentation it is already in', () => {
   test.beforeEach(async ({ page }) => {
     await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
   })
@@ -158,18 +158,21 @@ test.describe('a video keeps going in the sheet it is already in', () => {
     await expect(page.getByTestId('youtube-stage')).toBeVisible()
   }
 
-  test('a different video loads, in the same bar, with nothing opened', async ({ page }) => {
+  test('a different video loads, into the same player, changing nothing else', async ({ page }) => {
     await startFirstResult(page)
     await expect.poll(() => currentVideoId(page)).toBe('aaaaaaaaaaa')
 
     await endCurrent(page)
 
     await expect.poll(() => currentVideoId(page)).toBe('bbbbbbbbbbb')
-    // The player is where it was — in the bar — and the sheet was never opened,
-    // not for the first video and not for the one that followed it.
-    await expect(page.getByRole('dialog', { name: 'Now playing' })).toHaveCount(0)
-    await expect(page.locator('.music-player [data-testid="youtube-stage"]')).toBeVisible()
-    await expect(page.locator('.player-track b')).toHaveText('Night Drive Live')
+    // The player is where it was, in the presentation the visitor was already
+    // in — a press on a result opened the expanded one, and an ending changes
+    // the video without touching the surface in either direction.
+    const dialog = page.getByRole('dialog', { name: 'Now playing' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByTestId('youtube-stage')).toBeVisible()
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
+    await expect(dialog.getByRole('heading', { name: 'Night Drive Live' })).toBeVisible()
   })
 
   test('there is no replay control to press', async ({ page }) => {
@@ -214,7 +217,7 @@ test.describe('a video keeps going in the sheet it is already in', () => {
     await endCurrent(page)
 
     await expect.poll(() => currentVideoId(page)).toBe('eeeeeeeeeee')
-    await expect(page.locator('.music-player [data-testid="youtube-stage"]')).toBeVisible()
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
   })
 
   /**

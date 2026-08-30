@@ -1,0 +1,270 @@
+/**
+ * The player shell — one fixed surface, two geometries.
+ *
+ * `GlobalPlayer` renders a single element that is *either* the mini-player or
+ * the expanded Now Playing view, and, when a video is loaded, the one live
+ * official player as a stable child between them. This file is where the two
+ * geometries are expressed.
+ *
+ * ## What this replaced
+ *
+ * The bar and the sheet used to be independent fixed elements, and the YouTube
+ * stage lived inside the bar's artwork slot because it had to be mounted
+ * somewhere permanent. Expanding therefore drew the sheet *above* a bar that was
+ * still on screen with its own complete transport and a 200px video underneath
+ * it — two Play buttons, two Next buttons, two hearts and two progress rails, on
+ * a phone, over one video. That is the real-device screenshot this file exists
+ * to make impossible.
+ *
+ * ## The rule
+ *
+ * The stage never moves in the DOM. Reparenting an iframe reloads it, so the
+ * element stays exactly where `GlobalPlayer` put it and only its **box** changes:
+ * docked beside the mini-player when collapsed, the primary media region when
+ * expanded. Everything below is layout; nothing here is a second presentation.
+ */
+
+/* ==========================================================================
+   Collapsed — the mini-player, with the player docked above it
+
+   A column: the docked stage, then the bar. The bar goes back to its ordinary
+   compact height, and the live player is a small 16:9 card resting on it, which
+   is what keeps both promises at once — a mini-player that looks like a
+   mini-player, and an embedded player that is never smaller than the documented
+   200px floor while it is playing.
+   ========================================================================== */
+
+.player-shell[data-mode='collapsed'] {
+  position: fixed;
+  right: var(--frame-gutter);
+  bottom: var(--frame-gutter);
+  left: var(--frame-gutter);
+  z-index: var(--z-bottom-bar);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  /* The shell spans the width of the page but only its two children are real
+     surfaces; the empty column beside the docked card must not swallow clicks
+     meant for the page underneath. */
+  pointer-events: none;
+}
+
+.player-shell[data-mode='collapsed'] > * {
+  pointer-events: auto;
+}
+
+.player-shell[data-mode='collapsed'] .music-player {
+  width: 100%;
+}
+
+/* The docked player. 16:9 at the documented height floor, so a widescreen video
+   fills it rather than being letterboxed into a square. */
+.player-shell[data-mode='collapsed'] .yt-stage-frame {
+  flex: none;
+  width: min(var(--yt-stage-docked-width), 100%);
+  height: var(--yt-stage-min);
+  border-radius: var(--radius-bar);
+  overflow: hidden;
+  box-shadow: var(--shadow-bar);
+}
+
+/* ==========================================================================
+   Expanded — the full Now Playing view
+
+   The mini-player is not rendered while this is up, so this is the only
+   transport, the only heart and the only progress rail on the screen. The
+   surface is opaque and modal for both engines: nothing is left visible
+   underneath for a control to be duplicated in.
+   ========================================================================== */
+
+.now-playing-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.player-shell[data-mode='expanded'] {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: calc(var(--z-overlay) + 1);
+  width: min(560px, 100%);
+  /* `dvh`, not `vh`: a phone's address bar changes the viewport as it scrolls,
+     and a `100vh` panel is the reason a Play control ends up under the browser
+     chrome on exactly the devices this was reported from. */
+  max-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 10px 22px calc(24px + env(safe-area-inset-bottom, 0px));
+  border-radius: var(--radius-surface) var(--radius-surface) 0 0;
+  border: 1px solid var(--color-player-border);
+  border-bottom: 0;
+  background: var(--color-player-bg);
+  box-shadow: var(--shadow-bar);
+}
+
+.player-shell[data-mode='expanded'] > * {
+  flex: none;
+  width: 100%;
+}
+
+/* A video wants width where a square cover does not. The 16:9 stage is given
+   the room the IFrame API recommends for one (480 x 270 and up), centred, which
+   is what makes the desktop view a single coherent Now Playing screen rather
+   than a narrow sheet with a video squeezed into it. */
+.player-shell[data-mode='expanded'][data-stage='youtube'] {
+  width: min(820px, 100%);
+}
+
+/* ==========================================================================
+   The primary media region
+
+   Same slot for both engines and the same place on the screen: directly under
+   the grab handle, above the title. A track draws a large square cover into it
+   (`.now-playing-art`, in now-playing.css); a video *is* the live player.
+   ========================================================================== */
+
+.player-shell[data-mode='expanded'] .yt-stage-frame {
+  align-self: center;
+  width: 100%;
+  max-width: 760px;
+  aspect-ratio: 16 / 9;
+  /* The documented floor still applies here, and a very short landscape screen
+     is exactly where a percentage height would quietly breach it. */
+  min-height: var(--yt-stage-min);
+  border-radius: var(--radius-surface);
+  overflow: hidden;
+  box-shadow: var(--shadow-play);
+}
+
+/* ==========================================================================
+   Full-screen on a phone
+
+   The expanded view takes the whole viewport, insets and all, so nothing sits
+   under a notch, a browser chrome bar, a gesture area or a home indicator.
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .player-shell[data-mode='expanded'],
+  .player-shell[data-mode='expanded'][data-stage='youtube'] {
+    top: 0;
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    padding-left: 18px;
+    padding-right: 18px;
+    /* Centres the stack on a tall screen without stranding it on a short one:
+       the column scrolls rather than pushing the transport off the bottom. */
+    justify-content: center;
+    gap: 18px;
+  }
+}
+
+@media (max-width: 560px) {
+  /* The bar goes full-bleed below 560px, so the shell does too. */
+  .player-shell[data-mode='collapsed'] {
+    right: 0;
+    bottom: 0;
+    left: 0;
+    align-items: center;
+    gap: 0;
+  }
+
+  .player-shell[data-mode='collapsed'] .yt-stage-frame {
+    width: 100%;
+    border-radius: var(--radius-bar) var(--radius-bar) 0 0;
+  }
+}
+
+/* ==========================================================================
+   A short landscape screen
+
+   A phone on its side is roughly 390px tall, and the video alone has a 200px
+   floor. Stacked, the transport ends up below the fold — a Play button the
+   visitor has to scroll to find, which is exactly the state this whole pass
+   exists to remove.
+
+   So the column becomes two: the video keeps the left, and the title, the
+   scrubber and the transport take the right, where they are all on screen at
+   once. The handle spans the top of both. The stage's DOM position is unchanged
+   — this is the same element in a different grid area, which is the whole point
+   of it being a sibling rather than a child of either presentation.
+   ========================================================================== */
+
+@media (max-height: 520px) and (orientation: landscape) {
+  .player-shell[data-mode='expanded'] {
+    justify-content: flex-start;
+    gap: 10px;
+  }
+
+  .player-shell[data-mode='expanded'][data-stage='youtube'] {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(230px, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: start;
+    column-gap: 18px;
+    row-gap: 4px;
+    padding-top: 4px;
+  }
+
+  .player-shell[data-mode='expanded'][data-stage='youtube'] > .now-playing-head {
+    grid-column: 1 / -1;
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .player-shell[data-mode='expanded'][data-stage='youtube'] .yt-stage-frame {
+    align-self: start;
+    max-width: 100%;
+  }
+
+  /* The right-hand column scrolls on its own if a very short screen still runs
+     out of room, so the transport is never pushed off the surface entirely. */
+  .player-shell[data-mode='expanded'][data-stage='youtube'] > .now-playing-body {
+    min-height: 0;
+    overflow-y: auto;
+    justify-content: center;
+  }
+
+  .player-shell[data-mode='collapsed'] .yt-stage-frame {
+    width: min(var(--yt-stage-docked-width), 46vw);
+  }
+}
+
+/* ==========================================================================
+   Motion
+
+   transform and opacity only — nothing here animates layout, and nothing
+   animates the stage's box, so the video never resizes mid-frame.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: no-preference) {
+  .now-playing-scrim {
+    animation: now-playing-fade var(--dur-fast) var(--ease-out);
+  }
+
+  .player-shell[data-mode='expanded'] {
+    animation: now-playing-rise 260ms var(--ease-out);
+  }
+}
+
+@keyframes now-playing-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes now-playing-rise {
+  from {
+    transform: translate(-50%, 16px);
+    opacity: 0;
+  }
+}

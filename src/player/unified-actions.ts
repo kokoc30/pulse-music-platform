@@ -156,23 +156,28 @@ export function unifiedLikeToggle(): void {
 }
 
 /**
- * Opens or closes the expanded Now Playing view.
+ * Opens or collapses the expanded Now Playing view.
  *
- * **Collapsing no longer pauses anything, and that is the fix rather than a
- * relaxation.** It used to pause a playing video, because the embed was mounted
- * by this view and by nothing else — collapsing removed the player from the
- * page, and the developer policies prohibit content continuing in a player "not
- * displayed in the page, tab, or screen that the user is viewing". Pausing was
- * the only honest answer to a layout that put the player somewhere it could
- * vanish from.
+ * **A collapse, never a dismiss.** Coming down changes which presentation is on
+ * screen and nothing else: the same item stays loaded, at the same position,
+ * with the same collection session and the same engine still running. Stopping
+ * a video outright is `unifiedDismiss`, below, and the two have deliberately
+ * different controls — a chevron for this, a cross for that.
  *
- * The stage is in the bar now. The bar is always on screen while something is
- * loaded, and the sheet is laid out above it rather than over it, so a video is
- * displayed whether this view is open or shut and the prohibition is satisfied
- * by construction instead of by stopping the music.
+ * **Collapsing pauses nothing, and that is a fix rather than a relaxation.** It
+ * used to pause a playing video, because the embed was mounted by this view and
+ * by nothing else — collapsing removed the player from the page, and the
+ * developer policies prohibit content continuing in a player "not displayed in
+ * the page, tab, or screen that the user is viewing". Pausing was the only
+ * honest answer to a layout that put the player somewhere it could vanish from.
  *
- * One line for both engines, which is what it should always have been: this is
- * a change of view, over a running player either way.
+ * The stage is a stable child of the player shell now, and the shell is
+ * `position: fixed` and on screen in both presentations — docked beside the
+ * mini-player when collapsed, the primary media region when expanded. A video is
+ * displayed either way, so the prohibition is satisfied by construction instead
+ * of by stopping the music.
+ *
+ * One line for both engines, which is what it should always have been.
  */
 export function unifiedExpand(open: boolean): void {
   useUiStore.getState().setNowPlayingOpen(open)
@@ -181,11 +186,15 @@ export function unifiedExpand(open: boolean): void {
 /**
  * Dismisses the loaded item, handing the bar back to whatever was underneath.
  *
+ * The other half of the pair, and genuinely a different act from collapsing.
  * Only a video has one, and it *stops* rather than pauses: a paused player the
  * visitor has dismissed is still a player they cannot see, which is the
  * background-player definition the developer policies prohibit. Releasing the
  * claim brings back the audio track `activateYouTube` preserved — paused, and
  * showing Play, because resuming stays the visitor's decision.
+ *
+ * It lives on the mini-player rather than in the expanded view, where a cross
+ * beside a chevron would invite exactly the mistake the two words describe.
  */
 export function unifiedDismiss(): void {
   if (activeEngine() !== 'youtube') return

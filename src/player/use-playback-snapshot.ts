@@ -63,6 +63,13 @@ export interface PlaybackCapabilities {
    * answer to "should the next search result follow this one". The audio side
    * expresses the same idea as `autoplaySimilar`, which lives in Settings, so
    * there is no second switch for it here.
+   *
+   * It needs a list to continue *into*, so a standalone video — one opened from
+   * the library, from Recently Played, or routed here by a saved collection —
+   * cannot honestly offer it. That condition used to live inside the toggle
+   * itself, which rendered nothing while the row around it still drew its
+   * divider: a stray line across the expanded view with no control under it.
+   * Stating it here is the same rule in the one place capabilities are decided.
    */
   continuous: boolean
   /**
@@ -289,7 +296,7 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
         volume: false,
         queue: false,
         expand: true,
-        continuous: true,
+        continuous: youtube.sessionItems.length >= 2,
         dismiss: true,
       },
       isEmbeddedStage: true,

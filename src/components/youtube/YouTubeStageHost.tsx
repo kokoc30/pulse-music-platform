@@ -6,42 +6,48 @@ import { resetYouTubeVisibility, setYouTubeVisibleRatio } from '@/player/youtube
 import { useYouTubeStore } from '@/player/youtube-store'
 
 /**
- * The one place a YouTube player is ever mounted — in the bottom bar's slot.
+ * The one place a YouTube player is ever mounted — a stable child of the player
+ * shell.
  *
  * A **stage only**: it owns the embed's lifecycle and its visibility
  * measurement, and it renders no transport of its own. Play, pause, stepping,
- * seeking and the title all live in the shared bar and sheet, which is what
- * makes a video and a track look like the same player.
+ * seeking and the title all live in the shared mini-player and expanded view,
+ * which is what makes a video and a track look like the same player.
  *
- * It used to live in the expanded sheet, and that was the wrong home for one
- * decisive reason: the sheet is closed most of the time, so the sheet had to be
- * *forced open* for a video to play at all. Pressing a YouTube result took over
- * the screen where pressing an Audius result simply started the bar. The stage
- * moved into the bar's artwork slot, in place of the 56px cover, and the sheet
- * went back to being an optional detail view.
+ * ## Where it lives, and why it is nowhere else
  *
- * It is still an ordinary in-flow element with exactly one home. Nothing about
- * it is fixed-position, measured against another element, or moved between
- * parents — the sheet renders no second stage and is laid out above the bar
- * rather than over it, so the one player stays on screen either way. Reparenting
- * an iframe reloads it, and a video that restarted every time the sheet opened
- * would be a worse bug than the one this replaces.
+ * It has been in two wrong homes. In the expanded sheet, which is closed most of
+ * the time, so the sheet had to be *forced open* for a video to play at all. Then
+ * in the bottom bar's artwork slot, which made the bar 216px of black video card
+ * on a phone and left the expanded sheet stacked on top of a bar that still
+ * carried its own complete transport — two Play buttons over one video.
+ *
+ * It belongs to neither, so it is a sibling of both, mounted by `GlobalPlayer`
+ * and never moved: the collapsed and expanded presentations are alternatives
+ * rendered in the same slot beside it, and only the stage's *box* changes
+ * between them, in CSS. Reparenting an iframe reloads it, and a video that
+ * restarted every time the view changed would be a worse bug than either of the
+ * two this replaces.
  *
  * ## Policy obligations this component owns
  *
  * · **Minimum size.** A hard 200 x 200 floor in the style attribute as well as
  *   the stylesheet, so no future CSS edit can shrink it below the documented
- *   minimum.
+ *   minimum — in the docked geometry as well as the expanded one.
  * · **Never hidden.** There is no `display: none`, no zero opacity and no
  *   offscreen parking anywhere in its lifecycle. It is rendered for exactly as
- *   long as YouTube is the engine holding the claim, and the bar it sits in is
- *   `position: fixed` and always on screen. There is no state in which a video
- *   plays without this element displayed.
+ *   long as YouTube is the engine holding the claim, and the shell it sits in is
+ *   `position: fixed` and always on screen in both presentations. There is no
+ *   state in which a video plays without this element displayed.
  * · **No children but the player.** The mount node holds the API-created iframe
  *   and nothing else. Every control is a sibling beside or below it.
  * · **The visibility gate.** The `IntersectionObserver` that authorises scripted
- *   autoplay measures *this* element, so the number `advanceYouTubeSession`
- *   reads is a real measurement of the real player.
+ *   autoplay measures *this* element — the one that contains the live player —
+ *   so every number `mayAutoplay` sees is a real measurement of the real player,
+ *   in the geometry it actually has. When the shell moves the stage from docked
+ *   to expanded, the observer re-reports on its own, which is what makes the
+ *   reveal-then-measure hand-off in `playYouTubeVideo` work without anything
+ *   polling or guessing.
  * · **Background playback.** A hidden document pauses, always — and, since the
  *   player is on screen again the moment the app is, it resumes.
  *
@@ -99,10 +105,14 @@ export function YouTubeStageHost({ item }: { item: YouTubeVideoItem }) {
    * "An API Client must not initiate an automatic playback until the player is
    * visible and more than half of the player is visible" needs a number at the
    * moment a video ends, which is not a moment React renders. The ratio goes to
-   * a module outside React and `advanceYouTubeSession` reads it synchronously.
+   * a module outside React; `advanceYouTubeSession` reads it synchronously, and
+   * `playYouTubeVideo` *waits* for it when the player it is about to start has
+   * only just been revealed.
    *
    * `threshold` is fine-grained around the 0.5 boundary that actually matters,
-   * rather than a bare enter/exit.
+   * rather than a bare enter/exit. The observer is created once and follows the
+   * element for the stage's whole life, so a change of geometry — docked to
+   * expanded — is reported by the browser rather than re-derived by us.
    */
   useEffect(() => {
     const host = hostRef.current

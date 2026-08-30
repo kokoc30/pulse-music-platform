@@ -74,28 +74,35 @@ describe('the artwork slot', () => {
   })
 
   /**
-   * This used to assert a thumbnail and *no* iframe, and the reversal is the
-   * whole of the change.
+   * A video gets a still here, and the live player is somewhere else.
    *
-   * The embed must be mounted and at least 200 x 200 while it plays. Keeping it
-   * in the expanded sheet meant the sheet had to be forced open before a video
-   * could play at all — press a YouTube result and a full-screen panel took
-   * over, where an Audius result simply started the bar. The player moved into
-   * the slot the cover occupies, so the bar plays every provider and the sheet
-   * is opened only when it is asked for.
+   * This assertion has now been written three ways, which is worth saying out
+   * loud. First it was "a thumbnail and no iframe", because the embed lived in
+   * the expanded sheet — and that meant the sheet had to be forced open before a
+   * video could play at all. Then it was "the live player, in the slot a cover
+   * occupies", which fixed that and broke something worse: the slot's documented
+   * 200px floor made this bar roughly 216px of black video card on a phone, and
+   * expanding drew the full Now Playing panel on top of a bar that still had its
+   * own complete transport underneath it.
+   *
+   * The player belongs to neither surface. It is a stable sibling of both, owned
+   * by `GlobalPlayer` and moved between geometries by CSS, so this bar can be a
+   * mini-player again — the same 56px slot for every provider, holding YouTube's
+   * own unmodified 16:9 frame for a video.
    */
-  it('holds the live player for a video, in the slot a cover occupies', () => {
+  it('holds a still image for a video too, in the same slot', () => {
     const { container } = renderBar(videoSnapshot())
 
-    const stage = container.querySelector('.player-track > .player-stage')
-    expect(stage).not.toBeNull()
-    expect(stage?.querySelector('[data-testid="youtube-stage"]')).not.toBeNull()
+    const img = container.querySelector('.player-track img')
+    expect(img).not.toBeNull()
+    expect(img).toHaveAttribute('src', expect.stringContaining('ytimg.com'))
 
-    // And no still image standing in for it.
-    expect(container.querySelector('.player-track img')).toBeNull()
+    // And no live player wedged into a mini-player.
+    expect(container.querySelector('[data-testid="youtube-stage"]')).toBeNull()
+    expect(container.querySelector('iframe')).toBeNull()
   })
 
-  it('renders the identical DOM shape apart from that slot', () => {
+  it('renders the identical DOM shape for every provider', () => {
     const shapeOf = (snapshot: PlaybackSnapshot) => {
       const { container, unmount } = renderBar(snapshot)
       const shape = [...container.querySelectorAll<HTMLElement>('.player-track > *')].map(
@@ -108,18 +115,14 @@ describe('the artwork slot', () => {
     const video = shapeOf(videoSnapshot())
     const audio = shapeOf(audioSnapshot(jamendoTrackFixture()))
 
-    // Same children, in the same order, with the same classes — except at the
-    // one index that is the slot. A video's is a stage; a track's is an image.
-    expect(video).toHaveLength(audio.length)
-    const differences = video.filter((node, index) => node !== audio[index])
-    expect(differences).toEqual(['DIV.player-stage'])
-    expect(audio[video.indexOf('DIV.player-stage')]).toBe('IMG.')
+    // Same children, in the same order, with the same classes — no exceptions
+    // now, including the slot.
+    expect(video).toEqual(audio)
   })
 
   it('adds no engine-specific class or marker to the bar itself', () => {
     const { container } = renderBar(videoSnapshot())
     const section = container.querySelector<HTMLElement>('.music-player')!
-    // The height follows from the slot's content, never from a variant hook.
     expect(section.getAttribute('data-stage')).toBeNull()
     expect(section.className).toBe('music-player')
   })
@@ -192,10 +195,7 @@ describe('source attribution, per provider rules', () => {
     renderBar(audioSnapshot(jamendoTrackFixture()))
     const links = within(bar()).getAllByRole('link')
     expect(links).toHaveLength(1)
-    expect(links[0]).toHaveAttribute(
-      'href',
-      'https://www.jamendo.com/track/1880336/night-reverie',
-    )
+    expect(links[0]).toHaveAttribute('href', 'https://www.jamendo.com/track/1880336/night-reverie')
     // Jamendo has no referrer requirement, so the safest rel applies.
     expect(links[0]).toHaveAttribute('rel', 'noopener noreferrer')
   })

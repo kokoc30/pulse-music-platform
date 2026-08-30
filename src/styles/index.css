@@ -13,5 +13,6 @@
 @import './youtube.css';
 @import './personalization.css';
 @import './library.css';
+@import './player-shell.css';
 @import './now-playing.css';
 @import './search-suggestions.css';

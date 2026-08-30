@@ -100,13 +100,12 @@
   --player-height-sm: 76px;
   /* The IFrame API's documented minimum player dimension, as a token because
      three files depend on the same number: the stage box, its own restated
-     floor, and the bar slot that reserves room for it. */
+     floor, and the docked frame that reserves room for it. */
   --yt-stage-min: 200px;
-  /* The bar's real height, republished by `PlayerBar` whenever it changes — the
-     bar has two of them now, since a video's slot is a 200px player where a
-     track's is a 56px cover. The fallback is the audio bar, for the moment
-     before the first measurement lands. */
-  --player-bar-height: var(--player-height);
+  /* The docked player's width when collapsed. 16:9 over the documented 200px
+     height floor, so the frame is the smallest compliant box that still shows a
+     whole widescreen video rather than letterboxing it into a square. */
+  --yt-stage-docked-width: 356px;
   --app-bottom-space: 82px;
   --app-bottom-space-sm: 78px;
   --search-width: min(357px, 29vw);

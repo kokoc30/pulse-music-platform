@@ -311,30 +311,48 @@ describe('a video running out', () => {
     const players = factory.players.length
 
     endCurrentVideo()
-    await vi.waitFor(() => expect(videoId()).toBe('bbbbbbbbbbb'))
+    // Waited for on the *player* rather than on the store. The store learns the
+    // next item first — it has to, because the surface is revealed before the
+    // player is asked to do anything — so a store read here would pass while the
+    // player was still on the previous video, which is precisely the state this
+    // test exists to rule out.
+    await vi.waitFor(() => expect(factory.current()?.videoId).toBe('bbbbbbbbbbb'))
 
+    expect(videoId()).toBe('bbbbbbbbbbb')
     expect(factory.current()).toBe(player)
     expect(factory.players).toHaveLength(players)
-    expect(player?.videoId).toBe('bbbbbbbbbbb')
   })
 
   /**
-   * Continuing is a bar event, not a sheet event.
+   * Continuing changes the video, never the presentation.
    *
    * A video that ends loads the next one into the same player, in the same
-   * place, and the expanded view's state is not part of that — it was shut when
-   * playback started and it stays shut. This assertion used to read the other
-   * way round, because starting a video forced the sheet open; that is the very
-   * thing this change removes.
+   * place, and whichever view the visitor is in stays exactly as they left it.
+   * Pressing a result opens the expanded player — the official video is the
+   * content, and a direct press is a clear choice of it — so that is the state
+   * this starts in; the point is that the ending does not touch it, in either
+   * direction.
    */
   it('loads the next video without opening or closing anything', async () => {
-    expect(useUiStore.getState().nowPlayingOpen).toBe(false)
+    const openBefore = useUiStore.getState().nowPlayingOpen
+    expect(openBefore).toBe(true)
 
     endCurrentVideo()
     await vi.waitFor(() => expect(videoId()).toBe('bbbbbbbbbbb'))
 
-    expect(useUiStore.getState().nowPlayingOpen).toBe(false)
+    expect(useUiStore.getState().nowPlayingOpen).toBe(openBefore)
     expect(useYouTubeStore.getState().item?.videoId).toBe('bbbbbbbbbbb')
+  })
+
+  it('leaves a collapsed player collapsed when the video ends', async () => {
+    useUiStore.getState().setNowPlayingOpen(false)
+
+    endCurrentVideo()
+    await vi.waitFor(() => expect(videoId()).toBe('bbbbbbbbbbb'))
+
+    // A step inside a session is not a route into YouTube, so it reveals
+    // nothing: the visitor's own choice of presentation is left alone.
+    expect(useUiStore.getState().nowPlayingOpen).toBe(false)
   })
 
   it('keeps going across three videos without anyone pressing anything', async () => {

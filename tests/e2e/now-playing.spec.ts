@@ -90,10 +90,28 @@ test.describe('opening and collapsing', () => {
     await expect(page.getByRole('button', { name: 'Open Now Playing' })).toBeFocused()
   })
 
-  test('leaves the mini-player in place', async ({ page }) => {
+  /**
+   * The reverse of what this asserted before, and the reversal is the fix.
+   *
+   * The mini-player used to stay on screen underneath, so a phone showed two
+   * Play buttons, two Next buttons, two hearts and two progress rails stacked
+   * over one another. Expanded and collapsed are alternatives now: one is
+   * rendered, and coming down brings exactly one bar back.
+   */
+  test('replaces the mini-player rather than leaving it underneath', async ({ page }) => {
     await playFirstResult(page)
     await page.getByRole('button', { name: 'Open Now Playing' }).click()
-    await expect(page.getByRole('region', { name: 'Now playing' })).toBeVisible()
+    await expect(sheet(page)).toBeVisible()
+
+    await expect(page.getByRole('region', { name: 'Now playing' })).toHaveCount(0)
+    await expect(page.locator('.music-player')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Pause', exact: true })).toHaveCount(1)
+    await expect(page.getByRole('button', { name: 'Next track' })).toHaveCount(1)
+    await expect(page.locator('.progress')).toHaveCount(1)
+
+    await page.getByRole('button', { name: 'Collapse Now Playing' }).click()
+    await expect(sheet(page)).toHaveCount(0)
+    await expect(page.getByRole('region', { name: 'Now playing' })).toHaveCount(1)
   })
 })
 
@@ -258,8 +276,16 @@ test.describe('navigation and playback', () => {
 })
 
 test.describe('it is the video player’s own view', () => {
-  /** Starts a video, which now plays in the bar, then opens the detail view. */
-  async function playVideoAndExpand(page: Page) {
+  /**
+   * Starts a video, which opens the expanded player on its own.
+   *
+   * A direct press on a video is a clear choice of *that video*, and the
+   * official player is what the visitor chose — so it becomes the thing on
+   * screen rather than a 200px box docked under a page they have stopped
+   * reading. An audio result still starts the mini-player; that difference is
+   * about the content, not about the surface.
+   */
+  async function playVideoExpanded(page: Page) {
     await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
     await page.goto('/search?q=night')
     await page.getByTestId('youtube-fallback').click()
@@ -268,26 +294,24 @@ test.describe('it is the video player’s own view', () => {
       .filter({ hasText: 'Night Signal (Official Video)' })
       .click()
 
-    // Playing a video no longer opens anything: it starts the bar, exactly as
-    // an Audius result does. The sheet is a detail view, reached on request.
     await expect(page.getByTestId('youtube-stage')).toBeVisible()
-    await expect(sheet(page)).toHaveCount(0)
-
-    await page.getByRole('button', { name: 'Open Now Playing' }).click()
     await expect(sheet(page)).toBeVisible()
   }
 
-  test('leaves the player in the bar, and never draws over it', async ({ page }) => {
-    await playVideoAndExpand(page)
+  test('holds the one player in its primary media region, and never draws over it', async ({
+    page,
+  }) => {
+    await playVideoExpanded(page)
 
-    // One player, in the bar, and the sheet hosts none of its own — a second
-    // stage would mean either two iframes or one reparented mid-playback.
+    // One player, and it is inside the view rather than docked beneath it. This
+    // assertion used to read the other way round — the sheet hosted no stage,
+    // because the stage was in the bar — and that is exactly what left a second
+    // full transport on screen underneath this panel.
     await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
-    await expect(sheet(page).getByTestId('youtube-stage')).toHaveCount(0)
+    await expect(sheet(page).getByTestId('youtube-stage')).toHaveCount(1)
 
     // Above the documented minimum, in the rendered layout rather than in a
-    // stylesheet, and with nothing of ours painted in front of it — including
-    // the sheet, which is why the sheet stops short of the bar.
+    // stylesheet, and with nothing of ours painted in front of it.
     const rendered = await stageHitTest(page)
     expect(rendered.width).toBeGreaterThanOrEqual(200)
     expect(rendered.height).toBeGreaterThanOrEqual(200)
@@ -295,51 +319,54 @@ test.describe('it is the video player’s own view', () => {
   })
 
   /**
-   * The video sheet is the same sheet in the same place — the layout is shared
-   * down to the pixel. What still differs is that it does not *block*: no
-   * scrim, no swallowed clicks, and no scroll lock on the page behind it. That
-   * is the one intentional difference, and it is asserted here rather than
-   * assumed, at both widths.
+   * The expanded view is modal for a video too, and that is the change.
+   *
+   * It used to be a panel: no scrim, no swallowed clicks, no scroll lock — all
+   * so the bar underneath, which held the player, stayed reachable and the page
+   * behind stayed usable. The player is *in* this view now, and the mini-player
+   * is not rendered at all while it is up, so the ordinary modal semantics that
+   * a track already had apply to a video unchanged.
    */
-  test('is a panel, not a modal — nothing behind it is blocked', async ({ page }) => {
-    await playVideoAndExpand(page)
+  test('is modal for a video, exactly as it is for a track', async ({ page }) => {
+    await playVideoExpanded(page)
 
-    // Not announced as modal…
-    await expect(sheet(page)).not.toHaveAttribute('aria-modal', 'true')
-    // …the scrim paints nothing and takes no pointer events…
+    await expect(sheet(page)).toHaveAttribute('aria-modal', 'true')
+
     const scrim = await page.locator('.now-playing-scrim').evaluate((node) => {
       const style = getComputedStyle(node)
       return { events: style.pointerEvents, background: style.backgroundColor }
     })
-    expect(scrim.events).toBe('none')
-    expect(scrim.background).toBe('rgba(0, 0, 0, 0)')
-    // …and the page behind is not scroll-locked, unlike the audio sheet, which
-    // pins the body to hold the visitor's place.
+    expect(scrim.events).not.toBe('none')
+    expect(scrim.background).not.toBe('rgba(0, 0, 0, 0)')
+
     const body = await page.evaluate(() => {
       const style = getComputedStyle(document.body)
       return { position: style.position, overflow: style.overflow }
     })
-    expect(body.position).not.toBe('fixed')
-    expect(body.overflow).not.toBe('hidden')
+    expect(body.position).toBe('fixed')
+    expect(body.overflow).toBe('hidden')
   })
 
   /**
-   * With the sheet centred and 520px wide, a desktop keeps the header, the
-   * sidebar and the outer columns in the clear — so a visitor really can go on
-   * browsing while a video plays. A phone cannot: the sheet is the whole
-   * viewport there, for a video exactly as for a track.
+   * Coming down leaves one compact player and one video, still running.
+   *
+   * The route back to the page is the same for a video as for a track: collapse,
+   * then browse. What must survive that is the player itself — the same iframe,
+   * never rebuilt, because reparenting or remounting one reloads the video.
    */
-  test('leaves the page navigable while a video plays', async ({ page }, testInfo) => {
-    test.skip(
-      testInfo.project.name === 'chromium-mobile',
-      'the expanded sheet is the whole viewport at this width',
-    )
+  test('collapses to one compact player and leaves the page navigable', async ({ page }) => {
+    await playVideoExpanded(page)
 
-    await playVideoAndExpand(page)
+    await page.getByRole('button', { name: 'Collapse Now Playing' }).click()
+    await expect(sheet(page)).toHaveCount(0)
+
+    // One bar, one player, no leftovers.
+    await expect(page.locator('.music-player')).toHaveCount(1)
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
+    await expect(page.locator('.now-playing-body')).toHaveCount(0)
 
     await page.getByRole('link', { name: 'Pulse home' }).click()
     await expect(page.getByRole('heading', { name: 'Trending songs' })).toBeVisible()
-    // And navigating did not unmount the player.
     await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
   })
 })

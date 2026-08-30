@@ -899,34 +899,30 @@ export function menuFor(page: Page, title: string) {
 }
 
 /* ==========================================================================
-   Reaching past the expanded sheet
+   Reaching the player, in whichever presentation it is in
 
-   There is one expanded Now Playing view now and one layout for it: centred,
-   520px wide and flush to the bottom edge on a desktop; the whole viewport on a
-   phone. A video opens it automatically, because the embed is mounted there and
-   nowhere else, so for YouTube the sheet is on screen for as long as playback
-   lasts.
+   The player is one shell with two presentations, and exactly one of them is
+   rendered at a time: a compact mini-player docked at the bottom, or the
+   expanded Now Playing view — centred and flush to the bottom edge on a desktop,
+   the whole viewport on a phone. Pressing a video opens the expanded one, since
+   the official player is the content; pressing a track starts the mini-player.
 
-   That makes "reach the thing behind the sheet" a real question rather than an
-   incidental one, and it has two honest answers. These helpers are those two
-   answers, so no spec has to reinvent them.
+   So "which controls can a visitor reach right now" is a real question, and
+   these helpers are the answer, so no spec has to reinvent it.
    ========================================================================== */
 
 /** The expanded view — the same dialog for every provider. */
 export const nowPlayingSheet = (page: Page) => page.getByRole('dialog', { name: 'Now playing' })
 
 /**
- * Brings the sheet down, the way a visitor returns to browsing.
+ * Brings the expanded view down, the way a visitor returns to browsing.
  *
- * This is the only route to the page underneath on a phone, where the sheet is
- * the entire viewport. It is also the only route to the bar's own controls at
- * any width: the sheet is centred over the bar's control cluster, so Next,
- * Previous and the dismiss cross sit behind it while it is open.
- *
- * Collapsing **pauses a playing video** — that is `unifiedExpand`, and it is
- * deliberate: the player is unmounted on the way down, and there is no state in
- * which a video plays without it on screen. A test that needs the video still
- * running therefore cannot use this; it uses `clickBesideSheet` instead.
+ * A **collapse**, not a dismiss: the same item stays loaded, at the same
+ * position, still playing, and the mini-player is rendered in the expanded
+ * view's place. A video's player survives it untouched — it is a stable child of
+ * the shell, docked rather than destroyed — so a test that needs playback to
+ * continue can use this freely. Stopping a video is the separate cross on the
+ * mini-player.
  */
 export async function collapseSheet(page: Page): Promise<void> {
   const sheet = nowPlayingSheet(page)
@@ -938,13 +934,13 @@ export async function collapseSheet(page: Page): Promise<void> {
 /**
  * The transport a visitor can actually reach right now.
  *
- * The bar and the sheet carry the same controls, wired to the same unified
- * actions over the same store, so which one drives a test is only a question of
- * what is in front. Two things decide that, and neither is the provider:
+ * Both presentations carry the same controls, wired to the same unified actions
+ * over the same store, so which one drives a test is only a question of which is
+ * up. Two things decide that, and neither is the provider:
  *
- * · **Is the sheet open?** It is centred over the bar's control cluster, so
- *   while it is open the bar's copy is behind it. For a video that is the whole
- *   time it plays, because the embed is mounted in the sheet and nowhere else.
+ * · **Is the expanded view open?** Then the mini-player is not rendered at all,
+ *   and its controls are not merely behind it — they do not exist. For a video
+ *   opened by a press, that is the state playback starts in.
  * · **Is the bar showing more than Play?** The reference collapses it to the
  *   round play button below 560px, so a phone reaches Next and Previous by
  *   expanding.
@@ -1008,19 +1004,19 @@ export async function stageHitTest(
 }
 
 /**
- * Clicks a row in the list behind the sheet, without collapsing it.
+ * Gone with the layout that needed it: `clickBesideSheet`.
  *
- * The sheet is 520px and centred, so on a desktop the results column runs wider
- * than it does and every row keeps a leading edge in the clear. Clicking that
- * edge is an ordinary click on the row — a real hit test, not a dispatched
- * event — with the video still playing behind it.
+ * It clicked a row's leading edge, in the strip a 520px centred sheet left
+ * clear, so a test could reach the page while a video went on playing behind the
+ * expanded view. That was only possible because the expanded view for a video
+ * was a non-modal panel — no scrim, no scroll lock — and it was a panel because
+ * the player lived in the bar underneath it, where it had to stay reachable.
  *
- * A phone has no clear edge, so the callers that need this skip that project.
+ * The player is inside the expanded view now and the mini-player is not rendered
+ * beneath it, so the view is modal for both engines and `collapseSheet` is the
+ * honest route back to the page. It leaves the video playing, so every caller
+ * that needed the old helper's guarantee still has it.
  */
-export async function clickBesideSheet(locator: Locator): Promise<void> {
-  await locator.scrollIntoViewIfNeeded()
-  await locator.click({ position: { x: 12, y: 12 } })
-}
 
 /* ==========================================================================
    Reaching the transport, at whatever width the test is running

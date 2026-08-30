@@ -20,7 +20,7 @@ import { playTrack } from '@/player/player-actions'
 import { usePlayerStore } from '@/player/player-store'
 import { playYouTubeVideo } from '@/player/youtube-actions'
 import { useYouTubeStore } from '@/player/youtube-store'
-import { documentHidden, youTubeVisibleRatio } from '@/player/youtube-visibility'
+import { documentHidden } from '@/player/youtube-visibility'
 import { resolveMany, resolveQuietly } from './resolve'
 import { youTubeItemFromRef } from './track-ref'
 import type { LibraryTrackRef } from './types'
@@ -163,10 +163,23 @@ async function playCollectionItem(request: CollectionRouteRequest): Promise<bool
  * spending a `search.list` on a list the visitor already has.
  *
  * **The transition is not claimed as a gesture unless it is one.** An automatic
- * hand-off passes `userInitiated: false` with a real visibility measurement, so
- * `mayAutoplay` decides — and when it says no, the item is *cued* in the visible
- * player and waits for a press. It is never skipped, and it is never started
- * behind the visitor's back.
+ * hand-off passes `userInitiated: false` and *no* visibility ratio, which is the
+ * correction this pass makes. It used to pass `youTubeVisibleRatio()` — read
+ * here, at the instant the collection decided the video was next, and therefore
+ * before the player existed. Coming from a catalogue track there is no stage
+ * mounted at all at that moment, so the value was the visibility module's
+ * initial zero, `mayAutoplay` refused it, and every automatic hand-off into a
+ * saved video cued and waited for a press it should never have needed.
+ *
+ * Omitting it hands the decision to `playYouTubeVideo`, which reveals the player
+ * first and then waits for the real `IntersectionObserver` to report on the
+ * geometry that now exists. The policy is unchanged and no number is invented:
+ * when the measurement says the player is not visible enough, the item is still
+ * *cued* in the visible player and waits for a press. It is never skipped, and
+ * it is never started behind the visitor's back.
+ *
+ * The document check stays here because it is genuinely answerable now: a hidden
+ * document cannot become visible by revealing anything.
  */
 async function playYouTubeCollectionItem(request: CollectionRouteRequest): Promise<boolean> {
   // Re-checked at play time, not only at render time: the 30-day retention
@@ -179,8 +192,11 @@ async function playYouTubeCollectionItem(request: CollectionRouteRequest): Promi
 
   return playYouTubeVideo(item, {
     userInitiated: request.userInitiated,
-    visibleRatio: youTubeVisibleRatio(),
     documentHidden: documentHidden(),
+    // A saved list arriving at a video is a real playback route into YouTube,
+    // so the official player becomes the visible experience rather than a change
+    // of title under a page the visitor is still reading.
+    reason: request.userInitiated ? 'user-selection' : 'collection-transition',
   })
 }
 

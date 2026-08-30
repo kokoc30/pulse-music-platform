@@ -229,7 +229,8 @@ test.describe('YouTube continues through the results it already has', () => {
 
     await endCurrent(page)
 
-    await expect(page.locator('.music-player [data-testid="youtube-stage"]')).toBeVisible()
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
+    await expect(page.getByTestId('youtube-stage')).toBeVisible()
     expect(await currentVideoId(page)).toBe('bbbbbbbbbbb')
   })
 
@@ -237,9 +238,8 @@ test.describe('YouTube continues through the results it already has', () => {
     await startFirstResult(page)
 
     // The setting lives in the expanded view — it is the visitor's own
-    // preference, and that is where a preference belongs. The view has to be
-    // asked for now: starting a video plays it in the bar and opens nothing.
-    await page.getByRole('button', { name: 'Open Now Playing' }).click()
+    // preference, and that is where a preference belongs. A press on a result
+    // opens that view, so it is already the surface in front.
     await expect(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible()
     await page.getByLabel('Continuous play').uncheck()
 

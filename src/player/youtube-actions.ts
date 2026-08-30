@@ -20,7 +20,11 @@ import {
   notePlayed,
 } from './related-fetcher'
 import { getYouTubeEngine } from './youtube-engine'
-import { documentHidden as isDocumentHidden, youTubeVisibleRatio } from './youtube-visibility'
+import {
+  documentHidden as isDocumentHidden,
+  waitForYouTubeVisibility,
+  youTubeVisibleRatio,
+} from './youtube-visibility'
 import { useYouTubeStore } from './youtube-store'
 import type { YouTubePlaybackState, YouTubeStatus } from './youtube-store'
 
@@ -40,22 +44,45 @@ import type { YouTubePlaybackState, YouTubeStatus } from './youtube-store'
 type Store = typeof useYouTubeStore
 
 /**
- * Where the player is revealed, now that nothing has to reveal it.
+ * Why a video reaches the screen, and what that means for the presentation.
  *
- * There used to be a `revealYouTubePlayer()` here, and every function that
- * loaded a video called it first: the embed lived in the expanded sheet and
- * nowhere else, so "put the player on screen" and "open the sheet" were the same
- * act. That is what made a YouTube result behave unlike every other result —
- * press one and a full-screen sheet took over, where an Audius result simply
- * started playing in the bar.
+ * Not every route into YouTube deserves the same surface. A visitor pressing a
+ * video, and a saved list arriving at one on its own, both need the official
+ * player to become the thing on screen — the video *is* the content, and leaving
+ * it docked at the bottom of the page while the title changes underneath is the
+ * defect this exists to close. A step *within* an open player is different: the
+ * surface is already whatever the visitor last chose, and changing it under them
+ * would be the app overruling a decision they made a moment ago.
  *
- * The stage moved to the bar, so opening the bar *is* revealing the player.
- * `openWith` already does that by giving the read model an item, which is what
- * mounts the stage and flushes the engine's deferred request. The ordering
- * agents/24 specifies — render the visible surface, then wait for readiness,
- * then load — still holds; it is simply the bar that renders now, and the sheet
- * has gone back to being what its name says it is.
+ * `'restore'` is the fourth case and the reason this is an enum rather than a
+ * boolean: a remount or an internal store change must move nothing at all.
  */
+export type YouTubePresentationReason =
+  'user-selection' | 'collection-transition' | 'session-step' | 'restore'
+
+/**
+ * The one place the YouTube player's surface is prepared, for every caller.
+ *
+ * Two things happen, in this order, and the order is the fix rather than a
+ * detail: the engine claim is taken, and — for a route that warrants it — the
+ * expanded view is opened. Only after both is anything measured or played, which
+ * is the ordering agents/24 specifies (render the visible surface, *then* wait
+ * for readiness, *then* load).
+ *
+ * It is a single exported action instead of `setNowPlayingOpen(true)` scattered
+ * through the call sites for the reason agents/32 gives: presentation decisions
+ * that live in ten files become ten slightly different decisions. The library
+ * layer asks for a *reason*; what that reason does to the screen is decided
+ * here, once.
+ */
+export function prepareYouTubePlaybackSurface(
+  reason: YouTubePresentationReason = 'user-selection',
+): void {
+  activateYouTube()
+  if (reason === 'user-selection' || reason === 'collection-transition') {
+    useUiStore.getState().setNowPlayingOpen(true)
+  }
+}
 
 /**
  * How visible the player must be before *scripted* playback may begin.
@@ -71,12 +98,22 @@ export interface StartOptions {
   /** True only when called straight from a real user gesture. */
   userInitiated: boolean
   /**
-   * Latest `IntersectionObserver` ratio for the player surface. `undefined`
-   * means "not observed yet", which is treated as not-visible-enough.
+   * A ratio the caller has *already measured* for a player that already exists.
+   *
+   * Supplying it opts out of the reveal-then-measure sequence below, which is
+   * right for a transition inside a running player — `advanceYouTubeSession`
+   * reads the live observer synchronously at the instant a video ends, and there
+   * is nothing to wait for. Leaving it out is what a caller does when the player
+   * is about to be built: see `playYouTubeVideo`.
+   *
+   * `undefined` therefore no longer means "assume not visible". It means "you
+   * measure it", which is the distinction Bug A turned on.
    */
   visibleRatio?: number
   /** Defaults to the live document. */
   documentHidden?: boolean
+  /** How this playback was reached. Decides the surface, never the policy. */
+  reason?: YouTubePresentationReason
 }
 
 /**
@@ -100,7 +137,68 @@ function documentIsHidden(explicit?: boolean): boolean {
 }
 
 /**
- * Opens the surface for an item and, when allowed, plays it.
+ * Phase 2: whether the player that has just been revealed may start itself.
+ *
+ * Three routes, and only the third waits for anything.
+ *
+ * · **A gesture** needs no measurement. `mayAutoplay` has always said so, and
+ *   the visibility sentence is about *automatic* playback.
+ * · **A hidden document** is refused outright, before any wait. There is nothing
+ *   an observer could report that would make playing into a locked screen
+ *   acceptable, and waiting 700ms to reach the same answer would only delay the
+ *   cue.
+ * · **Anything else** waits, bounded, for the real observer on the stage that
+ *   phase 1 has just mounted. A caller that already holds a measurement passes
+ *   it and skips the wait.
+ *
+ * Nothing here manufactures a ratio. The number that reaches `mayAutoplay` is
+ * either one the caller measured or one an `IntersectionObserver` reported, and
+ * a wait that times out carries the last real observation — zero, when there
+ * never was one, which resolves to *cue and ask for a press*.
+ */
+async function resolveAutoplay(options: StartOptions): Promise<boolean> {
+  if (options.userInitiated) return true
+
+  const hidden = documentIsHidden(options.documentHidden)
+  if (hidden) return false
+
+  if (typeof options.visibleRatio === 'number') {
+    return mayAutoplay({ ...options, documentHidden: hidden })
+  }
+
+  const measurement = await waitForYouTubeVisibility({
+    minimumRatio: AUTOPLAY_VISIBILITY_RATIO,
+  })
+
+  // Re-read the document rather than trusting the value from before the wait:
+  // the visitor may have switched away while the surface was being revealed, and
+  // starting a video into that is exactly what the background rule forbids.
+  return mayAutoplay({
+    userInitiated: false,
+    visibleRatio: measurement.ratio,
+    documentHidden: documentIsHidden(options.documentHidden),
+  })
+}
+
+/**
+ * Reveals the player for an item and, once it is genuinely visible, plays it.
+ *
+ * **Three phases, and the order is the whole of the fix for Bug A.**
+ *
+ * 1. **Reveal.** The read model is given the item — which is what mounts the
+ *    stage — the engine claim is taken, and the expanded view is opened when the
+ *    route calls for one. Nothing has been asked to play yet.
+ * 2. **Measure.** For a scripted transition, the *real* `IntersectionObserver`
+ *    on the stage that has just appeared is waited for, bounded. This is the
+ *    step that did not exist: the previous implementation read
+ *    `youTubeVisibleRatio()` at the moment the collection decided the video was
+ *    next, which is *before* any of phase 1 has rendered. For an Audio → YouTube
+ *    hand-off there was no player at all at that instant, the ratio was the
+ *    module's initial zero, and `mayAutoplay` correctly refused it — so every
+ *    automatic hand-off into a saved video cued and waited for a press.
+ * 3. **Start or cue.** With a measurement in hand, `mayAutoplay` decides. Its
+ *    rules are untouched: a hidden document never plays, and an unmeasured or
+ *    insufficiently visible player is cued and waits for an explicit press.
  *
  * A blocked item — embedding disabled, made for kids, live broadcast — is never
  * handed to the engine. `false` comes back so the caller can fall back to the
@@ -128,16 +226,19 @@ export async function playYouTubeVideo(
     return false
   }
 
-  const hidden = documentIsHidden(options.documentHidden)
-  const autoplay = mayAutoplay({ ...options, documentHidden: hidden })
-
-  // Giving the read model an item is what mounts the stage in the bar, and that
-  // is where the player is revealed — before anything is asked to play, which is
-  // the ordering agents/24 → "Audio -> YouTube" step 2 specifies. Nothing here
-  // opens the sheet.
-  store.getState().openWith(item, autoplay ? 'loading' : 'cued')
-  activateYouTube()
+  // PHASE 1 — REVEAL. Giving the read model an item mounts the stage; preparing
+  // the surface takes the engine claim and, for a real playback route into
+  // YouTube, opens the expanded view the player belongs in.
+  store.getState().openWith(item, options.userInitiated ? 'loading' : 'cued')
+  prepareYouTubePlaybackSurface(options.reason)
   notePlayed(item.id)
+
+  // PHASE 2 — MEASURE. Only ever skipped for a gesture, which needs no
+  // measurement, or for a caller that has already taken one.
+  const autoplay = await resolveAutoplay(options)
+
+  // PHASE 3 — START OR CUE.
+  if (autoplay && store.getState().status === 'cued') store.getState().setStatus('loading')
 
   try {
     const engine = getYouTubeEngine()
@@ -162,13 +263,14 @@ export async function playYouTubeVideo(
 export async function cueYouTubeVideo(
   item: YouTubeVideoItem,
   store: Store = useYouTubeStore,
+  reason: YouTubePresentationReason = 'restore',
 ): Promise<boolean> {
   if (!canEmbedYouTubeItem(item)) {
     store.getState().setError(embedBlockReason(item) ?? 'This video cannot be played here.')
     return false
   }
   store.getState().openWith(item, 'cued')
-  activateYouTube()
+  prepareYouTubePlaybackSurface(reason)
   try {
     await getYouTubeEngine().cue(item)
     store.getState().setAwaitingUserPlay(true)
@@ -434,7 +536,15 @@ export async function playYouTubeResult(
 ): Promise<boolean> {
   const index = items.findIndex((candidate) => candidate.id === item.id)
   store.getState().startSession([...items], index, query)
-  return playSessionItem(index >= 0 ? index : -1, item, { userInitiated: true }, store)
+  // A press on a result is a direct choice of *this video*, so the official
+  // player becomes the thing on screen rather than a 200px box docked under the
+  // page the visitor is no longer reading.
+  return playSessionItem(
+    index >= 0 ? index : -1,
+    item,
+    { userInitiated: true, reason: 'user-selection' },
+    store,
+  )
 }
 
 /** Plays one item of the current session, keeping the session intact. */
@@ -452,12 +562,16 @@ async function playSessionItem(
     return false
   }
 
-  const hidden = documentIsHidden(options.documentHidden)
-  const autoplay = mayAutoplay({ ...options, documentHidden: hidden })
-
-  store.getState().openWith(item, autoplay ? 'loading' : 'cued')
+  // The same reveal → measure → start sequence `playYouTubeVideo` performs, and
+  // for the same reason: the ratio must describe the player as it is now, not as
+  // it was before this transition began. Inside a running session the wait is
+  // free — the stage is mounted and the observer has already reported.
+  store.getState().openWith(item, options.userInitiated ? 'loading' : 'cued')
   if (index >= 0) store.getState().setSessionIndex(index)
-  activateYouTube()
+  prepareYouTubePlaybackSurface(options.reason ?? 'session-step')
+
+  const autoplay = await resolveAutoplay(options)
+  if (autoplay && store.getState().status === 'cued') store.getState().setStatus('loading')
 
   try {
     const engine = getYouTubeEngine()
@@ -484,7 +598,7 @@ async function cueSessionItem(
 ): Promise<boolean> {
   store.getState().openWith(item, 'cued')
   store.getState().setSessionIndex(index)
-  activateYouTube()
+  prepareYouTubePlaybackSurface('session-step')
   try {
     await getYouTubeEngine().cue(item)
     store.getState().setAwaitingUserPlay(true)

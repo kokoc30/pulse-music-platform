@@ -1,10 +1,15 @@
 /**
- * Expanded Now Playing — the audio player's full view.
+ * Expanded Now Playing — the contents of the full view.
  *
  * Built from the tokens the reference already defines: the same surfaces, radii,
- * accent, spacing rhythm and control shapes as the bottom bar it grows out of.
+ * accent, spacing rhythm and control shapes as the mini-player it grows out of.
  * It is a larger view of the same player, so it should read as the same product
  * rather than as a second app pasted on top (agents/08_UI_FIDELITY_RULES.md).
+ *
+ * The *surface* — where the panel sits, how large it is, where the primary media
+ * region goes and what happens to the mini-player — is `player-shell.css`. This
+ * file styles what is inside it: the handle, the cover, the title cluster, the
+ * scrubber, the transport and the secondary row.
  */
 
 /* ==========================================================================
@@ -44,80 +49,26 @@
 }
 
 /* ==========================================================================
-   The sheet
+   The composition below the primary media region
 
-   A scrim plus a panel. The scrim is what makes this modal in fact and not only
-   in ARIA: the page beneath is inert, and body scrolling is locked from the
-   component so the visitor's place is preserved and restored.
+   A plain column. The panel that holds it, its width, its scrolling and its
+   place on the screen all belong to `.player-shell[data-mode='expanded']`; this
+   is only the stack of blocks inside.
+
+   There used to be a `.now-playing-scrim[data-engine='youtube']` block here that
+   made the scrim transparent, made it ignore pointer events, and inset the whole
+   panel by the bar's measured height — all so the 200px video mounted *in the
+   bar* stayed visible underneath the sheet. That is exactly the arrangement that
+   put two complete transports on one screen, and it is gone: the video is the
+   panel's own primary region now, and the mini-player is not rendered at all
+   while this is open.
    ========================================================================== */
 
-.now-playing-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-overlay);
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(3px);
-}
-
-/* ==========================================================================
-   The video panel
-
-   A YouTube item expands into the *same* sheet: same place, same width, same
-   radius, same rise. There is one expanded view in this application and one
-   layout for it. The artwork slot holds a live player instead of a still
-   cover, and that is the whole of the visible difference.
-
-   Two behavioural differences remain, and both are functional rather than
-   cosmetic.
-
-   **The panel does not dim or swallow the page.** A video keeps playing while
-   this view is open, and dimming the page for that whole time would mean a
-   visitor cannot search, browse or switch to a track without stopping the video
-   first. So for video the scrim paints nothing and takes no pointer events; only
-   the panel itself does, and the component skips the scroll lock to match.
-
-   **The panel stops short of the bar instead of covering it.** The player is
-   mounted in the bar's slot — that is what lets a video start there rather than
-   forcing this view open — so covering the bar would hide the very player the
-   developer policies require to stay displayed. The bar publishes its own
-   measured height, and the panel is inset by it. For audio nothing is inset:
-   there is no player down there to keep visible, only a cover the sheet is
-   already showing larger.
-   ========================================================================== */
-
-.now-playing-scrim[data-engine='youtube'] {
-  background: none;
-  backdrop-filter: none;
-  /* Clicks fall straight through the empty area to the page underneath. */
-  pointer-events: none;
-  /* The gap the bar occupies, kept clear so the player stays on screen. The
-     gutter matches the bar's own offset from the bottom of the viewport. */
-  padding-bottom: calc(var(--player-bar-height) + var(--frame-gutter));
-}
-
-.now-playing-scrim[data-engine='youtube'] .now-playing {
-  pointer-events: auto;
-  /* `100%` is the scrim, which is already short by the bar. Restated so the
-     panel scrolls inside the space it actually has rather than under the bar. */
-  max-height: 100%;
-}
-
-.now-playing {
+.now-playing-body {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  width: min(520px, 100%);
-  max-height: 100%;
-  overflow-y: auto;
-  padding: 10px 22px calc(24px + env(safe-area-inset-bottom, 0px));
-  border-radius: var(--radius-surface) var(--radius-surface) 0 0;
-  border: 1px solid var(--color-player-border);
-  border-bottom: 0;
-  background: var(--color-player-bg);
-  box-shadow: var(--shadow-bar);
+  min-width: 0;
 }
 
 /* ==========================================================================
@@ -408,21 +359,13 @@
 /* ==========================================================================
    Full-screen on a phone
 
-   The reference's mini-player is what stays behind; the sheet takes the whole
-   viewport, insets and all, so nothing sits under a notch or a gesture bar.
+   The panel itself goes full-viewport in `player-shell.css`; what changes here
+   is only the cover, which is sized against the screen rather than a fixed
+   maximum so the transport below it still fits.
    ========================================================================== */
 
 @media (max-width: 768px) {
-  .now-playing {
-    width: 100%;
-    height: 100%;
-    max-height: 100%;
-    border: 0;
-    border-radius: 0;
-    padding-left: 18px;
-    padding-right: 18px;
-    /* Centres the stack on a tall screen without stranding it on a short one. */
-    justify-content: center;
+  .now-playing-body {
     gap: 18px;
   }
 
@@ -431,11 +374,10 @@
   }
 }
 
-/* A short landscape screen: keep everything reachable by letting the sheet
-   scroll rather than compressing the controls out of usable size. */
-@media (max-height: 520px) {
-  .now-playing {
-    justify-content: flex-start;
+/* A short landscape screen: keep everything reachable by compressing the cover
+   and the title rather than the controls, which have a usable minimum size. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .now-playing-body {
     gap: 10px;
   }
 
@@ -445,34 +387,6 @@
 
   .now-playing-titles h2 {
     font-size: 16px;
-  }
-}
-
-/* ==========================================================================
-   Motion
-   ========================================================================== */
-
-@media (prefers-reduced-motion: no-preference) {
-  .now-playing-scrim {
-    animation: now-playing-fade var(--dur-fast) var(--ease-out);
-  }
-
-  .now-playing {
-    animation: now-playing-rise 260ms var(--ease-out);
-  }
-}
-
-@keyframes now-playing-fade {
-  from {
-    opacity: 0;
-  }
-}
-
-/* transform and opacity only — nothing here animates layout. */
-@keyframes now-playing-rise {
-  from {
-    transform: translateY(16px);
-    opacity: 0;
   }
 }
 
@@ -494,12 +408,6 @@
 
   .player-track {
     gap: 8px;
-  }
-
-  /* The bar goes full-bleed below 560px — `right/bottom/left: 0`, no gutter —
-     so the space kept clear for it loses the gutter too. */
-  .now-playing-scrim[data-engine='youtube'] {
-    padding-bottom: var(--player-bar-height);
   }
 }
 

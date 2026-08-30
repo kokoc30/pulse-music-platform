@@ -871,13 +871,21 @@ input:focus-visible,
    Fixed bottom bars
    ========================================================================== */
 
-.join-strip,
-.music-player {
+.join-strip {
   position: fixed;
   right: var(--frame-gutter);
   bottom: var(--frame-gutter);
   left: var(--frame-gutter);
   z-index: var(--z-bottom-bar);
+  min-height: var(--player-height);
+  border-radius: var(--radius-bar);
+  box-shadow: var(--shadow-bar);
+}
+
+/* The bar is no longer fixed on its own account: `.player-shell` owns the
+   position, because the docked YouTube player is its sibling and the two have to
+   stack as one unit. See `player-shell.css`. */
+.music-player {
   min-height: var(--player-height);
   border-radius: var(--radius-bar);
   box-shadow: var(--shadow-bar);
@@ -1630,10 +1638,12 @@ input:focus-visible,
   }
 
   .music-player {
-    right: 0;
-    bottom: 0;
-    left: 0;
-    grid-template-columns: 1fr auto;
+    /* Three columns, not two: the third is the aside, which holds the dismiss
+       cross for a video. With two it wrapped onto a row of its own and the
+       cross floated under the bar, unattached to anything — visible for the
+       first time now that the bar is a compact row again rather than 200px of
+       video card. */
+    grid-template-columns: 1fr auto auto;
     min-height: var(--player-height-sm);
     padding: 8px 14px;
     border-radius: 0;

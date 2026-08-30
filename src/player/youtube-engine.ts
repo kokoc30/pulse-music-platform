@@ -1,7 +1,11 @@
 import { isYouTubeVideoItem } from '@/music/types'
 import type { MediaItem, YouTubeVideoItem } from '@/music/types'
 import { officialYouTubePlayerFactory } from './youtube/iframe-adapter'
-import type { YouTubePlaybackState, YouTubePlayerFactory, YouTubePlayerHandle } from './youtube/iframe-adapter'
+import type {
+  YouTubePlaybackState,
+  YouTubePlayerFactory,
+  YouTubePlayerHandle,
+} from './youtube/iframe-adapter'
 
 /**
  * The single YouTube playback engine.
@@ -103,6 +107,12 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
   let player: YouTubePlayerHandle | null = null
   let creating: Promise<YouTubePlayerHandle> | null = null
   let current: YouTubeVideoItem | null = null
+  /**
+   * What the player has actually been given, as opposed to what has been asked
+   * for. The two differ for exactly as long as a request is queued, and that gap
+   * is where "resume this video" and "load this video" are told apart.
+   */
+  let loaded: YouTubeVideoItem | null = null
   let playing = false
   let progressTimer: number | null = null
   /**
@@ -114,7 +124,29 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
    * player readiness, *then* load). A click therefore lands here for the few
    * milliseconds React needs to mount the surface, and `attach()` flushes it.
    */
-  let pending: { item: YouTubeVideoItem; mode: 'cue' | 'play'; userInitiated: boolean } | null = null
+  let pending: { item: YouTubeVideoItem; mode: 'cue' | 'play'; userInitiated: boolean } | null =
+    null
+
+  /**
+   * One request to the player at a time, and the newest one wins.
+   *
+   * Cueing and playing are both several awaits long — build the player, wait for
+   * the script, then call the API — so two requests issued close together used
+   * to interleave, and whichever *finished* last decided what the player did.
+   * That is not a theoretical race: the stage cues the loaded item when it
+   * mounts (so a remount does not lose the video), and a hand-off into YouTube
+   * plays it a moment later once the visibility measurement lands. Interleaved,
+   * the cue's `cueVideoById` arrived after the play's `loadVideoById` and
+   * silently stopped a video that had just started — the player sitting on a
+   * thumbnail while the store said it was playing.
+   *
+   * So requests run one after another, and a request that a newer one has
+   * overtaken while it waited its turn is dropped rather than applied late. The
+   * newest request is always the one the visitor's most recent action asked for,
+   * and it is always the last thing to touch the player.
+   */
+  let queue: Promise<unknown> = Promise.resolve()
+  let latestRequest = 0
 
   const emit = (fn: (events: YouTubeEngineEvents) => void) => {
     for (const listener of listeners) fn(listener)
@@ -132,7 +164,9 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
     if (progressTimer !== null) return
     progressTimer = scheduler.setInterval(() => {
       if (!player) return
-      emit((events) => events.onTimeUpdate?.(player?.getCurrentTime() ?? 0, player?.getDuration() ?? 0))
+      emit((events) =>
+        events.onTimeUpdate?.(player?.getCurrentTime() ?? 0, player?.getDuration() ?? 0),
+      )
     }, PROGRESS_POLL_MS)
   }
 
@@ -187,8 +221,13 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
     mode: 'cue' | 'play',
     userInitiated: boolean,
   ): Promise<void> {
-    const sameVideo = current?.videoId === video.videoId && player !== null
+    // Against what the *player* holds, not what has been requested. `current`
+    // now answers "what did the last caller ask for", which is set the moment a
+    // request is queued; asking it here would call this a resume of a video the
+    // player has never been given, and the position would be somebody else's.
+    const sameVideo = loaded?.videoId === video.videoId && player !== null
     const instance = await ensurePlayer(video)
+    loaded = video
     current = video
 
     if (mode === 'cue' || !userInitiated) {
@@ -207,9 +246,36 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
     else instance.loadVideoById(video.videoId)
   }
 
-  function defer(video: YouTubeVideoItem, mode: 'cue' | 'play', userInitiated: boolean): void {
+  /**
+   * Queues one request, dropping it if a newer one arrives before its turn.
+   *
+   * `current` is set at once rather than when the request reaches the player, so
+   * "what is loaded" is answerable during the wait. The stage's remount-restore
+   * branch asks exactly that, and a null answer there is what made it cue over a
+   * play that was already on its way.
+   */
+  function enqueue(
+    video: YouTubeVideoItem,
+    mode: 'cue' | 'play',
+    userInitiated: boolean,
+  ): Promise<void> {
+    const token = (latestRequest += 1)
     current = video
-    pending = { item: video, mode, userInitiated }
+
+    const run = queue.then(async () => {
+      if (token !== latestRequest) return
+      if (!container) {
+        // The surface has not mounted yet. Held rather than dropped: `attach()`
+        // flushes it, which is the documented order — render the visible
+        // surface, then wait for player readiness, then load.
+        pending = { item: video, mode, userInitiated }
+        return
+      }
+      await perform(video, mode, userInitiated)
+    })
+
+    queue = run.catch(() => {})
+    return run
   }
 
   return {
@@ -218,11 +284,14 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       const request = pending
       pending = null
       if (!request) return
-      // A failure here has no caller left to reject: report it the way any
-      // other player failure is reported.
-      void perform(request.item, request.mode, request.userInitiated).catch((error: unknown) => {
+      // Through the same queue, so the flushed request takes its place in the
+      // same order as everything else. A failure here has no caller left to
+      // reject: report it the way any other player failure is reported.
+      void enqueue(request.item, request.mode, request.userInitiated).catch((error: unknown) => {
         const message =
-          error instanceof Error && error.message ? error.message : 'YouTube could not play this video.'
+          error instanceof Error && error.message
+            ? error.message
+            : 'YouTube could not play this video.'
         emit((events) => events.onError?.(message))
       })
     },
@@ -235,27 +304,21 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       creating = null
       container = null
       current = null
+      loaded = null
       pending = null
+      // Anything still queued was for a player that no longer exists.
+      latestRequest += 1
+      queue = Promise.resolve()
     },
 
     hasContainer: () => container !== null,
 
     async cue(item) {
-      const video = requireYouTubeItem(item)
-      if (!container) {
-        defer(video, 'cue', false)
-        return
-      }
-      await perform(video, 'cue', false)
+      await enqueue(requireYouTubeItem(item), 'cue', false)
     },
 
     async play(item, playOptions) {
-      const video = requireYouTubeItem(item)
-      if (!container) {
-        defer(video, 'play', playOptions.userInitiated)
-        return
-      }
-      await perform(video, 'play', playOptions.userInitiated)
+      await enqueue(requireYouTubeItem(item), 'play', playOptions.userInitiated)
     },
 
     resume() {

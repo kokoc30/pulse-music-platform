@@ -1,7 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import {
-  clickBesideSheet,
   collapseSheet,
   recordYouTubeTraffic,
   stageHitTest,
@@ -217,6 +216,10 @@ test.describe('the visible player', () => {
     await page.locator(rows).first().click()
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
 
+    // Dismissing is a mini-player control, deliberately not sitting beside the
+    // collapse chevron: a cross where a chevron belongs is how a visitor loses
+    // their place by pressing the obvious thing.
+    await collapseSheet(page)
     const close = page.getByRole('button', { name: /Close the YouTube player/ })
     const insideStage = await close.evaluate((node) =>
       Boolean(node.closest('[data-testid="youtube-stage"]')),
@@ -308,20 +311,23 @@ test.describe('the visible player', () => {
   })
 
   /**
-   * What survives a route change is now the **player itself**, not just the
-   * loaded item.
+   * What survives a route change is the **player itself**, not just the loaded
+   * item.
    *
    * This used to assert the opposite: the embed was mounted in the expanded
    * sheet and nowhere else, so collapsing destroyed it by design and a route
-   * change left only the store's idea of which video was loaded. The stage lives
-   * in the bar, and the bar is rendered once above the router, so navigating is
-   * a change of page around a player that never stops.
+   * change left only the store's idea of which video was loaded. The stage is a
+   * stable child of the player shell now, and the shell is rendered once above
+   * the router, so both collapsing and navigating are changes of view around a
+   * player that never stops.
    */
-  test('keeps the video playing across a route change', async ({ page }) => {
+  test('keeps the video playing across a collapse and a route change', async ({ page }) => {
     await page.locator(rows).first().click()
     await expect(page.locator(surface)).toBeVisible()
-    const title = await page.locator('.player-track b').innerText()
     const players = (await page.evaluate(readYouTubeGlobals)).created
+
+    await collapseSheet(page)
+    const title = await page.locator('.player-track b').innerText()
 
     await page.locator('.brand').click()
     await expect(page).toHaveURL(/\/$/)
@@ -385,16 +391,13 @@ test.describe('provider transitions', () => {
     await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(true)
   })
 
-  test('starting audio stops the video', async ({ page }, testInfo) => {
-    // Starting a track *while the video is still running* is what proves the
-    // handover. On a phone the sheet is the whole viewport, so the only route to
-    // the list is to collapse it — which pauses the video first and would leave
-    // the assertion proving nothing.
-    test.skip(
-      testInfo.project.name === 'chromium-mobile',
-      'the expanded sheet covers the list at this width',
-    )
-
+  /**
+   * Starting a track *while the video is still running* is what proves the
+   * handover, and collapsing is now the ordinary route back to the list at every
+   * width — it changes the view and leaves the player alone, so the video is
+   * genuinely still playing when the row is pressed.
+   */
+  test('starting audio stops the video', async ({ page }) => {
     await stubAllProviders(page)
     await page.goto('/search?q=night')
     await page.getByTestId('youtube-fallback-more').click()
@@ -403,9 +406,10 @@ test.describe('provider transitions', () => {
     await expect(page.locator(surface)).toBeVisible()
     await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(true)
 
-    // The sheet is centred and 520px wide, so a row's leading edge stays clear
-    // of it: a real click on the row, with the video still playing.
-    await clickBesideSheet(page.locator('.song-row').first())
+    await collapseSheet(page)
+    await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(true)
+
+    await page.locator('.song-row').first().click()
     await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(false)
     await expect.poll(() => page.evaluate(audioState).then((state) => state.paused)).toBe(false)
   })
@@ -421,23 +425,21 @@ test.describe('provider transitions', () => {
     expect(state.src).not.toMatch(/youtube|ytimg|googlevideo/)
   })
 
-  test('YouTube to YouTube reuses the single player', async ({ page }, testInfo) => {
-    // The claim is that the *same* player takes the second video, which needs
-    // the first still mounted when the second is picked. On a phone the sheet
-    // covers the list, so the only route to row two is to collapse — which
-    // destroys the player and makes the count meaningless.
-    test.skip(
-      testInfo.project.name === 'chromium-mobile',
-      'the expanded sheet covers the list at this width',
-    )
-
+  /**
+   * The claim is that the *same* player takes the second video, which needs the
+   * first still mounted when the second is picked. Collapsing keeps it mounted —
+   * it is a change of view over a running player — so the route to row two is
+   * the same at every width now, and the count stays meaningful.
+   */
+  test('YouTube to YouTube reuses the single player', async ({ page }) => {
     await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
     await page.goto('/search?q=nothing here')
     await page.getByTestId('youtube-fallback').click()
 
     await page.locator(rows).nth(0).click()
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
-    await clickBesideSheet(page.locator(rows).nth(1))
+    await collapseSheet(page)
+    await page.locator(rows).nth(1).click()
 
     await expect
       .poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.lastVideoId))
