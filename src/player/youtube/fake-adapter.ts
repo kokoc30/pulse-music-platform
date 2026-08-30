@@ -35,6 +35,15 @@ export interface FakeYouTubePlayer extends YouTubePlayerHandle {
 }
 
 export interface FakeYouTubeFactory extends YouTubePlayerFactory {
+  /**
+   * The `allow` attribute the doubled API puts on the iframe it builds.
+   *
+   * A real `YT.Player` sets one, and whether it includes `autoplay` decides
+   * whether a browser will let a scripted start succeed at all. Making it
+   * settable is what lets a test cover both the version that includes the token
+   * and a version that does not, rather than assuming either.
+   */
+  allowAttribute: string
   /** Every player this factory built — the single-instance assertion. */
   readonly players: FakeYouTubePlayer[]
   readonly created: number
@@ -45,12 +54,17 @@ export interface FakeYouTubeFactory extends YouTubePlayerFactory {
   reset(): void
 }
 
+/** What a current official IFrame API build puts on the iframe it creates. */
+export const DEFAULT_IFRAME_ALLOW =
+  'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
+
 export function createFakeYouTubeFactory(): FakeYouTubeFactory {
   const players: FakeYouTubePlayer[] = []
   let failNext: string | null = null
 
   const factory: FakeYouTubeFactory = {
     players,
+    allowAttribute: DEFAULT_IFRAME_ALLOW,
     get created() {
       return players.length
     },
@@ -196,6 +210,7 @@ export function createFakeYouTubeFactory(): FakeYouTubeFactory {
       // "the container holds exactly one iframe and nothing else" is testable.
       const iframe = container.ownerDocument.createElement('iframe')
       iframe.title = 'YouTube video player'
+      if (factory.allowAttribute) iframe.setAttribute('allow', factory.allowAttribute)
       container.replaceChildren(iframe)
 
       options.events.onReady?.()

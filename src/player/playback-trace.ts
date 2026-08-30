@@ -138,6 +138,25 @@ export function tracedSteps(): string[] {
   return events.map((event) => event.step)
 }
 
+/**
+ * Every value a repeated step recorded, oldest first.
+ *
+ * The two sequences a diagnosis is read from are histories rather than single
+ * values: the commands this application issued, and the states YouTube reported
+ * back. A successful start looks like `cue → loadVideoById` against
+ * `cued → buffering → playing`; the reported failure looks like the same
+ * commands against a sequence that stops at `cued`. Only the pair says which.
+ */
+export function tracedValues(step: string, key: string): string[] {
+  const values: string[] = []
+  for (const event of events) {
+    if (event.step !== step) continue
+    const value = event.detail?.[key]
+    if (typeof value === 'string') values.push(value)
+  }
+  return values
+}
+
 /** Test seam. */
 export function resetPlaybackTrace(): void {
   events = []

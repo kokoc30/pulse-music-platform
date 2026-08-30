@@ -14,6 +14,7 @@ import {
   resetYouTubeAdvanceGuard,
   resetYouTubeFailureStreak,
   resetYouTubeRelatedBudget,
+  START_CONFIRMATION_MS,
 } from './youtube-actions'
 import { createYouTubeIframeEngine, getYouTubeEngine, setYouTubeEngine } from './youtube-engine'
 import { initialYouTubeState, useYouTubeStore } from './youtube-store'
@@ -110,6 +111,23 @@ const handOff = () =>
 /** Schedules a real observation, the way a browser's observer would deliver it. */
 function observeAt(delayMs: number, ratio: number) {
   setTimeout(() => setYouTubeVisibleRatio(ratio), delayMs)
+}
+
+/**
+ * Makes a player accept every command and report nothing back.
+ *
+ * The doubled player normally fires the state event a real one would. Silencing
+ * it reproduces a browser that takes the command and quietly declines — which is
+ * the case no event announces, and the one a bounded confirmation exists for.
+ */
+function silenceStateEvents(player: ReturnType<FakeYouTubeFactory['current']>) {
+  if (!player) return
+  player.loadVideoById = () => {
+    commands.push('loadVideoById')
+  }
+  player.playVideo = () => {
+    commands.push('playVideo')
+  }
 }
 
 const status = () => useYouTubeStore.getState().status
@@ -372,5 +390,112 @@ describe('the transition trace', () => {
       directUserGesture: false,
       measured: true,
     })
+  })
+})
+
+/* ==========================================================================
+   The two quiet failures — a command that starts nothing, and a frame that was
+   never allowed to
+   ========================================================================== */
+
+describe('a play command that starts nothing', () => {
+  /**
+   * The state a real phone reported, and the one no event announces.
+   *
+   * Everything the application controls went right: the view opened, the player
+   * was measured visible, it was ready, and a documented play command went out.
+   * The player then stayed on its thumbnail behind YouTube's own red overlay —
+   * no `onAutoplayBlocked`, no error, no state change at all. A browser may
+   * decline a scripted start without saying so, and from the store that is
+   * indistinguishable from a start still in flight.
+   *
+   * Confirming the outcome is what makes the two distinguishable, and it is
+   * bounded: one attempt, then an honest cued state with one Play button.
+   */
+  async function silentlyRefusedHandOff() {
+    const handedOff = handOff()
+    observeAt(300, 0.95)
+    await vi.advanceTimersByTimeAsync(150)
+    // Every command is accepted and none of them starts anything, which is
+    // precisely what a silent refusal looks like from here.
+    silenceStateEvents(factory.current())
+    await vi.advanceTimersByTimeAsync(300 + START_CONFIRMATION_MS + 200)
+    await handedOff
+    return handedOff
+  }
+
+  it('gives up after one attempt and asks for a press', async () => {
+    const handedOff = handOff()
+    // Observed late, so the player already exists — built by the preparation
+    // cue — and can be silenced before the authorised play command is issued.
+    observeAt(300, 0.95)
+    await vi.advanceTimersByTimeAsync(150)
+    // From here it accepts every command and reports nothing back.
+    silenceStateEvents(factory.current())
+    await vi.advanceTimersByTimeAsync(300 + START_CONFIRMATION_MS + 200)
+    await handedOff
+
+    expect(awaiting()).toBe('player-command-no-start')
+    expect(useYouTubeStore.getState().awaitingUserPlay).toBe(true)
+    expect(status()).toBe('cued')
+  })
+
+  it('proves a play command was issued before giving up', async () => {
+    const handedOff = handOff()
+    observeAt(300, 0.95)
+    await vi.advanceTimersByTimeAsync(150)
+    silenceStateEvents(factory.current())
+    await vi.advanceTimersByTimeAsync(300 + START_CONFIRMATION_MS + 200)
+    await handedOff
+
+    expect(PLAY_COMMANDS).toContain(commands.at(-1))
+    expect(lastTraceDetail('engine:outcome')?.outcome).toBe('no-start')
+  })
+
+  it('does not re-issue the command afterwards', async () => {
+    const handedOff = handOff()
+    observeAt(300, 0.95)
+    await vi.advanceTimersByTimeAsync(150)
+    silenceStateEvents(factory.current())
+    await vi.advanceTimersByTimeAsync(300 + START_CONFIRMATION_MS + 200)
+    await handedOff
+    const issued = commands.length
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(commands).toHaveLength(issued)
+  })
+
+  it('keeps the collection on this item rather than skipping it', async () => {
+    await silentlyRefusedHandOff()
+    expect(useYouTubeStore.getState().item?.videoId).toBe('aram0000001')
+  })
+})
+
+describe('the generated iframe permission', () => {
+  it('is recorded from the real frame, whichever way it comes out', async () => {
+    const handedOff = handOff()
+    observeAt(50, 0.92)
+    await vi.advanceTimersByTimeAsync(400)
+    await handedOff
+
+    // A current API build sets `autoplay` itself, so this is the expected read —
+    // and the point is that it is a read rather than an assumption.
+    expect(lastTraceDetail('decide:measured')?.iframeAllowsAutoplay).toBe(true)
+  })
+
+  it('is delegated when the API build did not include it', async () => {
+    // A version of the script whose `allow` list omits the token.
+    factory.allowAttribute = 'encrypted-media; picture-in-picture'
+
+    const handedOff = handOff()
+    observeAt(50, 0.92)
+    await vi.advanceTimersByTimeAsync(400)
+    await handedOff
+
+    const frame = getYouTubeEngine().describeIframe()
+    expect(frame?.allowsAutoplay).toBe(true)
+    // And nothing the API put there was lost doing it.
+    expect(frame?.allow).toContain('encrypted-media')
+    expect(frame?.allow).toContain('picture-in-picture')
   })
 })

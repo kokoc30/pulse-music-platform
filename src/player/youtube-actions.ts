@@ -227,7 +227,15 @@ async function decideStart(options: StartOptions): Promise<StartDecision> {
     waitForYouTubeVisibility({ minimumRatio: AUTOPLAY_VISIBILITY_RATIO }),
     engine.whenReady(),
   ])
-  tracePlayback('decide:measured', { ...measurement, playerReady: ready })
+  const iframe = engine.describeIframe()
+  tracePlayback('decide:measured', {
+    ...measurement,
+    playerReady: ready,
+    // The configuration fact that decides whether a scripted start could ever
+    // succeed, read from the real generated frame rather than assumed.
+    iframeAllowsAutoplay: iframe?.allowsAutoplay ?? null,
+    iframeAllow: iframe?.allow ?? null,
+  })
 
   // Re-read the document rather than trusting the value from before the wait:
   // the visitor may have switched away while the surface was being revealed, and
@@ -311,6 +319,56 @@ export async function playYouTubeVideo(
 }
 
 /**
+ * How long an issued play command has to produce playback before it is treated
+ * as having been declined.
+ *
+ * Long enough for a buffer to begin on a slow mobile connection — a start
+ * announces itself with `buffering` well before any content arrives, so this is
+ * measuring the round trip to the player rather than the network. Short enough
+ * that a visitor is not left in front of a spinner over a video that is never
+ * going to start.
+ */
+export const START_CONFIRMATION_MS = 2_500
+
+export type StartOutcome = 'started' | 'blocked' | 'error' | 'no-start'
+
+/**
+ * Watches YouTube's own state events for the answer to "did it start".
+ *
+ * `buffering` counts, and counts as success: it is the player saying it has
+ * accepted the command and gone to fetch content. Waiting for `playing` alone
+ * would report a refusal every time a phone on a slow connection took longer
+ * than the bound to fill its buffer.
+ */
+async function confirmPlaybackStarted(
+  engine: ReturnType<typeof getYouTubeEngine>,
+  timeoutMs = START_CONFIRMATION_MS,
+): Promise<StartOutcome> {
+  if (engine.isPlaying()) return 'started'
+
+  return await new Promise<StartOutcome>((resolve) => {
+    let settled = false
+    const finish = (outcome: StartOutcome) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      unsubscribe()
+      resolve(outcome)
+    }
+
+    const unsubscribe = engine.subscribe({
+      onStateChange: (state) => {
+        if (state === 'playing' || state === 'buffering') finish('started')
+      },
+      onAutoplayBlocked: () => finish('blocked'),
+      onError: () => finish('error'),
+    })
+
+    const timer = setTimeout(() => finish('no-start'), timeoutMs)
+  })
+}
+
+/**
  * Reveal, decide, start — the three phases, in one place for both entry points.
  *
  * `playYouTubeVideo` and `playSessionItem` differ only in what they do to the
@@ -383,15 +441,50 @@ async function runStartSequence(
     await engine.start(item, { mode: decision.mode })
     tracePlayback('engine:started', { mode: decision.mode, isPlaying: engine.isPlaying() })
 
-    // Reflect what the engine actually did rather than what was asked for. The
-    // subscription in `bindYouTubeEngineEvents` will keep correcting this, but
-    // the store must not be left claiming `loading` if playback is already
-    // under way — the surface's own play/pause control reads it.
     if (decision.mode === 'cue') {
       store.getState().setAwaitingUserPlay(true, decision.withheld ?? 'visibility')
-    } else if (engine.isPlaying()) {
-      store.getState().setStatus('playing')
+      afterStart()
+      return true
     }
+
+    /**
+     * Did the command actually start anything?
+     *
+     * `engine.isPlaying()` is not the authority here and never was — it is this
+     * application's own mirror of the last state event, and at this instant the
+     * player may simply not have reported yet. The authority is YouTube's own
+     * state sequence, and a start that works produces one:
+     * `cued`/`unstarted` → `buffering` → `playing`.
+     *
+     * What a real phone reported is the sequence that does *not*: the right
+     * video loaded, a play command issued, no error, no `onAutoplayBlocked` —
+     * and the player still sitting on its thumbnail behind YouTube's own red
+     * overlay. A browser can decline a scripted start without saying so, and
+     * from the store that is indistinguishable from a start still in flight.
+     *
+     * So the outcome is confirmed rather than assumed, once, within a bound. One
+     * attempt: this never re-issues the command, because a refusal repeated is
+     * still a refusal and a loop of `playVideo()` is exactly the kind of
+     * pestering an autoplay policy exists to stop.
+     */
+    const outcome = await confirmPlaybackStarted(engine)
+    tracePlayback('engine:outcome', { outcome })
+
+    if (outcome === 'started') {
+      if (engine.isPlaying()) store.getState().setStatus('playing')
+      afterStart()
+      return true
+    }
+
+    if (outcome === 'no-start') {
+      // Nothing refused it out loud and nothing began. Recorded as its own
+      // reason so a diagnosis can tell a silent refusal from a loud one.
+      store.getState().setStatus('cued')
+      store.getState().setAwaitingUserPlay(true, 'player-command-no-start')
+    }
+    // `blocked` and `error` are already reported by the engine subscription,
+    // which owns those two events and the reasons that go with them.
+
     afterStart()
     return true
   } catch (error) {
@@ -1130,6 +1223,11 @@ export function resetYouTubeFailureStreak(): void {
 export function bindYouTubeEngineEvents(store: Store = useYouTubeStore): () => void {
   return getYouTubeEngine().subscribe({
     onStateChange: (state) => {
+      // The provider's own sequence, recorded as a history. A start that worked
+      // reads `cued → buffering → playing`; the reported failure reads the same
+      // commands against a sequence that stops at `cued`, and only the pair of
+      // histories together says which happened.
+      tracePlayback('engine:state', { state })
       const current = store.getState()
       switch (state) {
         case 'playing':

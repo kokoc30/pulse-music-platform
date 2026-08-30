@@ -1,6 +1,11 @@
 import { isYouTubeVideoItem } from '@/music/types'
 import type { MediaItem, YouTubeVideoItem } from '@/music/types'
-import { officialYouTubePlayerFactory } from './youtube/iframe-adapter'
+import {
+  YT_STATE,
+  allowsAutoplay,
+  ensureAutoplayPermission,
+  officialYouTubePlayerFactory,
+} from './youtube/iframe-adapter'
 import type {
   YouTubePlaybackState,
   YouTubePlayerFactory,
@@ -120,8 +125,25 @@ export interface YouTubeEngine {
   seek(seconds: number): void
   getCurrentItem(): YouTubeVideoItem | null
   isPlaying(): boolean
+  /**
+   * What the real, generated iframe looks like right now.
+   *
+   * Diagnostics only, and it exists because the one fact that decides whether a
+   * scripted start can succeed at all — whether the embed's frame was delegated
+   * the `autoplay` permission — is invisible from the application otherwise, and
+   * unreadable on a phone without desktop developer tools.
+   */
+  describeIframe(): YouTubeIframeDescription | null
   subscribe(events: YouTubeEngineEvents): () => void
   destroy(): void
+}
+
+/** A read of the generated iframe. No identifiers, no keys — geometry and policy. */
+export interface YouTubeIframeDescription {
+  allow: string
+  allowsAutoplay: boolean
+  width: number
+  height: number
 }
 
 /** How often app UI reads the player clock, and only while it is playing. */
@@ -274,6 +296,18 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       .then((created) => {
         player = created
         creating = null
+        /**
+         * The autoplay delegation, guaranteed here as well as in the factory.
+         *
+         * The production factory does it synchronously, in the same task the API
+         * created the element, which is the earliest a permissions policy can
+         * still be influenced. This second attempt is a no-op whenever that
+         * worked — the merge is idempotent — and it earns its place for two
+         * reasons: it holds for *any* factory rather than only the official one,
+         * and it is therefore assertable, which a guarantee buried in the
+         * production adapter would not be.
+         */
+        ensureAutoplayPermission(created.getIframe())
         return created
       })
       .catch((error: unknown) => {
@@ -306,11 +340,30 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       return
     }
 
-    // `'play'` always issues a real play command, and this is the line the
-    // reported bug turns on: an authorised automatic start must reach
-    // `loadVideoById` or `playVideo`, never `cueVideoById`. Same video, already
-    // loaded: resume it where it stands. Different video: load and play.
-    if (sameVideo) {
+    /**
+     * `'play'` always issues a real play command — never `cueVideoById` — and
+     * *which* documented command depends on whether there is a playback to
+     * resume, not merely on whether the ids match.
+     *
+     * The distinction matters and was previously wrong. `playVideo()` is a
+     * resume: its purpose is to continue a video that has already started, from
+     * where it stands. `loadVideoById()` is documented as "loads and plays" —
+     * one command that does both, from the beginning.
+     *
+     * A video that has only been *cued* has never started. It is the same id, so
+     * the old check called it a resume and sent `playVideo()` at a player
+     * sitting on its thumbnail. That is the state a real phone reported: the
+     * right video loaded, YouTube's own red play overlay still on it. Asking a
+     * cued player to load-and-play is both the documented path for that state
+     * and a single command rather than a resume of something that never ran.
+     *
+     * So: resume only what genuinely played, and load-and-play everything else.
+     */
+    const state = instance.getPlayerState()
+    const resumable =
+      state === YT_STATE.PLAYING || state === YT_STATE.PAUSED || state === YT_STATE.BUFFERING
+
+    if (sameVideo && resumable) {
       instance.playVideo()
       emit((events) => events.onCommand?.('playVideo', video.videoId))
     } else {
@@ -445,6 +498,19 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
 
     getCurrentItem: () => current,
     isPlaying: () => playing,
+
+    describeIframe() {
+      const iframe = player?.getIframe() ?? null
+      if (!iframe) return null
+      const allow = iframe.getAttribute('allow') ?? ''
+      const box = iframe.getBoundingClientRect()
+      return {
+        allow,
+        allowsAutoplay: allowsAutoplay(allow),
+        width: Math.round(box.width),
+        height: Math.round(box.height),
+      }
+    },
 
     subscribe(events) {
       listeners.add(events)

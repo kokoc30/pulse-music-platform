@@ -569,7 +569,14 @@ const FAKE_IFRAME_API = `
     window.__pulseYouTube.endCurrent = function () { fire(STATE.ENDED) }
     this.pauseVideo = function () { fire(STATE.PAUSED) }
     this.stopVideo = function () { fire(STATE.UNSTARTED) }
-    this.getCurrentTime = function () { return 0 }
+    // Advances while playing, so a test can assert progress actually moves —
+    // the difference between a player that started and one that merely says so.
+    var startedAt = 0
+    this.getCurrentTime = function () {
+      if (!window.__pulseYouTube.playing) return startedAt
+      startedAt = Math.min(startedAt + 1, 213)
+      return startedAt
+    }
     this.getDuration = function () { return 213 }
     this.getPlayerState = function () { return state }
     this.getIframe = function () { return iframe }

@@ -24,7 +24,8 @@ export const YT_STATE = {
   CUED: 5,
 } as const
 
-export type YouTubePlaybackState = 'unstarted' | 'ended' | 'playing' | 'paused' | 'buffering' | 'cued'
+export type YouTubePlaybackState =
+  'unstarted' | 'ended' | 'playing' | 'paused' | 'buffering' | 'cued'
 
 export function describePlayerState(state: number): YouTubePlaybackState {
   switch (state) {
@@ -138,6 +139,88 @@ interface YouTubeGlobals {
 
 export const IFRAME_API_SRC = 'https://www.youtube.com/iframe_api'
 
+/**
+ * The Permissions Policy token a cross-origin embed needs before a browser will
+ * let a script start it.
+ *
+ * This is browser *permission delegation*, and it is worth being precise about
+ * what it is and is not. `autoplay`'s default allowlist is `self`: the top
+ * document may autoplay, and that permission does not reach a cross-origin
+ * child frame unless the parent delegates it with this attribute. Without the
+ * token, `playVideo()` from the parent is refused however visible the player is
+ * and however recently anyone tapped anything.
+ *
+ * Adding it is not a way round an autoplay policy — it is how a page tells the
+ * browser which embed it is willing to lend its own permission to. The browser
+ * still applies every one of its own rules inside the frame afterwards, and if
+ * it decides not to start, it does not start.
+ */
+export const AUTOPLAY_PERMISSION = 'autoplay'
+
+/**
+ * Merges permission tokens into an existing `allow` attribute, destructively of
+ * nothing.
+ *
+ * The IFrame API sets its own `allow` list on the iframe it builds, and recent
+ * versions already include `autoplay`. Overwriting the attribute would strip
+ * `encrypted-media`, `picture-in-picture` and the rest — breaking DRM playback
+ * and full-screen to fix something that may not even be broken. So this reads
+ * what is there, adds only what is missing, and returns the existing string
+ * untouched when nothing is.
+ *
+ * Exported because it is the part worth testing directly: the failure mode of a
+ * careless version of this is silent and severe.
+ */
+export function mergeAllowTokens(existing: string | null, tokens: readonly string[]): string {
+  const present = (existing ?? '')
+    .split(';')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+
+  // A token may carry an allowlist of its own — `autoplay 'src'` — so identity
+  // is the feature name, not the whole entry.
+  const names = new Set(present.map((entry) => entry.split(/\s+/)[0]))
+  const missing = tokens.filter((token) => !names.has(token))
+  if (missing.length === 0) return existing ?? ''
+
+  return [...present, ...missing].join('; ')
+}
+
+/**
+ * Whether an `allow` attribute already delegates autoplay to the frame.
+ *
+ * Diagnostics only. On a device that will not start a video this is the single
+ * most useful fact to have, and it is not otherwise visible without desktop
+ * developer tools.
+ */
+export function allowsAutoplay(existing: string | null): boolean {
+  return (existing ?? '')
+    .split(';')
+    .map((entry) => entry.trim().split(/\s+/)[0])
+    .includes(AUTOPLAY_PERMISSION)
+}
+
+/**
+ * Delegates autoplay to the player's iframe, if the API has not already.
+ *
+ * Called synchronously, in the same task the API created the element, because a
+ * frame's permissions policy is fixed when its document is created: an `allow`
+ * attribute added after the embed has loaded applies to the *next* navigation
+ * of that frame and does nothing for the document already in it. Acting at the
+ * earliest moment the element exists is the only point at which this can matter.
+ *
+ * A no-op when the API has already included the token, which is the expected
+ * case on a current version of the script — and exactly why it is written as a
+ * merge rather than an assignment.
+ */
+export function ensureAutoplayPermission(iframe: HTMLIFrameElement | null): boolean {
+  if (!iframe) return false
+  const before = iframe.getAttribute('allow')
+  if (allowsAutoplay(before)) return false
+  iframe.setAttribute('allow', mergeAllowTokens(before, [AUTOPLAY_PERMISSION]))
+  return true
+}
+
 let apiPromise: Promise<YtNamespace> | null = null
 
 /** Test seam: forget the cached script load between suites. */
@@ -212,6 +295,23 @@ export const officialYouTubePlayerFactory: YouTubePlayerFactory = {
 
     return await new Promise<YouTubePlayerHandle>((resolve, reject) => {
       let settled = false
+      /**
+       * Delegated the instant the element exists, before the embed's document
+       * has been created — see `ensureAutoplayPermission`. Attempted twice: once
+       * synchronously after the constructor returns, and once at `onReady`, for
+       * a version of the script that does not expose `getIframe` immediately.
+       * The second attempt is a no-op whenever the first worked, and a
+       * diagnostic when neither did.
+       */
+      const delegate = (instance: YtPlayerInstance) => {
+        try {
+          ensureAutoplayPermission(instance.getIframe())
+        } catch {
+          // A version that cannot hand back its iframe yet. The next attempt
+          // will, and nothing here is load-bearing enough to fail a play over.
+        }
+      }
+
       const player = new YT.Player(container, {
         width: options.width,
         height: options.height,
@@ -225,6 +325,7 @@ export const officialYouTubePlayerFactory: YouTubePlayerFactory = {
         },
         events: {
           onReady: () => {
+            delegate(player)
             options.events.onReady?.()
             if (!settled) {
               settled = true
@@ -246,6 +347,10 @@ export const officialYouTubePlayerFactory: YouTubePlayerFactory = {
           onAutoplayBlocked: () => options.events.onAutoplayBlocked?.(),
         },
       })
+
+      // The earliest possible moment: same task, before the frame's document
+      // exists, which is the only point at which delegation can still apply.
+      delegate(player)
     })
   },
 }

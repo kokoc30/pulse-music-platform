@@ -493,3 +493,48 @@ test.describe('what the application actually asked the player to do', () => {
     expect((await state()).playCalls).toBeGreaterThan(afterBlock.playCalls ?? 0)
   })
 })
+
+/**
+ * The visitor-facing statement of §27, at the reported size.
+ *
+ * Not "the store says playing" but the three things a person would actually
+ * look at: YouTube's own large red overlay is gone from the thumbnail, Pulse's
+ * central control reads Pause, and the clock is moving. Nobody tapped anything
+ * to get there.
+ */
+test.describe('what the visitor sees after the hand-off', () => {
+  test.use({ viewport: MOBILE })
+
+  test.beforeEach(async ({ page }) => {
+    await stubAllProviders(page)
+  })
+
+  test('the player is running: no overlay, Pause showing, progress advancing', async ({ page }) => {
+    await likeAudioVideoAudio(page)
+    await reachTheVideo(page)
+
+    const sheet = nowPlayingSheet(page)
+    await expect(sheet).toBeVisible()
+
+    // YouTube's own player reports it has started, which is what removes its
+    // red overlay. Read from the player rather than from a screenshot, because
+    // the overlay lives inside a cross-origin frame in production.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __pulseYouTube?: { playing?: boolean } }).__pulseYouTube
+              ?.playing ?? false,
+        ),
+      )
+      .toBe(true)
+
+    // Pulse's own control agrees, and there is exactly one of it.
+    await expect(sheet.getByRole('button', { name: 'Pause' })).toHaveCount(1)
+    await expect(sheet.getByRole('button', { name: 'Play', exact: true })).toHaveCount(0)
+
+    // And the clock moves, which a cued player's never does.
+    const elapsed = () => sheet.locator('.progress span').first().innerText()
+    await expect.poll(elapsed, { timeout: 10_000 }).not.toBe('0:00')
+  })
+})

@@ -15,7 +15,12 @@ import { useUiStore } from '@/app/ui-store'
 import { LikeButton } from '@/components/library/LikeButton'
 import { TrackMenu } from '@/components/library/TrackMenu'
 import { Artwork } from '@/components/track/Artwork'
-import { isPlaybackDebugEnabled, lastTraceDetail, tracedSteps } from '@/player/playback-trace'
+import {
+  isPlaybackDebugEnabled,
+  lastTraceDetail,
+  tracedSteps,
+  tracedValues,
+} from '@/player/playback-trace'
 import { usePlayerStore } from '@/player/player-store'
 import { REPEAT_LABELS } from '@/player/queue-order'
 import {
@@ -284,7 +289,6 @@ function PlaybackDebugReadout() {
 
   const decision = lastTraceDetail('decide:result') ?? {}
   const measurement = lastTraceDetail('visibility:resolved') ?? {}
-  const command = lastTraceDetail('engine:command') ?? {}
 
   /**
    * Rendered as text, so anything that is not already a primitive becomes a
@@ -298,15 +302,24 @@ function PlaybackDebugReadout() {
     return '—'
   }
 
+  const measured = lastTraceDetail('decide:measured') ?? {}
+
   const rows: [string, unknown][] = [
     ['status', status],
     ['ratio', decision.visibleRatio],
     ['measured', decision.measured],
     ['waited (ms)', decision.waitedMs],
     ['wait ended', measurement.outcome],
+    ['player ready', measured.playerReady],
+    // The configuration fact, read from the real generated frame. If this is
+    // false a scripted start cannot succeed however visible the player is, and
+    // the fix is a permission rather than a timing.
+    ['iframe autoplay', measured.iframeAllowsAutoplay],
     ['decision', decision.mode],
     ['withheld', decision.withheld],
-    ['command', command.command],
+    ['commands', tracedValues('engine:command', 'command').join(' → ')],
+    ['states', tracedValues('engine:state', 'state').join(' → ')],
+    ['outcome', lastTraceDetail('engine:outcome')?.outcome],
     ['blocked', tracedSteps().includes('engine:autoplay-blocked')],
     ['awaiting', reason],
   ]

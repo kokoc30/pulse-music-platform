@@ -16,7 +16,12 @@ export type YouTubeStatus = 'idle' | 'loading' | 'cued' | 'playing' | 'paused' |
 
 /** Why the player is waiting for an explicit press. See `awaitingUserPlayReason`. */
 export type AwaitingPlayReason =
-  'visibility' | 'document-hidden' | 'player-not-ready' | 'autoplay-blocked'
+  | 'visibility'
+  | 'document-hidden'
+  | 'player-not-ready'
+  | 'permission-policy'
+  | 'autoplay-blocked'
+  | 'player-command-no-start'
 
 export interface YouTubePlaybackState {
   /** The item the surface is showing. Null means the surface is closed. */
@@ -45,9 +50,21 @@ export interface YouTubePlaybackState {
    * · `'document-hidden'` — the app was in the background. The app's decision.
    * · `'player-not-ready'` — the player did not become usable within the bound,
    *   so no command was issued. The app's decision, and a slow one.
+   * · `'permission-policy'` — the embed's frame was never delegated the
+   *   `autoplay` permission, so the browser would refuse any scripted start
+   *   whatever else were true. A configuration fact, and the one failure here
+   *   that is fixable by a header or an attribute rather than by timing.
    * · `'autoplay-blocked'` — the app *did* issue a play command and the browser
-   *   or the provider refused it. **Not** the app's decision, and nothing in
-   *   this codebase can or should work around it.
+   *   or the provider said so, through the documented `onAutoplayBlocked`.
+   *   **Not** the app's decision, and nothing in this codebase can or should
+   *   work around it.
+   * · `'player-command-no-start'` — the app issued a play command, nothing
+   *   refused it out loud, and playback still never began. The quiet form of the
+   *   case above: a browser that declines without firing the event, which is
+   *   what a real phone reported — the correct video loaded, YouTube's own red
+   *   play overlay still on it, and no error anywhere. Distinguished because a
+   *   silent refusal and a loud one look identical from the store and need the
+   *   same response but a different diagnosis.
    */
   awaitingUserPlayReason: AwaitingPlayReason | null
   currentTime: number
