@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { pickArtwork } from '@/music/normalize'
 import { providerLabel } from '@/music/provider-labels'
 import type { Artwork, Track, YouTubeVideoItem } from '@/music/types'
@@ -310,6 +311,45 @@ export function selectSnapshotState(input: SnapshotInput): PlaybackSnapshot {
 }
 
 /**
+ * How long a buffer may last before it is worth showing.
+ *
+ * Loading the next track takes a few hundred milliseconds, and now that tracks
+ * follow one another without anyone pressing anything, that gap arrives every
+ * few minutes on its own. Rendering it turns the play control into a spinner
+ * that flashes and disables itself between songs — motion nobody asked for,
+ * reporting a wait nobody is having.
+ *
+ * Longer than this and the wait is real: the listener is looking at a control
+ * that has not answered, and saying so is the honest thing. So the state is not
+ * suppressed, only *delayed* past the length of an ordinary hand-off.
+ */
+export const BUFFERING_GRACE_MS = 400
+
+/**
+ * The status as it should be *drawn*, which is not always the status as it is.
+ *
+ * A buffer shorter than the grace never reaches the screen; one longer than it
+ * appears as usual and stays until it ends. Every other state is passed straight
+ * through the moment it arrives — a pause must never be delayed.
+ */
+function useSettledStatus(status: UnifiedStatus): UnifiedStatus {
+  const [settled, setSettled] = useState(status)
+
+  useEffect(() => {
+    if (status !== 'buffering') {
+      setSettled(status)
+      return
+    }
+    const handle = setTimeout(() => setSettled('buffering'), BUFFERING_GRACE_MS)
+    return () => clearTimeout(handle)
+  }, [status])
+
+  // A buffer that is already over renders as what replaced it, not as the stale
+  // value the timer was still holding.
+  return status === 'buffering' ? settled : status
+}
+
+/**
  * The React binding.
  *
  * Both stores are read whole rather than through narrow selectors, because the
@@ -321,5 +361,7 @@ export function usePlaybackSnapshot(): PlaybackSnapshot {
   const engine = useActiveEngine()
   const audio = usePlayerStore()
   const youtube = useYouTubeStore()
-  return selectSnapshotState({ engine, audio, youtube })
+  const snapshot = selectSnapshotState({ engine, audio, youtube })
+  const status = useSettledStatus(snapshot.status)
+  return status === snapshot.status ? snapshot : { ...snapshot, status }
 }

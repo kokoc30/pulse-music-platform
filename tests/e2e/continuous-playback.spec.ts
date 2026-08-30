@@ -84,10 +84,12 @@ test.describe('audio keeps going on its own', () => {
     await expect(barTitle(page)).not.toHaveText('Night Signal', { timeout: 15_000 })
 
     // Genuinely a fresh load rather than a rewind of the same one: the element
-    // is no longer in its ended state, on a track the bar now names differently.
-    // Whether it is *sounding* is the browser's autoplay policy to decide, which
-    // is why that is asserted separately, where it can be waited for.
-    expect(await page.evaluate(() => document.querySelector('audio')?.ended ?? true)).toBe(false)
+    // leaves its ended state, on a track the bar now names differently. Polled,
+    // because the bar is updated from the store the moment the next track is
+    // chosen, which is a stream lookup earlier than the element is reloaded.
+    await expect
+      .poll(() => page.evaluate(() => document.querySelector('audio')?.ended ?? true))
+      .toBe(false)
   })
 })
 

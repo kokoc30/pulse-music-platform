@@ -1,12 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { normalizeYouTubeVideo } from '@/music/youtube'
 import { audiusTrack, jamendoTrackFixture } from '@/test/fixtures/library'
 import { youtubePayload } from '@/test/fixtures/youtube'
 import type { PlayerStatus } from './player-store'
-import { initialPlayerState } from './player-store'
+import { initialPlayerState, usePlayerStore } from './player-store'
 import { mapAudioStatus, mapYouTubeStatus } from './types'
 import type { UnifiedStatus } from './types'
-import { selectSnapshotState } from './use-playback-snapshot'
+import { activateAudio, resetPlaybackCoordinator } from './playback-coordinator'
+import { BUFFERING_GRACE_MS, selectSnapshotState, usePlaybackSnapshot } from './use-playback-snapshot'
 import type { SnapshotInput } from './use-playback-snapshot'
 import type { YouTubeStatus } from './youtube-store'
 import { initialYouTubeState } from './youtube-store'
@@ -267,5 +269,81 @@ describe('transport availability', () => {
   it('falls back to the item duration until the embed reports one', () => {
     expect(selectSnapshotState(withVideo()).duration).toBe(240)
     expect(selectSnapshotState(withVideo({ duration: 213 })).duration).toBe(213)
+  })
+})
+
+describe('the buffering grace', () => {
+  /**
+   * Tracks follow one another on their own now, so the few hundred milliseconds
+   * it takes to load the next one arrives every few minutes without anybody
+   * asking for it. Drawing that gap turns the play control into a spinner that
+   * flashes and disables itself between songs.
+   *
+   * The state is delayed rather than suppressed: a wait long enough to notice is
+   * still reported, because by then the listener really is waiting.
+   */
+  const STATUSES: Record<'buffering' | 'playing' | 'paused', PlayerStatus> = {
+    buffering: 'loading',
+    playing: 'playing',
+    paused: 'paused',
+  }
+
+  const setStatus = (status: keyof typeof STATUSES) => {
+    act(() => {
+      usePlayerStore.setState({ status: STATUSES[status] })
+    })
+  }
+
+  beforeEach(() => {
+    resetPlaybackCoordinator()
+    activateAudio()
+    usePlayerStore.setState({
+      ...initialPlayerState,
+      currentTrack: audiusTrack(),
+      status: 'playing',
+    })
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    usePlayerStore.getState().reset()
+    resetPlaybackCoordinator()
+  })
+
+  it('never shows a hand-off shorter than the grace', () => {
+    const view = renderHook(() => usePlaybackSnapshot().status)
+    expect(view.result.current).toBe('playing')
+
+    setStatus('buffering')
+    act(() => {
+      vi.advanceTimersByTime(BUFFERING_GRACE_MS - 50)
+    })
+    expect(view.result.current).toBe('playing')
+
+    setStatus('playing')
+    expect(view.result.current).toBe('playing')
+    view.unmount()
+  })
+
+  it('shows a wait that outlasts it', () => {
+    const view = renderHook(() => usePlaybackSnapshot().status)
+
+    setStatus('buffering')
+    act(() => {
+      vi.advanceTimersByTime(BUFFERING_GRACE_MS + 50)
+    })
+
+    expect(view.result.current).toBe('buffering')
+    view.unmount()
+  })
+
+  it('delays nothing but buffering — a pause is immediate', () => {
+    const view = renderHook(() => usePlaybackSnapshot().status)
+
+    setStatus('paused')
+
+    expect(view.result.current).toBe('paused')
+    view.unmount()
   })
 })
