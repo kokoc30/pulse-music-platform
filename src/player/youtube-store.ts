@@ -14,6 +14,10 @@ import type { YouTubeVideoItem } from '@/music/types'
 
 export type YouTubeStatus = 'idle' | 'loading' | 'cued' | 'playing' | 'paused' | 'ended' | 'error'
 
+/** Why the player is waiting for an explicit press. See `awaitingUserPlayReason`. */
+export type AwaitingPlayReason =
+  'visibility' | 'document-hidden' | 'player-not-ready' | 'autoplay-blocked'
+
 export interface YouTubePlaybackState {
   /** The item the surface is showing. Null means the surface is closed. */
   item: YouTubeVideoItem | null
@@ -25,6 +29,27 @@ export interface YouTubePlaybackState {
    * UI can ask for an explicit press instead of starting on its own.
    */
   awaitingUserPlay: boolean
+  /**
+   * *Why* an explicit press is being asked for.
+   *
+   * These are not the same situation and must not be reported as one, which is
+   * the whole reason the reported bug was hard to place: a video sitting on a
+   * thumbnail looks identical whether the application never asked it to play or
+   * the browser refused. Recording which lets a diagnostic build say so, lets a
+   * test assert it, and lets the UI phrase the one case that genuinely warrants
+   * a word to the visitor.
+   *
+   * · `'visibility'` — the player was not measurably more than half visible, so
+   *   this application did not initiate playback. Required Minimum
+   *   Functionality; the app's own decision.
+   * · `'document-hidden'` — the app was in the background. The app's decision.
+   * · `'player-not-ready'` — the player did not become usable within the bound,
+   *   so no command was issued. The app's decision, and a slow one.
+   * · `'autoplay-blocked'` — the app *did* issue a play command and the browser
+   *   or the provider refused it. **Not** the app's decision, and nothing in
+   *   this codebase can or should work around it.
+   */
+  awaitingUserPlayReason: AwaitingPlayReason | null
   currentTime: number
   duration: number
   error: string | null
@@ -68,7 +93,7 @@ export interface YouTubePlaybackState {
 export interface YouTubePlaybackActions {
   openWith: (item: YouTubeVideoItem, status: YouTubeStatus) => void
   setStatus: (status: YouTubeStatus) => void
-  setAwaitingUserPlay: (awaiting: boolean) => void
+  setAwaitingUserPlay: (awaiting: boolean, reason?: AwaitingPlayReason | null) => void
   setProgress: (currentTime: number, duration: number) => void
   setError: (error: string | null) => void
   close: () => void
@@ -94,6 +119,7 @@ export const initialYouTubeState: YouTubePlaybackState = {
   status: 'idle',
   surfaceOpen: false,
   awaitingUserPlay: false,
+  awaitingUserPlayReason: null,
   currentTime: 0,
   duration: 0,
   error: null,
@@ -115,6 +141,8 @@ export const useYouTubeStore = create<YouTubePlaybackState & YouTubePlaybackActi
       status,
       surfaceOpen: true,
       awaitingUserPlay: status === 'cued',
+      // The reason is set by whoever cued it; opening clears any stale one.
+      awaitingUserPlayReason: null,
       currentTime: 0,
       duration: item.durationSeconds ?? 0,
       error: null,
@@ -125,13 +153,15 @@ export const useYouTubeStore = create<YouTubePlaybackState & YouTubePlaybackActi
       status,
       // Any real playing state clears the "press play" prompt.
       awaitingUserPlay: status === 'playing' ? false : state.awaitingUserPlay,
+      awaitingUserPlayReason: status === 'playing' ? null : state.awaitingUserPlayReason,
       // …and answers the background-pause explanation, which is only about a
       // playback that was interrupted.
       pausedForBackgroundPolicy: status === 'playing' ? false : state.pausedForBackgroundPolicy,
       error: status === 'error' ? state.error : null,
     })),
 
-  setAwaitingUserPlay: (awaitingUserPlay) => set({ awaitingUserPlay }),
+  setAwaitingUserPlay: (awaitingUserPlay, reason = null) =>
+    set({ awaitingUserPlay, awaitingUserPlayReason: awaitingUserPlay ? reason : null }),
 
   setProgress: (currentTime, duration) =>
     set({

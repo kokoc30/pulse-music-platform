@@ -34,16 +34,47 @@ export interface YouTubeEngineEvents {
   onError?: (message: string) => void
   onAutoplayBlocked?: () => void
   onTimeUpdate?: (currentTime: number, duration: number) => void
+  /**
+   * The documented IFrame API method this engine actually invoked.
+   *
+   * Purely diagnostic, and it earns its place: "did the authorised automatic
+   * start issue a play command or a cue" is the single question that separates
+   * an application bug from a browser autoplay refusal, and inferring it from
+   * the resulting state is exactly the guesswork that sent the first fix to the
+   * wrong layer.
+   */
+  onCommand?: (command: 'loadVideoById' | 'playVideo' | 'cue', videoId: string) => void
 }
 
-export interface PlayOptions {
-  /**
-   * True only for a direct user gesture. A scripted transition must pass false,
-   * which cues the video and leaves it to an explicit play press unless the
-   * caller has separately confirmed the player is more than half visible
-   * (docs/youtube-policy-audit.md §5).
-   */
-  userInitiated: boolean
+/**
+ * What the engine is being asked to do with an item — and *only* that.
+ *
+ * This replaces a `userInitiated: boolean`, and the replacement is the point.
+ * That flag carried two different facts at once and the engine acted on the
+ * wrong one: it cued whenever `userInitiated` was false, which quietly meant
+ * "not a direct gesture" was treated as "must not play". The visibility rule had
+ * by then moved up into `youtube-actions`, where a *scripted* transition can be
+ * properly authorised by a real measurement — and the only way to express that
+ * to the engine was to pass `userInitiated: true` for something no human had
+ * clicked. A lie that works is still a lie, and the next reader would have
+ * believed it.
+ *
+ * So the engine is told the decision, never the reasoning:
+ *
+ * · `'play'` — start this video. The caller has established it is allowed to,
+ *   either because a visitor pressed something or because the player was
+ *   measured visible enough. The engine does not know or care which.
+ * · `'cue'` — prepare this video and stop. Never counts as automatic playback,
+ *   and is always safe (agents/21 → "Automatic Playback").
+ *
+ * **No policy lives in this file.** There is no visibility check here, no
+ * document check, and no notion of a gesture. Those belong to `mayAutoplay` and
+ * its callers, in one place, where they are tested.
+ */
+export type PlaybackStartMode = 'play' | 'cue'
+
+export interface StartRequest {
+  mode: PlaybackStartMode
 }
 
 export interface YouTubeEngine {
@@ -51,9 +82,30 @@ export interface YouTubeEngine {
   attach(container: HTMLElement): void
   detach(): void
   hasContainer(): boolean
-  /** Cues without playing. Always safe, never counts as automatic playback. */
-  cue(item: MediaItem): Promise<void>
-  play(item: MediaItem, options: PlayOptions): Promise<void>
+  /**
+   * Loads an item, playing it or merely cueing it as the caller decided.
+   *
+   * The one entry point for both, so "which command does an authorised
+   * automatic start actually issue" has a single answer to assert against
+   * (`'play'` → `loadVideoById`/`playVideo`, never `cueVideoById`).
+   */
+  start(item: MediaItem, request: StartRequest): Promise<void>
+  /**
+   * True once a player instance exists and can accept commands.
+   *
+   * Separate from "the container is on screen": the element can be laid out for
+   * a second or more before the IFrame API script has loaded and built a player
+   * inside it, and a start issued into that gap does nothing.
+   */
+  isReady(): boolean
+  /**
+   * Resolves once the player can accept commands, or on the bound.
+   *
+   * Bounded rather than open-ended for the same reason the visibility wait is:
+   * a script that never loads must end in a cued, visible player with one Play
+   * button, not in a spinner nobody can leave.
+   */
+  whenReady(timeoutMs?: number): Promise<boolean>
   resume(): void
   pause(): void
   stop(): void
@@ -74,6 +126,23 @@ export interface YouTubeEngine {
 
 /** How often app UI reads the player clock, and only while it is playing. */
 export const PROGRESS_POLL_MS = 1_000
+
+/**
+ * How long an authorised start may wait for the player to become usable.
+ *
+ * The first play of a sitting has to fetch the IFrame API script and build an
+ * iframe, which on a phone on a slow connection is comfortably a second or two.
+ * Deciding to autoplay and then issuing the command into a player that does not
+ * exist yet is a command that does nothing at all — the visibility measurement
+ * says yes, the video sits on a thumbnail, and nothing explains why.
+ *
+ * Bounded, like every other wait here: a script that never arrives ends in a
+ * cued player and one Play button.
+ */
+export const PLAYER_READY_TIMEOUT_MS = 4_000
+
+/** Cheap next to a network script load, and it cannot miss a resolution. */
+const PLAYER_READY_POLL_MS = 25
 
 export interface EngineOptions {
   factory?: YouTubePlayerFactory
@@ -124,8 +193,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
    * player readiness, *then* load). A click therefore lands here for the few
    * milliseconds React needs to mount the surface, and `attach()` flushes it.
    */
-  let pending: { item: YouTubeVideoItem; mode: 'cue' | 'play'; userInitiated: boolean } | null =
-    null
+  let pending: { item: YouTubeVideoItem; mode: PlaybackStartMode } | null = null
 
   /**
    * One request to the player at a time, and the newest one wins.
@@ -216,11 +284,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
     return await creating
   }
 
-  async function perform(
-    video: YouTubeVideoItem,
-    mode: 'cue' | 'play',
-    userInitiated: boolean,
-  ): Promise<void> {
+  async function perform(video: YouTubeVideoItem, mode: PlaybackStartMode): Promise<void> {
     // Against what the *player* holds, not what has been requested. `current`
     // now answers "what did the last caller ask for", which is set the moment a
     // request is queued; asking it here would call this a resume of a video the
@@ -230,7 +294,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
     loaded = video
     current = video
 
-    if (mode === 'cue' || !userInitiated) {
+    if (mode === 'cue') {
       playing = false
       stopProgress()
       // `cueVideoById` loads the video's thumbnail and prepares the player
@@ -238,12 +302,21 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       // item up without initiating playback (agents/21 → "Automatic Playback";
       // the uncertain case must resolve to "do not autoplay").
       instance.cueVideoById(video.videoId)
+      emit((events) => events.onCommand?.('cue', video.videoId))
       return
     }
 
-    // Same video: resume where it was. Different video: load and play.
-    if (sameVideo) instance.playVideo()
-    else instance.loadVideoById(video.videoId)
+    // `'play'` always issues a real play command, and this is the line the
+    // reported bug turns on: an authorised automatic start must reach
+    // `loadVideoById` or `playVideo`, never `cueVideoById`. Same video, already
+    // loaded: resume it where it stands. Different video: load and play.
+    if (sameVideo) {
+      instance.playVideo()
+      emit((events) => events.onCommand?.('playVideo', video.videoId))
+    } else {
+      instance.loadVideoById(video.videoId)
+      emit((events) => events.onCommand?.('loadVideoById', video.videoId))
+    }
   }
 
   /**
@@ -254,11 +327,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
    * branch asks exactly that, and a null answer there is what made it cue over a
    * play that was already on its way.
    */
-  function enqueue(
-    video: YouTubeVideoItem,
-    mode: 'cue' | 'play',
-    userInitiated: boolean,
-  ): Promise<void> {
+  function enqueue(video: YouTubeVideoItem, mode: PlaybackStartMode): Promise<void> {
     const token = (latestRequest += 1)
     current = video
 
@@ -268,10 +337,10 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
         // The surface has not mounted yet. Held rather than dropped: `attach()`
         // flushes it, which is the documented order — render the visible
         // surface, then wait for player readiness, then load.
-        pending = { item: video, mode, userInitiated }
+        pending = { item: video, mode }
         return
       }
-      await perform(video, mode, userInitiated)
+      await perform(video, mode)
     })
 
     queue = run.catch(() => {})
@@ -287,7 +356,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       // Through the same queue, so the flushed request takes its place in the
       // same order as everything else. A failure here has no caller left to
       // reject: report it the way any other player failure is reported.
-      void enqueue(request.item, request.mode, request.userInitiated).catch((error: unknown) => {
+      void enqueue(request.item, request.mode).catch((error: unknown) => {
         const message =
           error instanceof Error && error.message
             ? error.message
@@ -313,12 +382,36 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
 
     hasContainer: () => container !== null,
 
-    async cue(item) {
-      await enqueue(requireYouTubeItem(item), 'cue', false)
+    async start(item, request) {
+      await enqueue(requireYouTubeItem(item), request.mode)
     },
 
-    async play(item, playOptions) {
-      await enqueue(requireYouTubeItem(item), 'play', playOptions.userInitiated)
+    isReady: () => player !== null,
+
+    async whenReady(timeoutMs = PLAYER_READY_TIMEOUT_MS) {
+      if (player) return true
+      // Nothing is being built and nothing is queued: waiting would be waiting
+      // for something nobody asked for.
+      if (!creating && !pending && latestRequest === 0) return false
+
+      return await new Promise<boolean>((resolve) => {
+        let settled = false
+        const finish = (ready: boolean) => {
+          if (settled) return
+          settled = true
+          clearInterval(poll)
+          clearTimeout(cap)
+          resolve(ready)
+        }
+        // The creation promise is shared and may already have been consumed by
+        // another caller, so readiness is observed rather than awaited: a short
+        // poll costs nothing next to a network script load and cannot miss a
+        // resolution it did not subscribe to.
+        const poll = setInterval(() => {
+          if (player) finish(true)
+        }, PLAYER_READY_POLL_MS)
+        const cap = setTimeout(() => finish(player !== null), timeoutMs)
+      })
     },
 
     resume() {

@@ -53,32 +53,34 @@ describe('the YouTube engine only accepts YouTube items', () => {
     // The mirror of `assertAudioTrack`: an Audius or Jamendo track must never
     // reach the iframe engine (agents/28 → "Audio providers never enter
     // YouTube engine").
-    await expect(engine.play(audioTrack, { userInitiated: true })).rejects.toThrow(
+    await expect(engine.start(audioTrack, { mode: 'play' })).rejects.toThrow(
       /only accepts YouTube video items/i,
     )
-    await expect(engine.cue(audioTrack)).rejects.toThrow(/only accepts YouTube video items/i)
+    await expect(engine.start(audioTrack, { mode: 'cue' })).rejects.toThrow(
+      /only accepts YouTube video items/i,
+    )
     expect(factory.created).toBe(0)
   })
 })
 
 describe('one player instance, reused', () => {
   it('creates exactly one player across many videos', async () => {
-    await engine.play(video(), { userInitiated: true })
-    await engine.play(video({ videoId: 'bbbbbbbbbbb' }), { userInitiated: true })
-    await engine.play(video({ videoId: 'ccccccccccc' }), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
+    await engine.start(video({ videoId: 'bbbbbbbbbbb' }), { mode: 'play' })
+    await engine.start(video({ videoId: 'ccccccccccc' }), { mode: 'play' })
     expect(factory.created).toBe(1)
   })
 
   it('shares one creation between two concurrent starts', async () => {
     await Promise.all([
-      engine.play(video(), { userInitiated: true }),
-      engine.play(video({ videoId: 'bbbbbbbbbbb' }), { userInitiated: true }),
+      engine.start(video(), { mode: 'play' }),
+      engine.start(video({ videoId: 'bbbbbbbbbbb' }), { mode: 'play' }),
     ])
     expect(factory.created).toBe(1)
   })
 
   it('builds the player at the recommended 16:9 size, above the documented floor', async () => {
-    await engine.play(video(), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
     const options = factory.players[0].options
     expect(options.width).toBe(RECOMMENDED_WIDTH)
     expect(options.height).toBe(RECOMMENDED_HEIGHT)
@@ -88,7 +90,7 @@ describe('one player instance, reused', () => {
   })
 
   it('passes the page origin, as the IFrame API reference instructs', async () => {
-    await engine.play(video(), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
     expect(factory.players[0].options.origin).toBe('https://pulse.test')
   })
 
@@ -96,7 +98,7 @@ describe('one player instance, reused', () => {
     // The correct order of operations: the surface is rendered first and the
     // player is built into it, never the other way round.
     const detached = createYouTubeIframeEngine({ factory, origin: 'https://pulse.test' })
-    await detached.play(video(), { userInitiated: true })
+    await detached.start(video(), { mode: 'play' })
     expect(factory.created).toBe(0)
 
     const host = document.createElement('div')
@@ -113,7 +115,7 @@ describe('one player instance, reused', () => {
 
   it('drops a deferred request if the surface is torn down before it mounts', async () => {
     const detached = createYouTubeIframeEngine({ factory })
-    await detached.play(video(), { userInitiated: true })
+    await detached.start(video(), { mode: 'play' })
     detached.detach()
 
     const host = document.createElement('div')
@@ -128,7 +130,7 @@ describe('one player instance, reused', () => {
 
 describe('user-initiated play versus scripted transition', () => {
   it('plays on a direct user gesture', async () => {
-    await engine.play(video(), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
     expect(factory.current()?.playing).toBe(true)
     expect(engine.isPlaying()).toBe(true)
   })
@@ -137,7 +139,7 @@ describe('user-initiated play versus scripted transition', () => {
     // "An API Client must not initiate an automatic playback until the player
     // is visible and more than half of the player is visible on the page or
     // screen." The engine's scripted path therefore cues and stops.
-    await engine.play(video(), { userInitiated: false })
+    await engine.start(video(), { mode: 'cue' })
     const player = factory.current()
     expect(player?.cued).toBe(true)
     expect(player?.playing).toBe(false)
@@ -146,23 +148,23 @@ describe('user-initiated play versus scripted transition', () => {
   })
 
   it('cue() never starts playback under any circumstances', async () => {
-    await engine.cue(video())
+    await engine.start(video(), { mode: 'cue' })
     expect(factory.current()?.playing).toBe(false)
     expect(factory.current()?.playCalls).toBe(0)
   })
 
   it('reuses the same player for a YouTube -> YouTube transition', async () => {
-    await engine.play(video(), { userInitiated: true })
-    await engine.play(video({ videoId: 'bbbbbbbbbbb' }), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
+    await engine.start(video({ videoId: 'bbbbbbbbbbb' }), { mode: 'play' })
     expect(factory.created).toBe(1)
     expect(factory.current()?.videoId).toBe('bbbbbbbbbbb')
     expect(engine.getCurrentItem()?.videoId).toBe('bbbbbbbbbbb')
   })
 
   it('resumes the same video rather than reloading it', async () => {
-    await engine.play(video(), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
     engine.pause()
-    await engine.play(video(), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
     // Same id: playVideo(), not loadVideoById(), so the position is kept.
     expect(factory.current()?.videoId).toBe('aaaaaaaaaaa')
     expect(factory.current()?.playing).toBe(true)
@@ -179,7 +181,7 @@ describe('engine events', () => {
       onAutoplayBlocked: () => seen.push('blocked'),
     })
 
-    await engine.play(video(), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
     const player = factory.current()!
     player.pauseVideo()
     player.emitState(0)
@@ -197,7 +199,7 @@ describe('engine events', () => {
   it('stops emitting to a listener that unsubscribed', async () => {
     const seen: string[] = []
     const unsubscribe = engine.subscribe({ onStateChange: (state) => seen.push(state) })
-    await engine.play(video(), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
     unsubscribe()
     factory.current()?.pauseVideo()
     expect(seen).toEqual(['playing'])
@@ -214,7 +216,7 @@ describe('the progress timer', () => {
     timed.attach(container)
     timed.subscribe({ onTimeUpdate: (currentTime) => ticks.push(currentTime) })
 
-    await timed.play(video(), { userInitiated: true })
+    await timed.start(video(), { mode: 'play' })
     factory.current()?.setCurrentTime(5)
     vi.advanceTimersByTime(PROGRESS_POLL_MS * 2)
     expect(ticks.length).toBeGreaterThanOrEqual(2)
@@ -239,7 +241,7 @@ describe('the progress timer', () => {
 
 describe('teardown', () => {
   it('destroys the player and forgets its container on detach', async () => {
-    await engine.play(video(), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
     const player = factory.players[0]
     engine.detach()
     expect(player.destroyed).toBe(true)
@@ -248,10 +250,10 @@ describe('teardown', () => {
   })
 
   it('builds a fresh player after a detach, not a leaked one', async () => {
-    await engine.play(video(), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
     engine.detach()
     engine.attach(container)
-    await engine.play(video(), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
     expect(factory.created).toBe(2)
     expect(factory.players[0].destroyed).toBe(true)
     expect(factory.players[1].destroyed).toBe(false)
@@ -259,9 +261,9 @@ describe('teardown', () => {
 
   it('surfaces a failed player creation instead of silently doing nothing', async () => {
     factory.failNextCreate('The YouTube player script could not be loaded.')
-    await expect(engine.play(video(), { userInitiated: true })).rejects.toThrow(/could not be loaded/i)
+    await expect(engine.start(video(), { mode: 'play' })).rejects.toThrow(/could not be loaded/i)
     // And a later attempt still works — the failure is not sticky.
-    await engine.play(video(), { userInitiated: true })
+    await engine.start(video(), { mode: 'play' })
     expect(factory.current()?.playing).toBe(true)
   })
 })

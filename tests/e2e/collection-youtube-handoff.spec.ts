@@ -366,3 +366,130 @@ test.describe('an audio track is not dragged along', () => {
     await expect(bar(page)).toHaveCount(1)
   })
 })
+
+/* ==========================================================================
+   Which layer refused — the diagnosis, as assertions
+   ========================================================================== */
+
+/**
+ * The single question the reported failure turned on.
+ *
+ * "The expanded player opened and the video did not start" is produced by two
+ * entirely different things, and they need opposite fixes:
+ *
+ * · the application never issued a play command — a visibility or timing bug
+ *   that belongs to this codebase;
+ * · the application issued one and the browser refused it — a mobile autoplay
+ *   policy, which nothing here may work around.
+ *
+ * These read the commands the app actually sent to the documented IFrame API, so
+ * the answer is evidence rather than inference.
+ */
+test.describe('what the application actually asked the player to do', () => {
+  test.use({ viewport: MOBILE })
+
+  test.beforeEach(async ({ page }) => {
+    await stubAllProviders(page)
+  })
+
+  /**
+   * §23's mandatory assertion, stated in the terms a visitor would use: the
+   * transport shows **Pause**, which it only ever does while something is
+   * genuinely playing — and nobody pressed Play to get there.
+   */
+  test('issues a play command and reaches Pause without anyone tapping', async ({ page }) => {
+    await likeAudioVideoAudio(page)
+
+    let playPresses = 0
+    await page.exposeFunction('__pulseCountPlayPress', () => {
+      playPresses += 1
+    })
+    await page.evaluate(() => {
+      document.addEventListener(
+        'click',
+        (event) => {
+          const target = event.target as HTMLElement | null
+          if (target?.closest('button[aria-label="Play"]')) {
+            ;(window as unknown as { __pulseCountPlayPress: () => void }).__pulseCountPlayPress()
+          }
+        },
+        true,
+      )
+    })
+
+    await reachTheVideo(page)
+
+    const sheet = nowPlayingSheet(page)
+    await expect(sheet).toBeVisible()
+    // Play became Pause on its own.
+    await expect(sheet.getByRole('button', { name: 'Pause' })).toBeVisible()
+    await expect(sheet.getByRole('button', { name: 'Play', exact: true })).toHaveCount(0)
+    expect(playPresses).toBe(0)
+
+    // And the command that produced it was a documented play, not a cue.
+    const commands = await page.evaluate(
+      () =>
+        (window as unknown as { __pulseYouTube?: { commands?: string[] } }).__pulseYouTube
+          ?.commands ?? [],
+    )
+    expect(commands.at(-1)).not.toBe('cue')
+    expect(['loadVideoById', 'playVideo']).toContain(commands.at(-1))
+  })
+
+  /**
+   * The other cause, reproduced deliberately: the player refuses the scripted
+   * start the way a mobile browser does.
+   *
+   * Everything the application controls went right — the view opened, the player
+   * was visible, a real play command went out — and the refusal came back. The
+   * correct response is a single Play button and one quiet line, with no retry
+   * and no attempt to get around the policy.
+   */
+  test('handles a genuine refusal without retrying or skipping the item', async ({ page }) => {
+    await likeAudioVideoAudio(page)
+    await page.addInitScript(() => {
+      // Armed before the player exists, so the very first scripted start is the
+      // one that is refused.
+      const install = () => {
+        const globals = window as unknown as { __pulseYouTube?: { blockAutoplay: boolean } }
+        if (globals.__pulseYouTube) globals.__pulseYouTube.blockAutoplay = true
+        else setTimeout(install, 10)
+      }
+      install()
+    })
+
+    await reachTheVideo(page)
+    const sheet = nowPlayingSheet(page)
+    await expect(sheet).toBeVisible()
+
+    const state = () =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __pulseYouTube?: { playCalls?: number; blocked?: number; commands?: string[] }
+            }
+          ).__pulseYouTube ?? {},
+      )
+
+    // The app asked. That is the whole point of this test.
+    await expect.poll(() => state().then((s) => s.blocked ?? 0)).toBeGreaterThan(0)
+    const afterBlock = await state()
+    expect(['loadVideoById', 'playVideo']).toContain(afterBlock.commands?.at(-1))
+
+    // One Play button, and the honest explanation beside it.
+    await expect(sheet.getByRole('button', { name: 'Play', exact: true })).toHaveCount(1)
+    await expect(sheet.getByText(/asked for a tap before playing/i)).toBeVisible()
+
+    // No retry loop, and the collection did not move past the item.
+    await page.waitForTimeout(2_000)
+    expect((await state()).playCalls).toBe(afterBlock.playCalls)
+    await expect(
+      sheet.getByRole('heading', { name: 'Night Signal (Official Video)' }),
+    ).toBeVisible()
+
+    // And a real press still works, which is the only thing that should.
+    await sheet.getByRole('button', { name: 'Play', exact: true }).click()
+    expect((await state()).playCalls).toBeGreaterThan(afterBlock.playCalls ?? 0)
+  })
+})

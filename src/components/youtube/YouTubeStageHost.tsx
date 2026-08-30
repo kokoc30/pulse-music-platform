@@ -2,7 +2,11 @@ import { useEffect, useRef } from 'react'
 import type { YouTubeVideoItem } from '@/music/types'
 import { bindYouTubeEngineEvents, handleDocumentVisibility } from '@/player/youtube-actions'
 import { MINIMUM_DIMENSION, getYouTubeEngine } from '@/player/youtube-engine'
-import { resetYouTubeVisibility, setYouTubeVisibleRatio } from '@/player/youtube-visibility'
+import {
+  registerYouTubeStageElement,
+  resetYouTubeVisibility,
+  setYouTubeVisibleRatio,
+} from '@/player/youtube-visibility'
 import { useYouTubeStore } from '@/player/youtube-store'
 
 /**
@@ -117,6 +121,13 @@ export function YouTubeStageHost({ item }: { item: YouTubeVideoItem }) {
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
+
+    // Registered before anything is observed, so "is there a real, laid-out
+    // player yet?" is answerable during the very frames the reveal is still
+    // settling. A waiter uses it to tell "no player" from "player off screen",
+    // which are the same zero and must not resolve the same way.
+    registerYouTubeStageElement(host)
+
     if (typeof IntersectionObserver === 'undefined') {
       // Nothing observed means nothing may auto-advance. Cueing still works.
       resetYouTubeVisibility()
@@ -158,11 +169,19 @@ export function YouTubeStageHost({ item }: { item: YouTubeVideoItem }) {
      * transport pointing at a player that no longer exists, and a video that
      * silently restarts from zero.
      *
-     * Cue, never play. A remount is not a user gesture.
+     * Cue, never play. A remount is not a user gesture, and it is not an
+     * authorised automatic start either — nothing has measured anything.
+     *
+     * It rarely runs now, and that is deliberate. A transition that is about to
+     * play cues the item itself during phase 1, which sets the engine's current
+     * item before this effect ever sees it. The restore path is therefore back
+     * to being what its name says — a restore — rather than a second request
+     * racing the first, which is how a cue once landed on top of a play and
+     * stopped a video that had just started.
      */
     if (!engine.getCurrentItem()) {
       const resumeAt = useYouTubeStore.getState().currentTime
-      void engine.cue(itemRef.current).then(() => {
+      void engine.start(itemRef.current, { mode: 'cue' }).then(() => {
         if (resumeAt > 0) engine.seek(resumeAt)
       })
     }

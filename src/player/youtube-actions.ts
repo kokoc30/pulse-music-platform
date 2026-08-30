@@ -19,14 +19,18 @@ import {
   fetchRelated,
   notePlayed,
 } from './related-fetcher'
+import { beginPlaybackTrace, tracePlayback } from './playback-trace'
 import { getYouTubeEngine } from './youtube-engine'
+import type { PlaybackStartMode } from './youtube-engine'
 import {
+  hasMeasuredYouTubeVisibility,
   documentHidden as isDocumentHidden,
   waitForYouTubeVisibility,
+  youTubeVisibilitySnapshot,
   youTubeVisibleRatio,
 } from './youtube-visibility'
 import { useYouTubeStore } from './youtube-store'
-import type { YouTubePlaybackState, YouTubeStatus } from './youtube-store'
+import type { AwaitingPlayReason, YouTubePlaybackState, YouTubeStatus } from './youtube-store'
 
 /**
  * Every way YouTube playback can start, change or stop.
@@ -137,47 +141,122 @@ function documentIsHidden(explicit?: boolean): boolean {
 }
 
 /**
- * Phase 2: whether the player that has just been revealed may start itself.
+ * Two separate facts about one transition, deliberately not one boolean.
  *
- * Three routes, and only the third waits for anything.
+ * `directUserGesture` answers "did a human just press something". `mode` answers
+ * "is the engine to play this or merely cue it". They are related but not the
+ * same, and collapsing them is what made an authorised automatic start have to
+ * describe itself to the engine as a click. `reason` is why the decision came
+ * out as it did, which is the thing the reported failure needed and nobody had.
+ */
+export interface StartDecision {
+  mode: PlaybackStartMode
+  directUserGesture: boolean
+  /** Null when the answer was `'play'`; otherwise why it was not. */
+  withheld: AwaitingPlayReason | null
+  /** The ratio the decision was actually made on, for the trace. */
+  visibleRatio: number
+  measured: boolean
+  waitedMs: number
+}
+
+/**
+ * Phase 2: decide what the revealed player is allowed to do, and prove it can.
+ *
+ * Four routes, and only the last one waits for anything:
  *
  * · **A gesture** needs no measurement. `mayAutoplay` has always said so, and
  *   the visibility sentence is about *automatic* playback.
  * · **A hidden document** is refused outright, before any wait. There is nothing
  *   an observer could report that would make playing into a locked screen
- *   acceptable, and waiting 700ms to reach the same answer would only delay the
- *   cue.
- * · **Anything else** waits, bounded, for the real observer on the stage that
- *   phase 1 has just mounted. A caller that already holds a measurement passes
- *   it and skips the wait.
+ *   acceptable, and waiting to reach the same answer would only delay the cue.
+ * · **A caller holding a measurement** — a transition inside an already-open
+ *   player — uses it and skips the wait entirely.
+ * · **Anything else** waits, bounded, for the real observer on the stage phase 1
+ *   has just revealed, and then for the player to actually become usable.
+ *
+ * **Readiness is part of the decision, not an afterthought.** Visibility and
+ * readiness are independent: the box can be laid out and measured a second or
+ * more before the IFrame API script has loaded and built a player inside it.
+ * Deciding to autoplay on the strength of visibility alone, and then issuing the
+ * command into a player that does not exist, is a command that does nothing —
+ * the video sits on a thumbnail with the store insisting it is loading. So the
+ * two waits run together and the decision is taken after both.
  *
  * Nothing here manufactures a ratio. The number that reaches `mayAutoplay` is
- * either one the caller measured or one an `IntersectionObserver` reported, and
- * a wait that times out carries the last real observation — zero, when there
- * never was one, which resolves to *cue and ask for a press*.
+ * either one the caller measured or one an `IntersectionObserver` reported on
+ * the real stage element; a wait that ends without one carries `measured:
+ * false`, which resolves to *cue and ask for a press*.
  */
-async function resolveAutoplay(options: StartOptions): Promise<boolean> {
-  if (options.userInitiated) return true
+async function decideStart(options: StartOptions): Promise<StartDecision> {
+  const base = { directUserGesture: options.userInitiated }
 
-  const hidden = documentIsHidden(options.documentHidden)
-  if (hidden) return false
-
-  if (typeof options.visibleRatio === 'number') {
-    return mayAutoplay({ ...options, documentHidden: hidden })
+  if (options.userInitiated) {
+    tracePlayback('decide:gesture')
+    return { ...base, mode: 'play', withheld: null, visibleRatio: 1, measured: true, waitedMs: 0 }
   }
 
-  const measurement = await waitForYouTubeVisibility({
-    minimumRatio: AUTOPLAY_VISIBILITY_RATIO,
-  })
+  if (documentIsHidden(options.documentHidden)) {
+    tracePlayback('decide:document-hidden')
+    return {
+      ...base,
+      mode: 'cue',
+      withheld: 'document-hidden',
+      visibleRatio: youTubeVisibleRatio(),
+      measured: hasMeasuredYouTubeVisibility(),
+      waitedMs: 0,
+    }
+  }
+
+  if (typeof options.visibleRatio === 'number') {
+    const allowed = mayAutoplay({ ...options, documentHidden: false })
+    tracePlayback('decide:caller-measured', { ratio: options.visibleRatio, allowed })
+    return {
+      ...base,
+      mode: allowed ? 'play' : 'cue',
+      withheld: allowed ? null : 'visibility',
+      visibleRatio: options.visibleRatio,
+      measured: true,
+      waitedMs: 0,
+    }
+  }
+
+  tracePlayback('decide:waiting', youTubeVisibilitySnapshot())
+  const engine = getYouTubeEngine()
+  const [measurement, ready] = await Promise.all([
+    waitForYouTubeVisibility({ minimumRatio: AUTOPLAY_VISIBILITY_RATIO }),
+    engine.whenReady(),
+  ])
+  tracePlayback('decide:measured', { ...measurement, playerReady: ready })
 
   // Re-read the document rather than trusting the value from before the wait:
   // the visitor may have switched away while the surface was being revealed, and
   // starting a video into that is exactly what the background rule forbids.
-  return mayAutoplay({
+  const hidden = documentIsHidden(options.documentHidden)
+  const allowed = mayAutoplay({
     userInitiated: false,
     visibleRatio: measurement.ratio,
-    documentHidden: documentIsHidden(options.documentHidden),
+    documentHidden: hidden,
   })
+
+  const withheld: AwaitingPlayReason | null = hidden
+    ? 'document-hidden'
+    : !allowed
+      ? 'visibility'
+      : !ready
+        ? 'player-not-ready'
+        : null
+
+  return {
+    ...base,
+    // A player that never became usable is cued rather than played: issuing a
+    // start into nothing would leave the store claiming `loading` for ever.
+    mode: allowed && ready ? 'play' : 'cue',
+    withheld,
+    visibleRatio: measurement.ratio,
+    measured: measurement.measured,
+    waitedMs: measurement.elapsedMs,
+  }
 }
 
 /**
@@ -226,6 +305,32 @@ export async function playYouTubeVideo(
     return false
   }
 
+  return runStartSequence(item, options, store, () => {
+    void ensureYouTubeSessionDepth(store)
+  })
+}
+
+/**
+ * Reveal, decide, start — the three phases, in one place for both entry points.
+ *
+ * `playYouTubeVideo` and `playSessionItem` differ only in what they do to the
+ * session around this, so the sequence itself lives here rather than being
+ * written twice and drifting.
+ */
+async function runStartSequence(
+  item: YouTubeVideoItem,
+  options: StartOptions,
+  store: Store,
+  afterStart: () => void,
+): Promise<boolean> {
+  beginPlaybackTrace(`youtube:${item.videoId}`)
+  tracePlayback('reveal:begin', {
+    reason: options.reason ?? 'user-selection',
+    userInitiated: options.userInitiated,
+    documentHidden: documentIsHidden(options.documentHidden),
+    nowPlayingOpen: useUiStore.getState().nowPlayingOpen,
+  })
+
   // PHASE 1 — REVEAL. Giving the read model an item mounts the stage; preparing
   // the surface takes the engine claim and, for a real playback route into
   // YouTube, opens the expanded view the player belongs in.
@@ -233,27 +338,66 @@ export async function playYouTubeVideo(
   prepareYouTubePlaybackSurface(options.reason)
   notePlayed(item.id)
 
-  // PHASE 2 — MEASURE. Only ever skipped for a gesture, which needs no
-  // measurement, or for a caller that has already taken one.
-  const autoplay = await resolveAutoplay(options)
+  const engine = getYouTubeEngine()
+
+  /**
+   * A transition that is going to wait prepares the player *while* it waits.
+   *
+   * Cueing is the documented way to build and line up a player without
+   * initiating playback: no audiovisual content starts, nothing is hidden, no
+   * Data API quota is spent, and it is exactly what the engine would do a moment
+   * later anyway. Doing it here rather than after the decision means the IFrame
+   * API script and the iframe are being built during the very milliseconds the
+   * visibility observer is settling, instead of afterwards — which is most of
+   * the latency between "the list moved on" and "the video started" on a phone.
+   *
+   * It also removes a race by construction: setting the engine's current item
+   * now means the stage's remount-restore branch finds one and stays quiet,
+   * rather than issuing a cue of its own alongside the play.
+   *
+   * Two callers skip it, and both would be paying for nothing:
+   *
+   * · **A direct gesture** goes straight to a play command. Inserting an extra
+   *   round trip into a human's press is the one case where this costs.
+   * · **A caller that already holds a measurement** — a step inside an open
+   *   player — is not going to wait either, and its player is already built.
+   */
+  const willWait = !options.userInitiated && typeof options.visibleRatio !== 'number'
+  if (willWait) {
+    tracePlayback('prepare:cue')
+    void engine.start(item, { mode: 'cue' }).catch(() => {
+      // A failure here is reported by the play attempt that follows it.
+    })
+  }
+
+  // PHASE 2 — DECIDE. Visibility and player readiness, together, bounded.
+  const decision = await decideStart(options)
+  tracePlayback('decide:result', { ...decision })
 
   // PHASE 3 — START OR CUE.
-  if (autoplay && store.getState().status === 'cued') store.getState().setStatus('loading')
+  if (decision.mode === 'play' && store.getState().status === 'cued') {
+    store.getState().setStatus('loading')
+  }
 
   try {
-    const engine = getYouTubeEngine()
-    await engine.play(item, { userInitiated: autoplay })
+    await engine.start(item, { mode: decision.mode })
+    tracePlayback('engine:started', { mode: decision.mode, isPlaying: engine.isPlaying() })
+
     // Reflect what the engine actually did rather than what was asked for. The
     // subscription in `bindYouTubeEngineEvents` will keep correcting this, but
     // the store must not be left claiming `loading` if playback is already
     // under way — the surface's own play/pause control reads it.
-    if (!autoplay) store.getState().setAwaitingUserPlay(true)
-    else if (engine.isPlaying()) store.getState().setStatus('playing')
-    void ensureYouTubeSessionDepth(store)
+    if (decision.mode === 'cue') {
+      store.getState().setAwaitingUserPlay(true, decision.withheld ?? 'visibility')
+    } else if (engine.isPlaying()) {
+      store.getState().setStatus('playing')
+    }
+    afterStart()
     return true
   } catch (error) {
     const message =
       error instanceof Error && error.message ? error.message : 'YouTube could not play this video.'
+    tracePlayback('engine:error', { message })
     store.getState().setError(message)
     return false
   }
@@ -272,8 +416,8 @@ export async function cueYouTubeVideo(
   store.getState().openWith(item, 'cued')
   prepareYouTubePlaybackSurface(reason)
   try {
-    await getYouTubeEngine().cue(item)
-    store.getState().setAwaitingUserPlay(true)
+    await getYouTubeEngine().start(item, { mode: 'cue' })
+    store.getState().setAwaitingUserPlay(true, 'visibility')
     return true
   } catch (error) {
     const message =
@@ -562,32 +706,23 @@ async function playSessionItem(
     return false
   }
 
-  // The same reveal → measure → start sequence `playYouTubeVideo` performs, and
+  // The same reveal → decide → start sequence `playYouTubeVideo` performs, and
   // for the same reason: the ratio must describe the player as it is now, not as
-  // it was before this transition began. Inside a running session the wait is
-  // free — the stage is mounted and the observer has already reported.
-  store.getState().openWith(item, options.userInitiated ? 'loading' : 'cued')
+  // it was before this transition began. Inside a running session it costs
+  // nothing — `advanceYouTubeSession` supplies its own measurement, so there is
+  // no wait at all, and the stage and player already exist.
+  const started = await runStartSequence(
+    item,
+    { ...options, reason: options.reason ?? 'session-step' },
+    store,
+    () => {
+      // Not awaited: the video is already running, and the session is topped up
+      // over it rather than in the silence after it.
+      void ensureYouTubeSessionDepth(store)
+    },
+  )
   if (index >= 0) store.getState().setSessionIndex(index)
-  prepareYouTubePlaybackSurface(options.reason ?? 'session-step')
-
-  const autoplay = await resolveAutoplay(options)
-  if (autoplay && store.getState().status === 'cued') store.getState().setStatus('loading')
-
-  try {
-    const engine = getYouTubeEngine()
-    await engine.play(item, { userInitiated: autoplay })
-    if (!autoplay) store.getState().setAwaitingUserPlay(true)
-    else if (engine.isPlaying()) store.getState().setStatus('playing')
-    // Not awaited: the video is already running, and the session is topped up
-    // over it rather than in the silence after it.
-    void ensureYouTubeSessionDepth(store)
-    return true
-  } catch (error) {
-    const message =
-      error instanceof Error && error.message ? error.message : 'YouTube could not play this video.'
-    store.getState().setError(message)
-    return false
-  }
+  return started
 }
 
 /** Cues one session item without playing it, keeping the session intact. */
@@ -600,8 +735,8 @@ async function cueSessionItem(
   store.getState().setSessionIndex(index)
   prepareYouTubePlaybackSurface('session-step')
   try {
-    await getYouTubeEngine().cue(item)
-    store.getState().setAwaitingUserPlay(true)
+    await getYouTubeEngine().start(item, { mode: 'cue' })
+    store.getState().setAwaitingUserPlay(true, 'visibility')
     return true
   } catch (error) {
     const message =
@@ -1042,11 +1177,27 @@ export function bindYouTubeEngineEvents(store: Store = useYouTubeStore): () => v
       if (!store.getState().continuousPlay && !collectionOwnsCurrentVideo(store)) return
       advanceOnce(store)
     },
+    /**
+     * The browser or the provider refused a play this application did issue.
+     *
+     * Recorded as its own reason rather than folded into the generic "waiting
+     * for a press", because it is the one outcome that is **not** an
+     * application decision: the visibility rule passed, the player was ready,
+     * the command went out, and the refusal came back. Reporting it as an
+     * ordinary cue is what made the reported failure impossible to place from
+     * the outside.
+     *
+     * One attempt per transition, and that is the whole of the response. There
+     * is no retry, no timer, no second `playVideo`, and none of the tricks that
+     * would amount to working around an autoplay policy — a muted start, a
+     * synthetic gesture, a hidden element. The honest affordance for a refusal
+     * is a Play button, and the visitor already has exactly one.
+     */
     onAutoplayBlocked: () => {
-      // The browser refused; ask for a press rather than retrying, which would
-      // be an attempt to work around the block.
+      tracePlayback('engine:autoplay-blocked')
       store.getState().setStatus('paused')
-      store.getState().setAwaitingUserPlay(true)
+      store.getState().setAwaitingUserPlay(true, 'autoplay-blocked')
     },
+    onCommand: (command, videoId) => tracePlayback('engine:command', { command, videoId }),
   })
 }

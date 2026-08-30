@@ -15,6 +15,7 @@ import { useUiStore } from '@/app/ui-store'
 import { LikeButton } from '@/components/library/LikeButton'
 import { TrackMenu } from '@/components/library/TrackMenu'
 import { Artwork } from '@/components/track/Artwork'
+import { isPlaybackDebugEnabled, lastTraceDetail, tracedSteps } from '@/player/playback-trace'
 import { usePlayerStore } from '@/player/player-store'
 import { REPEAT_LABELS } from '@/player/queue-order'
 import {
@@ -130,6 +131,10 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
         </p>
       ) : null}
 
+      <AutoplayBlockedNotice />
+
+      <PlaybackDebugReadout />
+
       <PlayerProgress
         currentTime={snapshot.currentTime}
         duration={snapshot.duration}
@@ -223,6 +228,98 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
         </div>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * One quiet line, for the one case the visitor cannot otherwise make sense of.
+ *
+ * A video sitting on a thumbnail looks identical whether this application chose
+ * not to start it or the browser refused to let it. Those need different words,
+ * and only one of them needs any:
+ *
+ * · **Visibility, a hidden document, a player that never became usable** — the
+ *   app's own decisions, taken while the visitor was elsewhere or the player was
+ *   not really on screen. A Play button is a complete answer; a sentence
+ *   explaining an internal rule would be noise.
+ * · **The browser refused a play this app did issue** — a saved list moved on,
+ *   the player is right there, and pressing Play is the only thing that will
+ *   work. Saying so is the difference between a considered design and something
+ *   that looks broken.
+ *
+ * Deliberately not an error, and deliberately not phrased as a failure: nothing
+ * went wrong, and nothing in this codebase should try to work around it.
+ */
+function AutoplayBlockedNotice() {
+  const reason = useYouTubeStore((state) => state.awaitingUserPlayReason)
+  const awaiting = useYouTubeStore((state) => state.awaitingUserPlay)
+
+  if (!awaiting || reason !== 'autoplay-blocked') return null
+
+  return (
+    <p className="now-playing-hint" role="status">
+      Your browser asked for a tap before playing this video.
+    </p>
+  )
+}
+
+/**
+ * The diagnostic readout, for a debug build and for nothing else.
+ *
+ * A physical phone is the one place the reported failure reproduces and the one
+ * place a debugger is least useful, so the trace the transition already records
+ * is shown on the device that produced it. It says which of the two candidate
+ * causes actually happened — a ratio that never cleared the bar, or a play
+ * command the browser refused — which is the whole question.
+ *
+ * Off unless `?debugPlayback=1` or the matching `localStorage` key is set, and
+ * it renders nothing at all otherwise. It shows the app's own measurements: no
+ * keys, no identifiers, nothing from a provider payload.
+ */
+function PlaybackDebugReadout() {
+  const reason = useYouTubeStore((state) => state.awaitingUserPlayReason)
+  const status = useYouTubeStore((state) => state.status)
+
+  if (!isPlaybackDebugEnabled()) return null
+
+  const decision = lastTraceDetail('decide:result') ?? {}
+  const measurement = lastTraceDetail('visibility:resolved') ?? {}
+  const command = lastTraceDetail('engine:command') ?? {}
+
+  /**
+   * Rendered as text, so anything that is not already a primitive becomes a
+   * dash rather than `[object Object]` — a readout nobody can act on is worse
+   * than an absent one. The trace's details are `unknown` by design: it records
+   * what happened, and it is not the trace's job to know how this draws it.
+   */
+  const show = (value: unknown): string => {
+    if (typeof value === 'string') return value
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+    return '—'
+  }
+
+  const rows: [string, unknown][] = [
+    ['status', status],
+    ['ratio', decision.visibleRatio],
+    ['measured', decision.measured],
+    ['waited (ms)', decision.waitedMs],
+    ['wait ended', measurement.outcome],
+    ['decision', decision.mode],
+    ['withheld', decision.withheld],
+    ['command', command.command],
+    ['blocked', tracedSteps().includes('engine:autoplay-blocked')],
+    ['awaiting', reason],
+  ]
+
+  return (
+    <dl className="playback-debug" aria-label="Playback diagnostics">
+      {rows.map(([name, value]) => (
+        <div key={name}>
+          <dt>{name}</dt>
+          <dd>{show(value)}</dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 

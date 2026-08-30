@@ -503,7 +503,17 @@ const youtubePayload = (spec: YouTubeSpec) => ({
 const FAKE_IFRAME_API = `
 (function () {
   var STATE = { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 }
-  window.__pulseYouTube = { created: 0, playCalls: 0, lastVideoId: null, playing: false, destroyed: 0 }
+  window.__pulseYouTube = {
+    created: 0, playCalls: 0, lastVideoId: null, playing: false, destroyed: 0,
+    // Every documented command the app issued, in order. This is what makes
+    // 'the app asked and the browser refused' distinguishable from 'the app
+    // never asked' — the single question the reported failure turned on.
+    commands: [],
+    // Flipped by a test to make this player behave like a mobile browser that
+    // declines a scripted, unmuted start. Off by default.
+    blockAutoplay: false,
+    blocked: 0,
+  }
 
   function Player(element, config) {
     var self = this
@@ -531,13 +541,29 @@ const FAKE_IFRAME_API = `
       }
     }
 
-    this.cueVideoById = function (id) { window.__pulseYouTube.lastVideoId = id; fire(STATE.CUED) }
+    function refuse() {
+      window.__pulseYouTube.blocked += 1
+      if (config.events && config.events.onAutoplayBlocked) config.events.onAutoplayBlocked()
+    }
+
+    this.cueVideoById = function (id) {
+      window.__pulseYouTube.commands.push('cue')
+      window.__pulseYouTube.lastVideoId = id
+      fire(STATE.CUED)
+    }
     this.loadVideoById = function (id) {
+      window.__pulseYouTube.commands.push('loadVideoById')
       window.__pulseYouTube.lastVideoId = id
       window.__pulseYouTube.playCalls += 1
+      if (window.__pulseYouTube.blockAutoplay) return refuse()
       fire(STATE.PLAYING)
     }
-    this.playVideo = function () { window.__pulseYouTube.playCalls += 1; fire(STATE.PLAYING) }
+    this.playVideo = function () {
+      window.__pulseYouTube.commands.push('playVideo')
+      window.__pulseYouTube.playCalls += 1
+      if (window.__pulseYouTube.blockAutoplay) return refuse()
+      fire(STATE.PLAYING)
+    }
     // Test seam: drive a natural end, which is the one state a test cannot
     // reach by pressing anything.
     window.__pulseYouTube.endCurrent = function () { fire(STATE.ENDED) }
