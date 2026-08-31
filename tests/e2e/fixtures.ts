@@ -497,14 +497,19 @@ const youtubePayload = (spec: YouTubeSpec) => ({
  *
  * It implements only the documented surface the app uses: the `YT.Player`
  * constructor with `width`/`height`/`videoId`/`playerVars`/`events`, the
- * playback methods, `getIframe`, `destroy`, and the `onReady`/`onStateChange`
- * events carrying the documented state numbers.
+ * playback methods, `seekTo`, `getIframe`, `destroy`, and the
+ * `onReady`/`onStateChange` events carrying the documented state numbers.
  */
 const FAKE_IFRAME_API = `
 (function () {
   var STATE = { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 }
   window.__pulseYouTube = {
     created: 0, playCalls: 0, lastVideoId: null, playing: false, destroyed: 0,
+    // The unified seek rail and the expanded ten-second controls both drive the
+    // player through the documented seekTo. Recording the argument is what lets
+    // a test assert the app moved the real playhead rather than only its own
+    // progress state.
+    seekCalls: 0, lastSeek: null,
     // Every documented command the app issued, in order. This is what makes
     // 'the app asked and the browser refused' distinguishable from 'the app
     // never asked' — the single question the reported failure turned on.
@@ -591,6 +596,13 @@ const FAKE_IFRAME_API = `
       if (!window.__pulseYouTube.playing) return startedAt
       startedAt = Math.min(startedAt + 1, 213)
       return startedAt
+    }
+    // Documented seekTo(seconds, allowSeekAhead). The clock follows it, as a
+    // real player does, so a seek is observable through getCurrentTime.
+    this.seekTo = function (seconds) {
+      window.__pulseYouTube.seekCalls += 1
+      window.__pulseYouTube.lastSeek = seconds
+      startedAt = Math.max(0, Math.min(seconds, 213))
     }
     this.getDuration = function () { return 213 }
     this.getPlayerState = function () { return state }

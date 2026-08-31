@@ -717,11 +717,38 @@ export async function cueYouTubeVideo(
 export function seekYouTube(seconds: number, store: Store = useYouTubeStore): void {
   const state = store.getState()
   if (!state.item || !Number.isFinite(seconds)) return
-  const { duration } = state
-  if (duration <= 0) return
-  const clamped = Math.min(Math.max(seconds, 0), duration)
+  const limit = youTubeSeekLimit(state)
+  if (limit <= 0) return
+  const clamped = Math.min(Math.max(seconds, 0), limit)
   getYouTubeEngine().seek(clamped)
-  state.setProgress(clamped, duration)
+  // The *position* is written back; the duration is left exactly as it was. A
+  // length that came from the item's metadata is not something the player has
+  // reported, and writing it into the store would turn a display fallback into
+  // a claim about the embed. The engine's own progress tick replaces both with
+  // the player's figures as soon as there are any.
+  state.setProgress(clamped, state.duration)
+}
+
+/**
+ * How far the playhead may be moved, in seconds — the same number the rail
+ * displays.
+ *
+ * The store's `duration` is zero until the embed reports one, and the read model
+ * has always covered that gap with the item's own published length so the rail
+ * is never dead on arrival. Seeking used to consult the store alone, so for the
+ * seconds — or, on a cued video, minutes — before the player reported anything,
+ * the app drew a live scrubber over a seek that silently refused.
+ *
+ * That was tolerable while the rail was the only thing on it. It is not
+ * tolerable now that the ten-second controls sit beside it: a button that looks
+ * enabled and does nothing is exactly the kind of dishonest control this pass
+ * exists to remove. So both read the same figure.
+ *
+ * The engine still clamps against the player's own duration, which is
+ * authoritative; this is the app's gate, not the player's.
+ */
+export function youTubeSeekLimit(state: YouTubePlaybackState): number {
+  return state.duration || state.item?.durationSeconds || 0
 }
 
 /**

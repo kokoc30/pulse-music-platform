@@ -39,6 +39,34 @@ const youtubeGlobals = () =>
   (window as unknown as { __pulseYouTube?: { playing?: boolean; created?: number } })
     .__pulseYouTube ?? {}
 
+/**
+ * Ends the current video through the documented `onStateChange` the fake API
+ * fires, once there is a player to end.
+ *
+ * The wait is the point. `endCurrent` is installed by the `YT.Player`
+ * constructor, and the player is built asynchronously — script, then instance,
+ * then `onReady` — so reaching for it the instant the sheet becomes visible is a
+ * race that loses occasionally and reads as
+ * "Cannot read properties of undefined". `continuous-playback.spec.ts` already
+ * guards it exactly this way; this file had two unguarded call sites.
+ */
+async function endCurrentVideo(page: Page) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          typeof (window as unknown as { __pulseYouTube?: { endCurrent?: unknown } }).__pulseYouTube
+            ?.endCurrent === 'function',
+      ),
+    )
+    .toBe(true)
+  await page.evaluate(() =>
+    (
+      window as unknown as { __pulseYouTube: { endCurrent: () => void } }
+    ).__pulseYouTube.endCurrent(),
+  )
+}
+
 /** Jumps to the last moment of the audio stub rather than waiting it out. */
 async function runTrackToEnd(page: Page) {
   await expect
@@ -245,11 +273,7 @@ test.describe('a saved list reaching a video on its own', () => {
     const sheet = nowPlayingSheet(page)
     await expect(sheet).toBeVisible()
 
-    await page.evaluate(() =>
-      (
-        window as unknown as { __pulseYouTube: { endCurrent: () => void } }
-      ).__pulseYouTube.endCurrent(),
-    )
+    await endCurrentVideo(page)
 
     await expect(sheet.getByRole('heading', { name: 'Night Drive' })).toBeVisible({
       timeout: 15_000,
@@ -311,11 +335,30 @@ test.describe('the same hand-off on a desktop', () => {
     await expect(sheet.getByTestId('youtube-stage')).toBeVisible()
     await expect(player(page).getByRole('button', { name: /^(Play|Pause)$/ })).toHaveCount(1)
 
-    // A centred stage with room for a 16:9 video, rather than a narrow sheet
-    // with one squeezed into it.
+    /**
+     * A centred 16:9 media **card**, not a stage the sheet is built around.
+     *
+     * This asserted `width >= 480` — the IFrame API's recommended size — on the
+     * reasoning that a widescreen player wants room a square cover does not. It
+     * does, and taking it produced the complaint this pass answers: the sheet
+     * widened to 820px for a video and filled 760px of it with the embed, so
+     * Now Playing changed size and proportion depending on what was loaded and
+     * the app's own controls read as an afterthought below the video.
+     *
+     * The floor that actually matters is the documented one — 200 x 200 — and it
+     * is asserted here rather than a recommendation the layout has outgrown. The
+     * upper bound is the new claim: the card sits *inside* the sheet.
+     */
     const box = (await sheet.getByTestId('youtube-stage').boundingBox())!
-    expect(box.width).toBeGreaterThanOrEqual(480)
+    const sheetBox = (await sheet.boundingBox())!
+    expect(box.width).toBeGreaterThanOrEqual(200)
+    expect(box.height).toBeGreaterThanOrEqual(200)
     expect(box.width / box.height).toBeCloseTo(16 / 9, 1)
+    expect(box.width).toBeLessThan(sheetBox.width)
+    // Centred in it, exactly where a cover would be.
+    expect(Math.abs(box.x + box.width / 2 - (sheetBox.x + sheetBox.width / 2))).toBeLessThanOrEqual(
+      2,
+    )
   })
 })
 
@@ -651,11 +694,7 @@ test.describe('a player that loads, buffers and falls back to cued', () => {
     await expect(sheet.getByRole('button', { name: 'Pause' })).toBeVisible()
 
     // And when it ends, the collection continues to the next saved song.
-    await page.evaluate(() =>
-      (
-        window as unknown as { __pulseYouTube: { endCurrent: () => void } }
-      ).__pulseYouTube.endCurrent(),
-    )
+    await endCurrentVideo(page)
     await expect(sheet.getByRole('heading', { name: 'Night Drive' })).toBeVisible({
       timeout: 15_000,
     })

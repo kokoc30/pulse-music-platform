@@ -63,7 +63,8 @@
 .player-shell[data-mode='collapsed'] .yt-stage-frame {
   flex: none;
   width: min(var(--yt-stage-docked-width), 100%);
-  height: var(--yt-stage-min);
+  /* The floor plus its rounding clearance — see `--yt-stage-floor`. */
+  height: var(--yt-stage-floor);
   border-radius: var(--radius-bar);
   overflow: hidden;
   box-shadow: var(--shadow-bar);
@@ -115,30 +116,44 @@
   width: 100%;
 }
 
-/* A video wants width where a square cover does not. The 16:9 stage is given
-   the room the IFrame API recommends for one (480 x 270 and up), centred, which
-   is what makes the desktop view a single coherent Now Playing screen rather
-   than a narrow sheet with a video squeezed into it. */
-.player-shell[data-mode='expanded'][data-stage='youtube'] {
-  width: min(820px, 100%);
-}
-
 /* ==========================================================================
    The primary media region
 
    Same slot for both engines and the same place on the screen: directly under
    the grab handle, above the title. A track draws a large square cover into it
    (`.now-playing-art`, in now-playing.css); a video *is* the live player.
+
+   **The sheet is one width now.** A video used to widen the whole surface to
+   820px and fill 760px of it with the embed, on the reasoning that a widescreen
+   player wants room a square cover does not. It does — and the result was a
+   Now Playing screen that changed size and proportion depending on what was
+   loaded, with a video dominating a sheet whose own controls were an
+   afterthought beneath it. The shell keeps its single `min(560px, 100%)` for
+   both engines, and the stage becomes a *card* in the media slot rather than
+   the slot itself: same centred position, same radius, same shadow and
+   comparable weight to the cover it replaces.
+
+   The one place the old widening was actually earning its keep is the short
+   landscape screen, where the layout is two columns; it is kept there and
+   nowhere else.
    ========================================================================== */
 
 .player-shell[data-mode='expanded'] .yt-stage-frame {
   align-self: center;
-  width: 100%;
-  max-width: 760px;
+  width: min(var(--yt-stage-expanded-width), 100%);
+  max-width: 100%;
   aspect-ratio: 16 / 9;
-  /* The documented floor still applies here, and a very short landscape screen
-     is exactly where a percentage height would quietly breach it. */
-  min-height: var(--yt-stage-min);
+  /* The documented floor still applies here, and it is also the reason this
+     card cannot be made smaller: 16:9 at 200px tall is 356px wide, so a phone's
+     content width is already close to the minimum compliant size. Where the
+     floor and the ratio disagree by a pixel the floor wins — the embed
+     letterboxes inside its own frame, so nothing is ever distorted.
+
+     On a phone this is the binding constraint rather than a safety net, which
+     is exactly why it carries the rounding clearance: the card is *at* the
+     floor there, and a box laid out at exactly 200px measures fractionally
+     under it on a fractional device-pixel grid. */
+  min-height: var(--yt-stage-floor);
   border-radius: var(--radius-surface);
   overflow: hidden;
   box-shadow: var(--shadow-play);
@@ -163,8 +178,14 @@
     padding-left: 18px;
     padding-right: 18px;
     /* Centres the stack on a tall screen without stranding it on a short one:
-       the column scrolls rather than pushing the transport off the bottom. */
+       the column scrolls rather than pushing the transport off the bottom.
+       `safe` matters and is not decoration: a centred flex column that overflows
+       pushes its *first* child past the scroll origin, where no amount of
+       scrolling reaches it — which on a short phone is the grab handle and the
+       video above the controls. `center` is declared first so a browser without
+       `safe` keeps the old behaviour rather than falling back to `normal`. */
     justify-content: center;
+    justify-content: safe center;
     gap: 18px;
   }
 }
@@ -207,6 +228,10 @@
   }
 
   .player-shell[data-mode='expanded'][data-stage='youtube'] {
+    /* The one case that still earns the extra width: two columns side by side,
+       with a 200px-floor video in the left one. In portrait and on the desktop
+       the sheet is the same `min(560px, 100%)` a track gets. */
+    width: min(760px, 100%);
     display: grid;
     grid-template-columns: minmax(0, 1.15fr) minmax(230px, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
@@ -223,6 +248,9 @@
 
   .player-shell[data-mode='expanded'][data-stage='youtube'] .yt-stage-frame {
     align-self: start;
+    /* Fills its grid column here rather than sitting as a small card inside it:
+       the column *is* the media region in this layout. */
+    width: 100%;
     max-width: 100%;
   }
 

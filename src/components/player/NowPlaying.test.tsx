@@ -528,14 +528,35 @@ describe('it is the expanded view for the video player too', () => {
 
     const dialog = sheet()!
     // Absent, not disabled: a shuffle button over a result session would be a
-    // promise the app cannot keep.
+    // promise the app cannot keep. A result session has no running order to
+    // reorder or repeat, no queue panel behind it, and the embed's volume is the
+    // visitor's own business through YouTube's native controls.
     expect(within(dialog).queryByRole('button', { name: /Shuffle/i })).not.toBeInTheDocument()
     expect(within(dialog).queryByRole('button', { name: /Repeat/i })).not.toBeInTheDocument()
     expect(within(dialog).queryByRole('button', { name: /Up next/i })).not.toBeInTheDocument()
     expect(within(dialog).queryByRole('slider', { name: 'Volume' })).not.toBeInTheDocument()
+
+    /**
+     * The ten-second controls are **not** in that set, and this assertion is the
+     * reverse of what it used to be.
+     *
+     * It read `not.toBeInTheDocument()`, because the buttons were gated on
+     * `can.queue` — which is not what they are about. A queue is a running
+     * order; moving ten seconds inside one item has nothing to do with having
+     * one. The gate merely happened to spell "audio only", and the result was a
+     * transport row that changed shape depending on which engine was loaded:
+     * five controls for a track, three for a video, in the same slot on the same
+     * screen. That is the difference between one player and two.
+     *
+     * Seeking is genuinely supported here — the engine drives YouTube's own
+     * documented `seekTo` — so withholding the control was not honesty about a
+     * limitation, it was an inconsistency. Nothing is faked to satisfy this: the
+     * controls that a video really has no answer for are still absent above.
+     */
+    expect(within(dialog).getByRole('button', { name: 'Seek back 10 seconds' })).toBeInTheDocument()
     expect(
-      within(dialog).queryByRole('button', { name: 'Seek back 10 seconds' }),
-    ).not.toBeInTheDocument()
+      within(dialog).getByRole('button', { name: 'Seek forward 10 seconds' }),
+    ).toBeInTheDocument()
 
     // What every provider does get, it still gets.
     expect(within(dialog).getByRole('slider', { name: 'Seek' })).toBeInTheDocument()

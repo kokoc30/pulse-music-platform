@@ -354,6 +354,115 @@ test.describe('it is the video player’s own view', () => {
    * then browse. What must survive that is the player itself — the same iframe,
    * never rebuilt, because reparenting or remounting one reloads the video.
    */
+  /**
+   * The corrective pass: one expanded player, whichever engine is loaded.
+   *
+   * The sheet used to widen from 560px to 820px for a video and fill 760px of it
+   * with the embed, so Now Playing changed size and proportion depending on what
+   * was playing. The stage is a media *card* in the same slot now, comparable in
+   * weight to the cover it stands in for, inside a sheet that is one width.
+   */
+  test('is the same sheet, at the same width, with a compact media card', async ({ page }) => {
+    await playVideoExpanded(page)
+    const videoSheet = (await sheet(page).boundingBox())!
+    const stage = (await page.locator('.yt-stage-frame').boundingBox())!
+
+    // The video never takes the whole sheet: it is a card inside it.
+    expect(stage.width).toBeLessThan(videoSheet.width)
+    // 16:9, and never below the documented 200px floor in either dimension.
+    expect(stage.width).toBeGreaterThanOrEqual(200)
+    expect(stage.height).toBeGreaterThanOrEqual(200)
+    expect(stage.width / stage.height).toBeGreaterThan(1.4)
+    expect(stage.width / stage.height).toBeLessThan(1.85)
+    // Centred in the sheet, exactly where a cover would be.
+    const stageCentre = stage.x + stage.width / 2
+    const sheetCentre = videoSheet.x + videoSheet.width / 2
+    expect(Math.abs(stageCentre - sheetCentre)).toBeLessThanOrEqual(2)
+
+    // And the sheet itself is the width a track gets. Read from a real audio
+    // session rather than hard-coded, so this stays true if the shell is
+    // retuned — the claim is that the two agree, not that either is 560.
+    await stubProviders(page)
+    await playFirstResult(page)
+    await page.getByRole('button', { name: 'Open Now Playing' }).click()
+    const trackSheet = (await sheet(page).boundingBox())!
+    expect(Math.abs(videoSheet.width - trackSheet.width)).toBeLessThanOrEqual(1)
+  })
+
+  /**
+   * The control the visitor asked for, driving the real embed through the
+   * documented `seekTo`. Nothing simulates a click inside the frame.
+   */
+  test('the ten-second controls move the video both ways', async ({ page }) => {
+    await playVideoExpanded(page)
+    const lastSeek = () =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __pulseYouTube?: { lastSeek?: number } }).__pulseYouTube
+            ?.lastSeek ?? null,
+      )
+
+    // Paused first, so the clock is not advancing underneath the assertions.
+    // The controls work either way; what would not be deterministic is the
+    // arithmetic, since each press is relative to wherever the playhead is.
+    await sheet(page).getByRole('button', { name: 'Pause', exact: true }).click()
+    await expect(sheet(page).getByRole('button', { name: 'Play', exact: true })).toBeVisible()
+
+    const forward = sheet(page).getByRole('button', { name: 'Seek forward 10 seconds' })
+    const back = sheet(page).getByRole('button', { name: 'Seek back 10 seconds' })
+
+    await forward.click()
+    await expect.poll(lastSeek).toBe(10)
+    await forward.click()
+    await expect.poll(lastSeek).toBe(20)
+    await back.click()
+    await expect.poll(lastSeek).toBe(10)
+
+    // Never past the beginning, however many times it is pressed.
+    await back.click()
+    await back.click()
+    await expect.poll(lastSeek).toBe(0)
+  })
+
+  test('carries the same transport row a track gets', async ({ page }) => {
+    await playVideoExpanded(page)
+
+    for (const name of [
+      'Seek back 10 seconds',
+      'Previous track',
+      'Next track',
+      'Seek forward 10 seconds',
+    ]) {
+      await expect(sheet(page).getByRole('button', { name })).toHaveCount(1)
+    }
+    await expect(sheet(page).getByRole('button', { name: /^(Play|Pause)$/ })).toHaveCount(1)
+    await expect(sheet(page).getByRole('slider', { name: 'Seek' })).toHaveCount(1)
+    await expect(sheet(page).getByRole('button', { name: /Save .* to Liked Songs/i })).toHaveCount(
+      1,
+    )
+
+    // One transport row on the whole screen, and no mini-player beneath it.
+    await expect(page.locator('.now-playing-transport')).toHaveCount(1)
+    await expect(page.locator('.music-player')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /^(Play|Pause)$/ })).toHaveCount(1)
+  })
+
+  test('play and pause work from the sheet', async ({ page }) => {
+    await playVideoExpanded(page)
+    const playing = () =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __pulseYouTube?: { playing?: boolean } }).__pulseYouTube
+            ?.playing ?? false,
+      )
+
+    await expect.poll(playing).toBe(true)
+    await sheet(page).getByRole('button', { name: 'Pause', exact: true }).click()
+    await expect.poll(playing).toBe(false)
+    await sheet(page).getByRole('button', { name: 'Play', exact: true }).click()
+    await expect.poll(playing).toBe(true)
+  })
+
   test('collapses to one compact player and leaves the page navigable', async ({ page }) => {
     await playVideoExpanded(page)
 

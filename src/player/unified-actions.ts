@@ -23,6 +23,7 @@ import {
   playYouTubeVideo,
   seekYouTube,
   toggleYouTubePlayback,
+  youTubeSeekLimit,
 } from './youtube-actions'
 import { useYouTubeStore } from './youtube-store'
 
@@ -97,12 +98,23 @@ export function unifiedSeek(seconds: number): void {
  * The audio side keeps its own `seekBy`, which owns the arithmetic and the
  * clamp; the YouTube side has no relative form, so the offset is resolved
  * against the position the store already holds and handed on as a position.
+ *
+ * This is what the expanded view's ten-second controls call for *either* engine.
+ * They used to be an audio affordance, on the reasoning that a visitor already
+ * reaches for YouTube's own ±10s gestures inside the frame — but the frame is a
+ * small card in a Pulse player now, its gestures are the provider's rather than
+ * the app's, and a transport row that changes shape depending on what is loaded
+ * is two players wearing one skin. Both engines publish `seekTo`; both get the
+ * control.
  */
 export function unifiedSeekBy(deltaSeconds: number): void {
   if (activeEngine() === 'youtube') {
-    const { currentTime, duration } = useYouTubeStore.getState()
-    if (duration <= 0 || !Number.isFinite(deltaSeconds)) return
-    seekYouTube(currentTime + deltaSeconds)
+    const state = useYouTubeStore.getState()
+    if (!Number.isFinite(deltaSeconds)) return
+    // The same limit the rail is drawn against, so the button and the scrubber
+    // can never disagree about whether this video can be moved.
+    if (youTubeSeekLimit(state) <= 0) return
+    seekYouTube(state.currentTime + deltaSeconds)
     return
   }
   seekBy(deltaSeconds)

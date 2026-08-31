@@ -102,10 +102,25 @@
      three files depend on the same number: the stage box, its own restated
      floor, and the docked frame that reserves room for it. */
   --yt-stage-min: 200px;
+  /* The same floor with a pixel of clearance, and the pixel is not superstition.
+     A box laid out at exactly 200px is rendered on a fractional device-pixel
+     grid — a Pixel 5 runs at 2.75x — and comes back measured as 199.99998px,
+     which is under a documented minimum. Nothing looks wrong; it is simply no
+     longer possible to state truthfully that the player is at least 200 x 200.
+     Every box that would otherwise sit *on* the floor uses this instead, so
+     rounding can only ever go the safe way. */
+  --yt-stage-floor: 201px;
   /* The docked player's width when collapsed. 16:9 over the documented 200px
      height floor, so the frame is the smallest compliant box that still shows a
      whole widescreen video rather than letterboxing it into a square. */
   --yt-stage-docked-width: 356px;
+  /* The expanded player's media card. Deliberately close in visual weight to
+     the expanded cover it stands in for (`.now-playing-art`, 320px square):
+     420 x 236 against 320 x 320 reads as the same box in the same slot, where
+     the 760px it used to be read as a different product. It cannot go much
+     below this — 16:9 at the documented 200px height floor is 356px wide, and
+     that is the smallest compliant widescreen card there is. */
+  --yt-stage-expanded-width: 420px;
   --app-bottom-space: 82px;
   --app-bottom-space-sm: 78px;
   --search-width: min(357px, 29vw);

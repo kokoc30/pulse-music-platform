@@ -140,11 +140,24 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
       />
 
       <div className="now-playing-transport">
-        {/* Relative skip stays an audio affordance. It is the one control here
-            whose action is genuinely engine-specific — YouTube's own player
-            carries its own ±10s gestures, inside the frame, where a visitor
-            already reaches for them. */}
-        {can.queue ? (
+        {/**
+         * Relative skip, for whatever can be seeked — which is both engines.
+         *
+         * This was gated on `can.queue`, which is not what it is about: a queue
+         * is a running order, and moving ten seconds inside one item has nothing
+         * to do with having one. The gate happened to read "audio only", and the
+         * reasoning offered for it was that YouTube's own player carries ±10s
+         * gestures inside the frame. It does — but those are the provider's
+         * controls, reached by double-tapping the video, and the app's transport
+         * row is a different thing in a different place. A row that grows and
+         * shrinks depending on which engine is loaded is what made the two
+         * presentations read as two products.
+         *
+         * `can.seek` is the honest condition: if the playhead can be moved, it
+         * can be moved by ten seconds. Both engines publish `seekTo`, and
+         * `unifiedSeekBy` already routed to both.
+         */}
+        {can.seek ? (
           <button
             type="button"
             className="now-playing-skip"
@@ -191,7 +204,7 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
           <SkipForward size={22} fill="currentColor" aria-hidden="true" />
         </button>
 
-        {can.queue ? (
+        {can.seek ? (
           <button
             type="button"
             className="now-playing-skip"

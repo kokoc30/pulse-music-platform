@@ -315,9 +315,11 @@
 .yt-stage {
   width: 100%;
   height: 100%;
-  /* Restated from the component's inline style so neither can be lost alone. */
-  min-width: var(--yt-stage-min);
-  min-height: var(--yt-stage-min);
+  /* Restated from the component's inline style so neither can be lost alone,
+     with the rounding clearance that keeps a measured box from landing a
+     fraction of a pixel under the documented floor. */
+  min-width: var(--yt-stage-floor);
+  min-height: var(--yt-stage-floor);
   overflow: hidden;
   background: #000;
 }
