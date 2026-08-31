@@ -411,16 +411,25 @@ test.describe('it is the video player’s own view', () => {
     const forward = sheet(page).getByRole('button', { name: 'Seek forward 10 seconds' })
     const back = sheet(page).getByRole('button', { name: 'Seek back 10 seconds' })
 
+    /**
+     * Relative to where the pause left it, not to zero.
+     *
+     * The pause publishes the player's own clock — which is what makes a
+     * collapse able to restore the position — so the video is a second or two in
+     * by the time these run. The arithmetic being asserted is the step, and a
+     * hard-coded 10 would be asserting the starting point instead.
+     */
     await forward.click()
-    await expect.poll(lastSeek).toBe(10)
+    await expect.poll(lastSeek).not.toBeNull()
+    const start = (await lastSeek())! - 10
+
     await forward.click()
-    await expect.poll(lastSeek).toBe(20)
+    await expect.poll(lastSeek).toBe(start + 20)
     await back.click()
-    await expect.poll(lastSeek).toBe(10)
+    await expect.poll(lastSeek).toBe(start + 10)
 
     // Never past the beginning, however many times it is pressed.
-    await back.click()
-    await back.click()
+    for (let press = 0; press < 5; press += 1) await back.click()
     await expect.poll(lastSeek).toBe(0)
   })
 
@@ -463,20 +472,122 @@ test.describe('it is the video player’s own view', () => {
     await expect.poll(playing).toBe(true)
   })
 
-  test('collapses to one compact player and leaves the page navigable', async ({ page }) => {
+  /**
+   * The reported screenshot, as an assertion: a bottom bar and a *separate*
+   * floating YouTube box beside it. Collapsed, a video is now one compact row.
+   *
+   * This asserted `youtube-stage` count 1 here, which is exactly the box. The
+   * stage was kept mounted so the embed never reloaded, and the price was a
+   * second visible player surface for as long as the bar was up.
+   */
+  test('collapses to one compact bar, with no floating player beside it', async ({ page }) => {
     await playVideoExpanded(page)
 
     await page.getByRole('button', { name: 'Collapse Now Playing' }).click()
     await expect(sheet(page)).toHaveCount(0)
 
-    // One bar, one player, no leftovers.
+    // One bar, no player, no leftovers.
     await expect(page.locator('.music-player')).toHaveCount(1)
-    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(0)
+    await expect(page.locator('.yt-stage-frame')).toHaveCount(0)
     await expect(page.locator('.now-playing-body')).toHaveCount(0)
+
+    // Absent, not parked: no embedded frame of any kind is on the page.
+    await expect(page.locator('iframe[data-e2e-youtube]')).toHaveCount(0)
+
+    // The bar shows the video the way it shows a track — a thumbnail in the
+    // same artwork slot — and nothing else stands outside it.
+    const cover = page.locator('.music-player .player-track img')
+    await expect(cover).toHaveCount(1)
+    const shell = (await page.locator('.player-shell').boundingBox())!
+    const barBox = (await page.locator('.music-player').boundingBox())!
+    expect(Math.abs(shell.height - barBox.height)).toBeLessThanOrEqual(1)
 
     await page.getByRole('link', { name: 'Pulse home' }).click()
     await expect(page.getByRole('heading', { name: 'Trending songs' })).toBeVisible()
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(0)
+    await expect(page.locator('.music-player')).toHaveCount(1)
+  })
+
+  /** The collapsed bar is the same box a track gets, measured rather than assumed. */
+  test('collapses to the same bar geometry an audio track uses', async ({ page }) => {
+    await playVideoExpanded(page)
+    await page.getByRole('button', { name: 'Collapse Now Playing' }).click()
+    await expect(sheet(page)).toHaveCount(0)
+    const video = (await page.locator('.player-shell').boundingBox())!
+
+    await stubProviders(page)
+    await playFirstResult(page)
+    const audio = (await page.locator('.player-shell').boundingBox())!
+
+    expect(Math.abs(video.height - audio.height)).toBeLessThanOrEqual(1)
+    expect(Math.abs(video.width - audio.width)).toBeLessThanOrEqual(1)
+    expect(Math.abs(video.y - audio.y)).toBeLessThanOrEqual(1)
+  })
+
+  /**
+   * Coming back up rebuilds the one player and picks the video up where it was.
+   *
+   * The rebuild is the deliberate cost of not docking a live player beside the
+   * bar; losing the position would make it a bad trade, so this asserts both.
+   */
+  test('re-expands to one player, on the same video, near the same position', async ({ page }) => {
+    await playVideoExpanded(page)
+    // Let the fake clock move, then collapse: the pause captures the real
+    // position from the player rather than from the last progress tick.
+    await page.waitForTimeout(1500)
+
+    await page.getByRole('button', { name: 'Collapse Now Playing' }).click()
+    await expect(sheet(page)).toHaveCount(0)
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Open Now Playing' }).click()
+    await expect(sheet(page)).toBeVisible()
+
+    // Exactly one player, holding the same video.
     await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
+    await expect(page.locator('iframe[data-e2e-youtube]')).toHaveCount(1)
+
+    // And it was told to resume from where the pause left it, rather than from
+    // the beginning.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __pulseYouTube?: { lastSeek?: number } }).__pulseYouTube
+              ?.lastSeek ?? 0,
+        ),
+      )
+      .toBeGreaterThan(0)
+  })
+
+  /**
+   * Play on the collapsed bar is one gesture that opens the view, builds the
+   * player and starts the video. Nothing is started in the background.
+   */
+  test('play from the collapsed bar opens the view and resumes', async ({ page }) => {
+    await playVideoExpanded(page)
+    await page.getByRole('button', { name: 'Collapse Now Playing' }).click()
+    await expect(sheet(page)).toHaveCount(0)
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(0)
+
+    await page.locator('.music-player').getByRole('button', { name: 'Play', exact: true }).click()
+
+    await expect(sheet(page)).toBeVisible()
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
+    await expect(page.locator('iframe[data-e2e-youtube]')).toHaveCount(1)
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __pulseYouTube?: { playing?: boolean } }).__pulseYouTube
+              ?.playing ?? false,
+        ),
+      )
+      .toBe(true)
+    // One player, one transport: the bar is not left underneath.
+    await expect(page.locator('.music-player')).toHaveCount(0)
+    await expect(page.locator('.now-playing-transport')).toHaveCount(1)
   })
 })
 

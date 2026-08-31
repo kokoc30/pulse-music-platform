@@ -280,22 +280,28 @@
 /* ==========================================================================
    The embedded stage
 
-   The one place a YouTube player is ever mounted: a stable child of the player
-   shell, and nowhere else. Its *box* is set by `player-shell.css` — docked
-   beside the mini-player when collapsed, the primary media region when expanded
-   — and this file styles the stage itself, which is identical in both.
+   The one place a YouTube player is ever mounted, and it is mounted only while
+   the expanded Now Playing view is open. Its *box* is set by
+   `player-shell.css` — the primary media region, a compact 16:9 card — and this
+   file styles the stage itself.
 
-   It used to live inside the bottom bar's artwork slot, which forced the bar to
-   roughly 216px on a phone and left the expanded sheet stacked on top of a bar
-   that still carried a complete second transport. Before that it lived in the
-   sheet, which meant the sheet had to be forced open before a video could play
-   at all. It belongs to neither: it is a sibling of both, moved by CSS and never
-   by the DOM, because reparenting an iframe reloads it.
+   It has been in three wrong homes. The bottom bar's artwork slot, which forced
+   the bar to roughly 216px on a phone. The expanded sheet alone, which meant the
+   sheet had to be forced open before a video could play at all. And then docked
+   beside the mini-player as a permanently mounted sibling of both presentations,
+   which kept the embed from ever reloading and put a floating 356 x 200 video
+   card next to a compact row — two visible player surfaces, where an audio
+   track showed one.
+
+   Collapsed, there is now no player on the page for either engine and the bar
+   draws the video's own thumbnail in the slot a cover occupies. The embed is
+   destroyed on the way down and rebuilt on the way up; the video and the
+   position survive through the store, which is what the visitor was keeping.
 
    Policy rules encoded here, not preferences:
 
-   · A hard 200 x 200 floor at every breakpoint, in both geometries (Required
-     Minimum Functionality; the IFrame API reference).
+   · A hard 200 x 200 floor at every breakpoint, wherever a player exists
+     (Required Minimum Functionality; the IFrame API reference).
    · The stage holds the API-created iframe and nothing else. Every control is a
      sibling *beside* it, so nothing is drawn over the player or over its native
      controls.

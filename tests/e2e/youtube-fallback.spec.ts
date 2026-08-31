@@ -357,27 +357,36 @@ test.describe('the visible player', () => {
    *
    * This used to assert the opposite: the embed was mounted in the expanded
    * sheet and nowhere else, so collapsing destroyed it by design and a route
-   * change left only the store's idea of which video was loaded. The stage is a
-   * stable child of the player shell now, and the shell is rendered once above
-   * the router, so both collapsing and navigating are changes of view around a
-   * player that never stops.
+   * change left only the store's idea of which video was loaded. The player
+   * shell is rendered once above the router now, so navigating is a change of
+   * view around a bar that keeps its item.
+   *
+   * The *player* no longer survives a collapse, and that is deliberate: it was
+   * kept alive by docking it beside the mini-player, which is the floating video
+   * box the collapsed model removes. What survives is the item and the position,
+   * and a press of Play brings the player back.
    */
-  test('keeps the video playing across a collapse and a route change', async ({ page }) => {
+  test('keeps the video loaded across a collapse and a route change', async ({ page }) => {
     await page.locator(rows).first().click()
     await expect(page.locator(surface)).toBeVisible()
-    const players = (await page.evaluate(readYouTubeGlobals)).created
 
     await collapseSheet(page)
     const title = await page.locator('.player-track b').innerText()
+    // Paused and gone from the page, rather than playing out of sight.
+    await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(false)
+    await expect(page.locator(surface)).toHaveCount(0)
 
     await page.locator('.brand').click()
     await expect(page).toHaveURL(/\/$/)
 
-    // Same bar, same title, same single player — not a rebuilt one.
+    // Same bar, same title, same item — carried by the shell, not by the route.
     await expect(page.locator('.player-track b')).toHaveText(title)
-    await expect(page.locator(surface)).toBeVisible()
+    await expect(page.locator(surface)).toHaveCount(0)
+    await expect(page.locator(`${stage} iframe`)).toHaveCount(0)
+
+    // And it comes back on a press, into one player.
+    await page.locator('.music-player').getByRole('button', { name: 'Play', exact: true }).click()
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
-    expect((await page.evaluate(readYouTubeGlobals)).created).toBe(players)
     await expect
       .poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.lastVideoId))
       .toBe('aaaaaaaaaaa')
@@ -447,9 +456,13 @@ test.describe('provider transitions', () => {
     await expect(page.locator(surface)).toBeVisible()
     await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(true)
 
+    // Collapsing already pauses it — the player leaves the page with the
+    // expanded view, so there is nothing left to play in.
     await collapseSheet(page)
-    await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(true)
+    await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(false)
 
+    // The claim of this test is the hand-over: starting a track leaves the video
+    // stopped and the audio element running.
     await page.locator('.song-row').first().click()
     await expect.poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.playing)).toBe(false)
     await expect.poll(() => page.evaluate(audioState).then((state) => state.paused)).toBe(false)
@@ -472,6 +485,12 @@ test.describe('provider transitions', () => {
    * it is a change of view over a running player — so the route to row two is
    * the same at every width now, and the count stays meaningful.
    */
+  /**
+   * The claim is that one *player object* takes the second video, so the step is
+   * made from inside the open view rather than by collapsing and clicking the
+   * next row. Collapsing is a different journey — it destroys the player on
+   * purpose, and `unified-now-playing.spec.ts` covers that round trip.
+   */
   test('YouTube to YouTube reuses the single player', async ({ page }) => {
     await stubAllProviders(page, { audius: { emptySearch: true }, jamendo: { empty: true } })
     await page.goto('/search?q=nothing here')
@@ -479,8 +498,12 @@ test.describe('provider transitions', () => {
 
     await page.locator(rows).nth(0).click()
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
-    await collapseSheet(page)
-    await page.locator(rows).nth(1).click()
+
+    // Next, from the expanded view, which steps through the same result session.
+    await page
+      .getByRole('dialog', { name: 'Now playing' })
+      .getByRole('button', { name: 'Next track' })
+      .click()
 
     await expect
       .poll(() => page.evaluate(readYouTubeGlobals).then((g) => g.lastVideoId))

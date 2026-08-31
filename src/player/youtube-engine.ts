@@ -96,6 +96,21 @@ export interface StartRequest {
    * always was, and only the absence of one lets this take effect.
    */
   recover?: boolean
+  /**
+   * Where to put the playhead once this request reaches the player, in seconds.
+   *
+   * Carried *with* the request rather than applied by the caller afterwards, and
+   * that is the whole reason it exists. A request made before the surface has
+   * mounted is held and flushed by `attach()`, so the promise the caller is
+   * holding resolves the moment the request is *queued* — seeking on the far
+   * side of it would run against a player that does not exist yet, silently do
+   * nothing, and leave the video at zero. Which is exactly the shape of "press
+   * Play on the collapsed bar": the view opens, the stage mounts, and the
+   * request lands some frames later.
+   *
+   * Ignored by a resume, which by definition already has a position.
+   */
+  startAt?: number
 }
 
 export interface YouTubeEngine {
@@ -186,6 +201,21 @@ export interface YouTubeEngine {
    */
   seek(seconds: number): void
   getCurrentItem(): YouTubeVideoItem | null
+  /**
+   * Where the playhead is, asked of the player rather than of the store.
+   *
+   * The store is kept in step by the progress subscription, which is enough for
+   * anything that renders — but not for the one caller that runs *while the
+   * subscription is being torn down*. Collapsing unmounts the stage, and the
+   * stage's effects clean up in declaration order: the engine→store binding goes
+   * first, so a position the engine emits after that reaches nobody. Capturing
+   * the position is the last thing that must work before the player is
+   * destroyed, so it asks the player itself.
+   *
+   * Zero when there is no player, which is indistinguishable from a video at the
+   * beginning and is the right answer for both.
+   */
+  getCurrentTime(): number
   isPlaying(): boolean
   /**
    * What the real, generated iframe looks like right now.
@@ -346,7 +376,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
    * player readiness, *then* load). A click therefore lands here for the few
    * milliseconds React needs to mount the surface, and `attach()` flushes it.
    */
-  let pending: { item: YouTubeVideoItem; mode: PlaybackStartMode } | null = null
+  let pending: { item: YouTubeVideoItem; mode: PlaybackStartMode; startAt: number } | null = null
 
   /**
    * One request to the player at a time, and the newest one wins.
@@ -548,7 +578,10 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
    * nothing when a player already exists: a healthy instance is never rebuilt,
    * so a press of Play on a working video stays a resume.
    */
-  async function ensurePlayer(seed: YouTubeVideoItem, recover = false): Promise<YouTubePlayerHandle> {
+  async function ensurePlayer(
+    seed: YouTubeVideoItem,
+    recover = false,
+  ): Promise<YouTubePlayerHandle> {
     if (player) return player
     if (!container) throw new Error('The YouTube player has no visible container yet.')
     if (recover) invalidateCreation()
@@ -563,6 +596,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
     mode: PlaybackStartMode,
     isCurrent: () => boolean,
     recover: boolean,
+    startAt: number,
   ): Promise<void> {
     // Against what the *player* holds, not what has been requested. `current`
     // now answers "what did the last caller ask for", which is set the moment a
@@ -577,6 +611,30 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
     loaded = video
     current = video
 
+    /**
+     * Restores the position a rebuild is meant to come back to.
+     *
+     * Through the documented `seekTo`, immediately after the media command that
+     * loaded the video, which is where the IFrame API expects a starting
+     * position to be set from. Never after a resume — that player is already
+     * where it should be.
+     */
+    const restore = () => {
+      if (startAt <= 0) return
+      instance.seekTo(startAt, true)
+      /**
+       * Published at once, for the same reason `seek()` publishes at once — and
+       * here it is load-bearing rather than a nicety. Requesting a *different*
+       * video resets the position to nothing (so a black, never-ready player
+       * cannot show the last one's progress), and a restore is precisely the
+       * case where that reset must be undone rather than left standing: without
+       * this the player would be at 1:13 while the rail said 0:00, and the
+       * progress timer only runs while something is playing, so a restored cue
+       * would sit there disagreeing with itself indefinitely.
+       */
+      emit((events) => events.onTimeUpdate?.(startAt, instance.getDuration()))
+    }
+
     if (mode === 'cue') {
       playing = false
       stopProgress()
@@ -585,6 +643,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       // item up without initiating playback (agents/21 → "Automatic Playback";
       // the uncertain case must resolve to "do not autoplay").
       instance.cueVideoById(video.videoId)
+      restore()
       emit((events) => events.onCommand?.('cue', video.videoId))
       return
     }
@@ -617,6 +676,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       emit((events) => events.onCommand?.('playVideo', video.videoId))
     } else {
       instance.loadVideoById(video.videoId)
+      restore()
       emit((events) => events.onCommand?.('loadVideoById', video.videoId))
     }
   }
@@ -633,6 +693,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
     video: YouTubeVideoItem,
     mode: PlaybackStartMode,
     recover = false,
+    startAt = 0,
   ): Promise<void> {
     const token = (latestRequest += 1)
     current = video
@@ -658,11 +719,12 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       if (!container) {
         // The surface has not mounted yet. Held rather than dropped: `attach()`
         // flushes it, which is the documented order — render the visible
-        // surface, then wait for player readiness, then load.
-        pending = { item: video, mode }
+        // surface, then wait for player readiness, then load. The position rides
+        // along, because the caller's promise has already resolved by then.
+        pending = { item: video, mode, startAt }
         return
       }
-      await perform(video, mode, () => token === latestRequest, recover)
+      await perform(video, mode, () => token === latestRequest, recover, startAt)
     })
 
     queue = run.catch(() => {})
@@ -688,7 +750,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       // Through the same queue, so the flushed request takes its place in the
       // same order as everything else. A failure here has no caller left to
       // reject: report it the way any other player failure is reported.
-      void enqueue(request.item, request.mode).catch((error: unknown) => {
+      void enqueue(request.item, request.mode, false, request.startAt).catch((error: unknown) => {
         const message =
           error instanceof Error && error.message
             ? error.message
@@ -720,7 +782,12 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
     hasContainer: () => container !== null,
 
     async start(item, request) {
-      await enqueue(requireYouTubeItem(item), request.mode, request.recover ?? false)
+      await enqueue(
+        requireYouTubeItem(item),
+        request.mode,
+        request.recover ?? false,
+        request.startAt ?? 0,
+      )
     },
 
     async prepare(item) {
@@ -791,6 +858,20 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
 
     pause() {
       playing = false
+      /**
+       * Where the video actually stopped, published before the clock does.
+       *
+       * The progress timer runs once a second and stops here, so without this
+       * the last position anyone hears about is up to a second stale — and a
+       * pause is now the moment a collapse *captures* the position to restore
+       * from, which makes that second the difference between coming back where
+       * you left off and coming back a second earlier every time.
+       */
+      if (player) {
+        const at = player.getCurrentTime()
+        const total = player.getDuration()
+        emit((events) => events.onTimeUpdate?.(at, total))
+      }
       stopProgress()
       player?.pauseVideo()
     },
@@ -815,6 +896,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
     },
 
     getCurrentItem: () => current,
+    getCurrentTime: () => player?.getCurrentTime() ?? 0,
     isPlaying: () => playing,
 
     describeIframe() {

@@ -225,8 +225,20 @@ describe('the progress timer', () => {
 
     const before = ticks.length
     timed.pause()
+    /**
+     * Exactly one more, from the pause itself, and then silence.
+     *
+     * The timer runs once a second, so without a final publish the last position
+     * anyone hears about is up to a second stale. That became load-bearing when
+     * collapsing started destroying the player: the pause *is* the moment the
+     * position is captured to restore from, and a second of drift there is a
+     * second the visitor loses on every round trip.
+     */
+    expect(ticks.length).toBe(before + 1)
+    expect(ticks.at(-1)).toBe(5)
+
     vi.advanceTimersByTime(PROGRESS_POLL_MS * 5)
-    expect(ticks.length).toBe(before)
+    expect(ticks.length).toBe(before + 1)
 
     timed.destroy()
   })

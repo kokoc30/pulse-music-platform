@@ -99,8 +99,8 @@
   --player-height: 66px;
   --player-height-sm: 76px;
   /* The IFrame API's documented minimum player dimension, as a token because
-     three files depend on the same number: the stage box, its own restated
-     floor, and the docked frame that reserves room for it. */
+     two files depend on the same number: the expanded media card, and the
+     stage's own restated floor inside it. */
   --yt-stage-min: 200px;
   /* The same floor with a pixel of clearance, and the pixel is not superstition.
      A box laid out at exactly 200px is rendered on a fractional device-pixel
@@ -110,10 +110,6 @@
      Every box that would otherwise sit *on* the floor uses this instead, so
      rounding can only ever go the safe way. */
   --yt-stage-floor: 201px;
-  /* The docked player's width when collapsed. 16:9 over the documented 200px
-     height floor, so the frame is the smallest compliant box that still shows a
-     whole widescreen video rather than letterboxing it into a square. */
-  --yt-stage-docked-width: 356px;
   /* The expanded player's media card. Deliberately close in visual weight to
      the expanded cover it stands in for (`.now-playing-art`, 320px square):
      420 x 236 against 320 x 320 reads as the same box in the same slot, where

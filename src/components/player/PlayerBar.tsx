@@ -38,18 +38,18 @@ import { isInteractiveTarget, useVerticalSwipe } from './swipe'
  * expand affordance, in the same order, at the same sizes. There is no longer
  * *anything* a video changes about this bar.
  *
- * **The live player is no longer in here, and putting it here was the mistake.**
- * The embed must be mounted and at least 200 x 200 while it plays, so for a
- * while it occupied the slot a 56px cover occupies — which made the bar roughly
- * 216px tall for a video, a black video card wedged into a mini-player, and
- * meant expanding put a second full transport on top of a bar that still had its
- * own. The stage moved out to `GlobalPlayer`, where it is docked beside this bar
- * when collapsed and becomes the primary media region when expanded, and this
- * component went back to being what its name says.
+ * **There is no live player here, and no live player beside it either.** The
+ * embed must be mounted and at least 200 x 200 while it plays, so for a while it
+ * occupied the slot a 56px cover occupies — which made the bar roughly 216px
+ * tall for a video. Moving it out to `GlobalPlayer` fixed the bar and left it
+ * *docked* next to this one: a floating 356 x 200 video card above the
+ * bottom-right corner, on screen for as long as the bar was. The bar looked
+ * right and the product had two visible players.
  *
- * So a video shows its own unmodified 16:9 thumbnail here, at the size a cover
- * is drawn at, from YouTube's own CDN (agents/25) — the still, while the live
- * player is the docked stage next to it.
+ * The stage is mounted only while the expanded view is open now, so collapsed
+ * this row is the whole of the presentation. A video shows its own unmodified
+ * 16:9 thumbnail here, at the size a cover is drawn at, from YouTube's own CDN
+ * (agents/25) — a still, and nothing else on the screen.
  *
  * **It does not know which engine is playing.** There is no `engine ===
  * 'youtube'` in this file. Every control asks the snapshot's `capabilities`

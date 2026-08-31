@@ -25,13 +25,19 @@
  */
 
 /* ==========================================================================
-   Collapsed — the mini-player, with the player docked above it
+   Collapsed — one mini-player, and nothing else
 
-   A column: the docked stage, then the bar. The bar goes back to its ordinary
-   compact height, and the live player is a small 16:9 card resting on it, which
-   is what keeps both promises at once — a mini-player that looks like a
-   mini-player, and an embedded player that is never smaller than the documented
-   200px floor while it is playing.
+   **This is where a video used to look like a second product.** The embedded
+   player has to be mounted and at least 200 x 200 while it plays, so the stage
+   was *docked* here: a 356 x 200 video card floating above the bottom-right
+   corner, on screen for as long as the bar was. Both promises were kept and the
+   result was a Pulse bar with a separate YouTube box beside it, where an audio
+   track showed one compact row.
+
+   The stage is mounted only while the expanded view is open now, so collapsed
+   there is no player on the page for either engine and this is a plain wrapper
+   around a single bar. A video draws its own thumbnail in the bar's 56px
+   artwork slot, exactly as a track draws its cover.
    ========================================================================== */
 
 .player-shell[data-mode='collapsed'] {
@@ -40,34 +46,10 @@
   bottom: var(--frame-gutter);
   left: var(--frame-gutter);
   z-index: var(--z-bottom-bar);
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
-  /* The shell spans the width of the page but only its two children are real
-     surfaces; the empty column beside the docked card must not swallow clicks
-     meant for the page underneath. */
-  pointer-events: none;
-}
-
-.player-shell[data-mode='collapsed'] > * {
-  pointer-events: auto;
 }
 
 .player-shell[data-mode='collapsed'] .music-player {
   width: 100%;
-}
-
-/* The docked player. 16:9 at the documented height floor, so a widescreen video
-   fills it rather than being letterboxed into a square. */
-.player-shell[data-mode='collapsed'] .yt-stage-frame {
-  flex: none;
-  width: min(var(--yt-stage-docked-width), 100%);
-  /* The floor plus its rounding clearance — see `--yt-stage-floor`. */
-  height: var(--yt-stage-floor);
-  border-radius: var(--radius-bar);
-  overflow: hidden;
-  box-shadow: var(--shadow-bar);
 }
 
 /* ==========================================================================
@@ -196,13 +178,6 @@
     right: 0;
     bottom: 0;
     left: 0;
-    align-items: center;
-    gap: 0;
-  }
-
-  .player-shell[data-mode='collapsed'] .yt-stage-frame {
-    width: 100%;
-    border-radius: var(--radius-bar) var(--radius-bar) 0 0;
   }
 }
 
@@ -260,10 +235,6 @@
     min-height: 0;
     overflow-y: auto;
     justify-content: center;
-  }
-
-  .player-shell[data-mode='collapsed'] .yt-stage-frame {
-    width: min(var(--yt-stage-docked-width), 46vw);
   }
 }
 

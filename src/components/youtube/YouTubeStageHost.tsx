@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react'
 import type { YouTubeVideoItem } from '@/music/types'
-import { bindYouTubeEngineEvents, handleDocumentVisibility } from '@/player/youtube-actions'
+import {
+  bindYouTubeEngineEvents,
+  handleDocumentVisibility,
+  suspendYouTubePlayback,
+} from '@/player/youtube-actions'
 import { MINIMUM_DIMENSION, getYouTubeEngine } from '@/player/youtube-engine'
 import {
   registerYouTubeStageElement,
@@ -20,38 +24,41 @@ import { useYouTubeStore } from '@/player/youtube-store'
  *
  * ## Where it lives, and why it is nowhere else
  *
- * It has been in two wrong homes. In the expanded sheet, which is closed most of
- * the time, so the sheet had to be *forced open* for a video to play at all. Then
- * in the bottom bar's artwork slot, which made the bar 216px of black video card
- * on a phone and left the expanded sheet stacked on top of a bar that still
- * carried its own complete transport — two Play buttons over one video.
+ * It has been in three wrong homes. The bottom bar's artwork slot, which made
+ * the bar 216px of black video card on a phone. The expanded sheet alone, back
+ * when the sheet had to be *forced open* for a video to play at all. And then a
+ * permanently mounted sibling of both presentations — *docked* beside the
+ * mini-player when collapsed — which kept the embed from ever reloading and put
+ * a floating video card next to a compact row.
  *
- * It belongs to neither, so it is a sibling of both, mounted by `GlobalPlayer`
- * and never moved: the collapsed and expanded presentations are alternatives
- * rendered in the same slot beside it, and only the stage's *box* changes
- * between them, in CSS. Reparenting an iframe reloads it, and a video that
- * restarted every time the view changed would be a worse bug than either of the
- * two this replaces.
+ * It is mounted by `GlobalPlayer`, and only while the expanded view is open.
+ * Collapsed there is no player on the page at all, which is what makes a video's
+ * mini-player the same one compact row a track's is. The cost is a rebuild on
+ * every round trip — reparenting or remounting an iframe reloads it — so this
+ * component owns both halves of making that cheap: it pauses and publishes the
+ * exact position on the way out, and restores the video and that position on the
+ * way in.
  *
  * ## Policy obligations this component owns
  *
  * · **Minimum size.** A hard 200 x 200 floor in the style attribute as well as
  *   the stylesheet, so no future CSS edit can shrink it below the documented
- *   minimum — in the docked geometry as well as the expanded one.
+ *   minimum.
  * · **Never hidden.** There is no `display: none`, no zero opacity and no
- *   offscreen parking anywhere in its lifecycle. It is rendered for exactly as
- *   long as YouTube is the engine holding the claim, and the shell it sits in is
- *   `position: fixed` and always on screen in both presentations. There is no
- *   state in which a video plays without this element displayed.
+ *   offscreen parking anywhere in its lifecycle — a player kept out of sight is
+ *   the background playback the policies prohibit, and hiding one would be the
+ *   same violation as docking one. It is rendered for exactly as long as the
+ *   expanded view is open, inside a `position: fixed` shell that is on screen
+ *   the whole time. There is no state in which a video plays without this
+ *   element displayed.
  * · **No children but the player.** The mount node holds the API-created iframe
  *   and nothing else. Every control is a sibling beside or below it.
  * · **The visibility gate.** The `IntersectionObserver` that authorises scripted
  *   autoplay measures *this* element — the one that contains the live player —
  *   so every number `mayAutoplay` sees is a real measurement of the real player,
- *   in the geometry it actually has. When the shell moves the stage from docked
- *   to expanded, the observer re-reports on its own, which is what makes the
- *   reveal-then-measure hand-off in `playYouTubeVideo` work without anything
- *   polling or guessing.
+ *   in the geometry it actually has. The observer re-reports on its own as the
+ *   surface settles, which is what makes the reveal-then-measure hand-off in
+ *   `playYouTubeVideo` work without anything polling or guessing.
  * · **Background playback.** A hidden document pauses, always — and, since the
  *   player is on screen again the moment the app is, it resumes.
  *
@@ -115,8 +122,8 @@ export function YouTubeStageHost({ item }: { item: YouTubeVideoItem }) {
    *
    * `threshold` is fine-grained around the 0.5 boundary that actually matters,
    * rather than a bare enter/exit. The observer is created once and follows the
-   * element for the stage's whole life, so a change of geometry — docked to
-   * expanded — is reported by the browser rather than re-derived by us.
+   * element for the stage's whole life, so a change of geometry is reported by
+   * the browser rather than re-derived by us.
    */
   useEffect(() => {
     const host = hostRef.current
@@ -181,12 +188,25 @@ export function YouTubeStageHost({ item }: { item: YouTubeVideoItem }) {
      */
     if (!engine.getCurrentItem()) {
       const resumeAt = useYouTubeStore.getState().currentTime
-      void engine.start(itemRef.current, { mode: 'cue' }).then(() => {
-        if (resumeAt > 0) engine.seek(resumeAt)
-      })
+      // The position travels with the request rather than following it: this
+      // start may be held until the container is ready, and a seek issued after
+      // the promise resolves would run against a player that does not exist yet.
+      void engine.start(itemRef.current, { mode: 'cue', startAt: resumeAt })
     }
 
     return () => {
+      /**
+       * Stopped, remembered, then destroyed — in that order.
+       *
+       * This runs on every collapse now, not only when YouTube loses the engine
+       * claim, because the stage is mounted only while the expanded view is
+       * open. Detaching alone would be enough to satisfy the policy — a
+       * destroyed player cannot play — but it would throw away the position with
+       * it, and coming back to a video that restarts from zero is its own
+       * defect. `suspendYouTubePlayback` pauses, which publishes exactly where
+       * the video is, and the mount effect above restores from that.
+       */
+      suspendYouTubePlayback()
       // Detach destroys the player and its iframe. Playback cannot outlive the
       // stage, which is the point.
       engine.detach()

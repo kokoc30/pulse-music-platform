@@ -189,19 +189,26 @@ describe('the expanded view is the only transport on screen', () => {
     expect(screen.getAllByTestId('youtube-stage')).toHaveLength(1)
   })
 
-  it('hands back exactly one mini-player on collapse, with the player intact', async () => {
+  /**
+   * Collapsing hands back one bar and takes the player away with it.
+   *
+   * This asserted one surviving stage and an unchanged construction count, back
+   * when the player was docked beside the mini-player to keep it mounted. That
+   * docked card is the floating box the report was about, so the count is now
+   * zero and the video keeps its place through the store instead.
+   */
+  it('hands back exactly one mini-player on collapse, and no player', async () => {
     const harness = await videoExpanded()
-    const created = youtubeTestFactory().created
 
     await harness.user.click(screen.getByRole('button', { name: 'Collapse Now Playing' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 
     expect(document.querySelectorAll('.music-player')).toHaveLength(1)
     expect(document.querySelectorAll('.now-playing-body')).toHaveLength(0)
-    expect(screen.getAllByTestId('youtube-stage')).toHaveLength(1)
-    // The iframe was never rebuilt: reparenting or remounting one reloads the
-    // video, which is why the stage is a sibling of both presentations.
-    expect(youtubeTestFactory().created).toBe(created)
+    expect(screen.queryAllByTestId('youtube-stage')).toHaveLength(0)
+    expect(document.querySelectorAll('.yt-stage-frame')).toHaveLength(0)
+    // The item is still loaded, so the bar goes on showing it with a Play button.
+    expect(useYouTubeStore.getState().item?.videoId).toBe('aram0000001')
   })
 })
 

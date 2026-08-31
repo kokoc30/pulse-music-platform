@@ -54,18 +54,45 @@ import { useYouTubeStore } from './youtube-store'
 export { SEEK_STEP_SECONDS }
 
 /**
+ * Brings the expanded view up when a YouTube action needs a player to act on.
+ *
+ * The embedded player is mounted only while the expanded view is open — see
+ * `GlobalPlayer` — so a collapsed video has a bar, a thumbnail and no player at
+ * all, and a press of Play has nothing to press.
+ *
+ * Only this one caller needs it. Every *other* way a video starts goes through
+ * `runStartSequence`, which opens the surface itself in phase 1 through
+ * `prepareYouTubePlaybackSurface` — and does so only once the item is known to
+ * be a video, so a step that lands on a catalogue track never pulls the sheet
+ * up. A resume has no such sequence to run: it acts on the loaded item directly,
+ * so it asks here.
+ *
+ * Deliberately not a general "always expand". A pause needs no player to be
+ * built and a seek acts on one that already exists, so neither disturbs the view.
+ */
+function revealYouTubePlayer(): void {
+  if (!useUiStore.getState().nowPlayingOpen) unifiedExpand(true)
+}
+
+/**
  * Play or pause whatever currently holds the engine claim.
  *
- * Two lines again, as an address book entry should be. It used to carry a third
- * case for YouTube: the player existed only while the expanded sheet was open,
- * so a video paused by collapsing had no player behind it, and a press of play
- * had to mean *reopen the sheet, rebuild the player, restore the position and
- * resume*. The stage lives in the bar now and is never torn down while a video
- * is loaded, so there is nothing to rebuild and no sheet to reopen — pressing
- * play presses play.
+ * The YouTube branch carries one extra line, and it is the honest consequence of
+ * where the player lives. The stage was docked beside the mini-player for a
+ * while, so a collapsed video still had a live player and pressing play pressed
+ * play. That docked player is what made a video look like two products, so it is
+ * gone: collapsed, there is no player, and a press of Play means *open the view,
+ * build the player, restore the position and start*.
+ *
+ * The visitor experiences it as one gesture, which is what it is. Nothing is
+ * started in the background and nothing is faked — the sheet comes up because
+ * the video is about to be visible in it.
  */
 export function unifiedPlayPause(): void {
   if (activeEngine() === 'youtube') {
+    // Only when something is going to *start*. A pause acts on a player that is
+    // by definition already on screen.
+    if (useYouTubeStore.getState().status !== 'playing') revealYouTubePlayer()
     toggleYouTubePlayback()
     return
   }
@@ -122,6 +149,17 @@ export function unifiedSeekBy(deltaSeconds: number): void {
 
 export function unifiedNext(): void {
   if (activeEngine() === 'youtube') {
+    /**
+     * No reveal here, deliberately.
+     *
+     * A step needs a player, and a player only exists in the expanded view — but
+     * a step from a *collection-owned* video can land on a catalogue track on
+     * the other engine entirely, and expanding for that would pull the sheet up
+     * over a visitor who asked for the next song, not for a screen. So the
+     * surface is opened where the destination is already known:
+     * `prepareYouTubePlaybackSurface`, which only ever runs for an item that is
+     * actually going to a YouTube player.
+     */
     void playYouTubeSessionStep(1)
     return
   }
@@ -130,6 +168,8 @@ export function unifiedNext(): void {
 
 export function unifiedPrev(): void {
   if (activeEngine() === 'youtube') {
+    // See `unifiedNext`: the surface is opened by the start sequence, once the
+    // item is known to be a video.
     void playYouTubeSessionStep(-1)
     return
   }
@@ -176,20 +216,26 @@ export function unifiedLikeToggle(): void {
  * a video outright is `unifiedDismiss`, below, and the two have deliberately
  * different controls — a chevron for this, a cross for that.
  *
- * **Collapsing pauses nothing, and that is a fix rather than a relaxation.** It
- * used to pause a playing video, because the embed was mounted by this view and
- * by nothing else — collapsing removed the player from the page, and the
- * developer policies prohibit content continuing in a player "not displayed in
- * the page, tab, or screen that the user is viewing". Pausing was the only
- * honest answer to a layout that put the player somewhere it could vanish from.
+ * **Collapsing a video pauses it, and that is not a compromise.** The embedded
+ * player is mounted only while this view is open, so coming down removes it from
+ * the page — and the developer policies prohibit content continuing in a player
+ * "not displayed in the page, tab, or screen that the user is viewing". Pausing
+ * is the only honest answer, and the alternative that avoided it — docking a
+ * live 356 x 200 player beside the mini-player so a video was always displayed —
+ * is exactly what made a collapsed video look like two players instead of one
+ * compact bar.
  *
- * The stage is a stable child of the player shell now, and the shell is
- * `position: fixed` and on screen in both presentations — docked beside the
- * mini-player when collapsed, the primary media region when expanded. A video is
- * displayed either way, so the prohibition is satisfied by construction instead
- * of by stopping the music.
+ * The position is kept, so this costs nothing but a press. `YouTubeStageHost`
+ * pauses through `suspendYouTubePlayback` on the way down, which publishes the
+ * player's exact clock, and restores the video and that position on the way back
+ * up.
  *
- * One line for both engines, which is what it should always have been.
+ * **Audio is untouched by any of this.** It has no player to remove, and a
+ * collapse leaves it playing exactly as before.
+ *
+ * Still one line for both engines: the pause belongs to the stage's own
+ * lifecycle, not to the control that happened to trigger it, so a collapse from
+ * the chevron, a swipe, Escape or anywhere else behaves identically.
  */
 export function unifiedExpand(open: boolean): void {
   useUiStore.getState().setNowPlayingOpen(open)

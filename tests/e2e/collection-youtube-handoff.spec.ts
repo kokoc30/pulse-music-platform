@@ -36,8 +36,16 @@ const stage = (page: Page) => page.getByTestId('youtube-stage')
 const playerTitle = (page: Page) => page.locator('.player-track b, .now-playing-titles h2')
 
 const youtubeGlobals = () =>
-  (window as unknown as { __pulseYouTube?: { playing?: boolean; created?: number } })
-    .__pulseYouTube ?? {}
+  (
+    window as unknown as {
+      __pulseYouTube?: {
+        playing?: boolean
+        created?: number
+        destroyed?: number
+        lastVideoId?: string | null
+      }
+    }
+  ).__pulseYouTube ?? {}
 
 /**
  * Ends the current video through the documented `onStateChange` the fake API
@@ -226,11 +234,18 @@ test.describe('a saved list reaching a video on its own', () => {
   })
 
   /**
-   * Down to one compact player, up to one expanded player, and the same video
-   * throughout — never rebuilt, because reparenting or remounting an iframe
-   * reloads it and would restart the song.
+   * Down to one compact bar, up to one expanded player, and the same video
+   * throughout.
+   *
+   * The player *is* rebuilt on the way back, which this test used to forbid: the
+   * stage was kept mounted across the round trip so the embed never reloaded,
+   * and the price of that was a floating video card docked beside the
+   * mini-player — a second visible player surface for as long as the bar was up.
+   * A rebuild costs a moment of loading; the docked card cost the product its
+   * coherence, so the trade is made the other way now and what must survive is
+   * the video, not the object.
    */
-  test('collapses to one compact player and expands back to the same one', async ({ page }) => {
+  test('collapses to one compact bar and expands back to the same video', async ({ page }) => {
     await likeAudioVideoAudio(page)
     await reachTheVideo(page)
     await expect.poll(() => page.evaluate(youtubeGlobals).then((g) => g.created ?? 0)).toBe(1)
@@ -239,7 +254,10 @@ test.describe('a saved list reaching a video on its own', () => {
 
     // One bar, one player, nothing of the expanded view left behind it.
     await expect(bar(page)).toHaveCount(1)
-    await expect(stage(page)).toHaveCount(1)
+    // No player beside the bar. The stage used to stay mounted here so the embed
+    // never reloaded, and the price was a floating video box next to a compact
+    // row — two visible player surfaces where a track showed one.
+    await expect(stage(page)).toHaveCount(0)
     await expect(page.locator('.now-playing-body')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Collapse Now Playing' })).toHaveCount(0)
     // The bar is a compact row again, not a video card.
@@ -254,10 +272,17 @@ test.describe('a saved list reaching a video on its own', () => {
 
     await page.getByRole('button', { name: 'Open Now Playing' }).click()
     await expect(nowPlayingSheet(page)).toBeVisible()
+    // Exactly one player, and it is holding the video the visitor left.
     await expect(stage(page)).toHaveCount(1)
+    await expect(page.locator('iframe[data-e2e-youtube]')).toHaveCount(1)
     await expect(playerTitle(page)).toHaveText('Night Signal (Official Video)')
-    // The same player object: none was destroyed and none was built.
-    expect(await page.evaluate(youtubeGlobals).then((g) => g.created ?? 0)).toBe(1)
+    await expect
+      .poll(() => page.evaluate(youtubeGlobals).then((g) => g.lastVideoId ?? null))
+      .toBe('aaaaaaaaaaa')
+    // A second player object, built for this presentation — one destroyed on the
+    // way down, one built on the way up, never two at once.
+    await expect.poll(() => page.evaluate(youtubeGlobals).then((g) => g.created ?? 0)).toBe(2)
+    await expect.poll(() => page.evaluate(youtubeGlobals).then((g) => g.destroyed ?? 0)).toBe(1)
   })
 
   /**

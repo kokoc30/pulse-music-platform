@@ -169,7 +169,16 @@ describe('the player follows whichever engine is playing', () => {
    * never rebuilt. That is what this pins: one stage, the same DOM node, still
    * playing, across expand and collapse and expand again.
    */
-  it('mounts exactly one player and keeps the same one across both presentations', async () => {
+  /**
+   * One player while expanded, none while collapsed — never two.
+   *
+   * This used to assert that the *same node* survived a round trip, because the
+   * stage was docked beside the mini-player rather than mounted inside the view.
+   * Keeping it mounted is what put a floating video box next to the bar, so the
+   * player is now mounted only while the expanded view is open and the round
+   * trip rebuilds it. What must never happen either way is two.
+   */
+  it('mounts one player while expanded and none while collapsed', async () => {
     const { user } = await playAudioTrack()
     await playYouTubeResult([SOURP, BAROV], SOURP, 'aram asatryan')
     const dialog = await screen.findByRole('dialog', { name: 'Now playing' })
@@ -180,20 +189,22 @@ describe('the player follows whichever engine is playing', () => {
     // Inside the expanded view the press opened, not docked underneath it.
     expect(dialog.contains(stages[0])).toBe(true)
 
-    // Collapsing neither removes it, moves it, nor stops it.
+    // Collapsing removes it, and pauses rather than leaving a player running
+    // where nobody can see it.
     await user.click(within(dialog).getByRole('button', { name: 'Collapse Now Playing' }))
     await waitFor(() =>
       expect(screen.queryByRole('dialog', { name: 'Now playing' })).not.toBeInTheDocument(),
     )
-    expect(screen.getAllByTestId('youtube-stage')).toHaveLength(1)
-    expect(screen.getByTestId('youtube-stage')).toBe(stages[0])
-    expect(player().contains(stages[0])).toBe(true)
-    expect(useYouTubeStore.getState().status).not.toBe('paused')
+    expect(screen.queryAllByTestId('youtube-stage')).toHaveLength(0)
+    expect(useYouTubeStore.getState().status).toBe('paused')
+    // The bar is the whole of the collapsed presentation, and the item is still
+    // loaded in it.
+    expect(within(miniPlayer()).getByText('Sourp Sarkis')).toBeInTheDocument()
 
-    // And expanding again finds the same node once more.
+    // And expanding again brings exactly one back.
     await user.click(within(miniPlayer()).getByRole('button', { name: 'Open Now Playing' }))
     await screen.findByRole('dialog', { name: 'Now playing' })
-    expect(screen.getByTestId('youtube-stage')).toBe(stages[0])
+    expect(screen.getAllByTestId('youtube-stage')).toHaveLength(1)
   })
 
   /**
@@ -224,9 +235,10 @@ describe('the player follows whichever engine is playing', () => {
     expect(cover).toBeInTheDocument()
     expect(cover).toHaveAttribute('src', expect.stringContaining('ytimg.com'))
     expect(slotIndex()).toBe(audioSlot)
-    // The live player is docked beside the bar, never inside its artwork slot.
+    // And it is the *only* thing representing the video here: no live player in
+    // the artwork slot, and none docked beside the bar either.
     expect(player().querySelector('.player-track [data-testid="youtube-stage"]')).toBeNull()
-    expect(screen.getAllByTestId('youtube-stage')).toHaveLength(1)
+    expect(screen.queryAllByTestId('youtube-stage')).toHaveLength(0)
   })
 })
 

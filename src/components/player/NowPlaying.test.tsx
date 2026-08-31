@@ -566,15 +566,21 @@ describe('it is the expanded view for the video player too', () => {
   })
 
   /**
-   * The reverse of what this asserted before, and the reason is the layout.
+   * Back to pausing, and this time it is the layout that is right rather than
+   * the rule that changed.
    *
-   * Collapsing used to pause a video, because collapsing destroyed the player —
-   * the policies prohibit content continuing in a player the visitor cannot see,
-   * and pausing was the only honest answer to a stage that vanished. The stage
-   * is in the bar now, which is on screen either way, so there is nothing to
-   * hide from and no reason to stop.
+   * The sequence is: pause → collapse → destroy. Collapsing removes the player
+   * from the page, and the policies prohibit content continuing in a player the
+   * visitor cannot see, so pausing is the only honest answer to a stage that
+   * goes away. The arrangement that avoided it — docking a live player beside
+   * the mini-player so a video was always displayed — kept the video running and
+   * made a collapsed video look like two players. Pausing costs one press;
+   * the floating box cost the product its coherence.
+   *
+   * The position survives, which is what makes the press cheap: see
+   * `ExpandedYouTubePlayer.test.tsx` for the round trip.
    */
-  it('does not pause the video on the way down — the player is still on screen', async () => {
+  it('pauses the video on the way down, because the player leaves the page', async () => {
     const { user } = await playFirstSearchResult()
     await openSheet(user)
     await playYouTubeVideo(
@@ -586,8 +592,12 @@ describe('it is the expanded view for the video player too', () => {
     await user.click(screen.getByRole('button', { name: 'Collapse Now Playing' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(useYouTubeStore.getState().status).toBe('playing')
-    expect(screen.getByTestId('youtube-stage')).toBeInTheDocument()
+    expect(useYouTubeStore.getState().status).toBe('paused')
+    // Gone from the page, not hidden on it. A parked iframe would be a live
+    // player the visitor cannot see, which is the thing the pause exists for.
+    expect(screen.queryByTestId('youtube-stage')).not.toBeInTheDocument()
+    // The item is still loaded, so the bar shows it with a Play button.
+    expect(useYouTubeStore.getState().item?.title).toBe('Ay Kyanq')
   })
 
   it('does not pause audio on the way down — that is only a change of view', async () => {

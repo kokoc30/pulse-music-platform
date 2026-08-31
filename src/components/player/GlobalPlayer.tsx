@@ -36,20 +36,34 @@ import { useVerticalSwipe } from './swipe'
  * appear in the accessibility tree. It is the same rule `capabilities` applies
  * to individual controls, applied to the presentation as a whole.
  *
- * ## Why the stage sits here, between them
+ * ## The player exists only while the expanded view is open
  *
- * The YouTube player must be mounted and at least 200 x 200 for as long as it
- * plays, and reparenting an iframe reloads it — so the stage cannot be moved
- * between the bar and the sheet as the visitor expands and collapses. It is
- * therefore a child of *this* element and of nothing else, in a fixed position
- * in the tree, and only its geometry changes: the stylesheet docks it beside the
- * mini-player when collapsed and makes it the primary media region when
- * expanded. The DOM node is never touched, so the video does not reload, does
- * not restart and does not blink.
+ * A YouTube player must be mounted and at least 200 x 200 while it plays, and
+ * for a while that requirement was met by *docking* the stage beside the
+ * mini-player: a 356 x 200 video card floating above the bottom-right corner,
+ * on screen the whole time the bar was. It satisfied the policy and it looked
+ * like two players — a Pulse bar, and a separate YouTube box beside it — where
+ * an audio track showed one compact row. That is the report this arrangement
+ * answers.
  *
- * The collapse handle is rendered *before* it for the same reason — inserting a
- * sibling ahead of a node does not move that node — which is what lets the grab
- * strip and the chevron sit above the video in the expanded layout.
+ * So the stage is mounted **only when `nowPlayingOpen` is true**. Collapsed,
+ * both engines are one bottom bar and nothing else: a video shows its own
+ * thumbnail in the same 56px slot a cover occupies, and there is no iframe on
+ * the page at all.
+ *
+ * **Not hidden — absent.** `opacity: 0`, `visibility: hidden` and offscreen
+ * parking would each leave a live player running where the visitor cannot see
+ * it, which is precisely the background playback the developer policies
+ * prohibit. Unmounting is the only answer that is true.
+ *
+ * The cost is real and is paid deliberately: the iframe is destroyed on
+ * collapse and rebuilt on expand, because reparenting or remounting one reloads
+ * it. `YouTubeStageHost` pauses and publishes the exact position on the way
+ * down, and restores the video and that position on the way back up, so what
+ * the visitor loses is a moment of loading rather than their place.
+ *
+ * The collapse handle is rendered before the stage so the grab strip and the
+ * chevron sit above the video in the expanded layout.
  */
 export function GlobalPlayer() {
   const snapshot = usePlaybackSnapshot()
@@ -57,9 +71,16 @@ export function GlobalPlayer() {
 
   if (snapshot.engine === 'none') return <JoinStrip />
 
-  // Not an engine branch: a property of the loaded item, answered once by the
-  // read model. Audio has no stage, and there is no `engine === 'youtube'` here.
-  const stageItem = snapshot.isEmbeddedStage ? snapshot.stageItem : null
+  /**
+   * The item the live player should host, or null for "no player on the page".
+   *
+   * Two conditions, and neither is an engine branch: *this item is hosted by an
+   * embedded player* (a property of the loaded item, answered once by the read
+   * model) and *the expanded view is open*. Collapsed, this is null for every
+   * provider, and the bar draws the item's artwork exactly as it does for a
+   * track.
+   */
+  const stageItem = expanded && snapshot.isEmbeddedStage ? snapshot.stageItem : null
 
   return (
     <ExpandedSurface expanded={expanded}>

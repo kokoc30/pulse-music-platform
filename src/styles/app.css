@@ -883,8 +883,9 @@ input:focus-visible,
 }
 
 /* The bar is no longer fixed on its own account: `.player-shell` owns the
-   position, because the docked YouTube player is its sibling and the two have to
-   stack as one unit. See `player-shell.css`. */
+   position for both presentations, so collapsing and expanding are one surface
+   changing rather than two competing for the same corner. See
+   `player-shell.css`. */
 .music-player {
   min-height: var(--player-height);
   border-radius: var(--radius-bar);

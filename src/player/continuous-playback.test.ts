@@ -344,15 +344,27 @@ describe('a video running out', () => {
     expect(useYouTubeStore.getState().item?.videoId).toBe('bbbbbbbbbbb')
   })
 
-  it('leaves a collapsed player collapsed when the video ends', async () => {
+  /**
+   * A session step opens the view, because that is where the player lives.
+   *
+   * This asserted the opposite — that a step left the visitor's chosen
+   * presentation alone — and that was right while a collapsed video still had a
+   * player docked beside the mini-player. It no longer does: the embed is
+   * mounted only inside the expanded view, so stepping to the next video with
+   * the view closed would be stepping to a video with nowhere to play it.
+   *
+   * The state this drives is now unreachable in the running app, and
+   * deliberately so: collapsing destroys the player, which pauses the video, so
+   * a video cannot end while collapsed. It is driven directly here because the
+   * rule should hold whichever way the step is reached.
+   */
+  it('opens the view when a step needs a player and none is on screen', async () => {
     useUiStore.getState().setNowPlayingOpen(false)
 
     endCurrentVideo()
     await vi.waitFor(() => expect(videoId()).toBe('bbbbbbbbbbb'))
 
-    // A step inside a session is not a route into YouTube, so it reveals
-    // nothing: the visitor's own choice of presentation is left alone.
-    expect(useUiStore.getState().nowPlayingOpen).toBe(false)
+    expect(useUiStore.getState().nowPlayingOpen).toBe(true)
   })
 
   it('keeps going across three videos without anyone pressing anything', async () => {

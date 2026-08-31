@@ -58,6 +58,19 @@ type Store = typeof useYouTubeStore
  * surface is already whatever the visitor last chose, and changing it under them
  * would be the app overruling a decision they made a moment ago.
  *
+ * `'session-step'` joined the two that open the view, and it had to. A step
+ * within a result session used to leave the surface exactly as the visitor left
+ * it, on the reasoning that they had already chosen a presentation and the app
+ * should not overrule it. That reasoning held while a collapsed video still had
+ * a player docked beside the mini-player; the player now exists only inside the
+ * expanded view, so "leave the surface alone" would mean stepping to a video
+ * with nowhere to play it.
+ *
+ * It is the right place for that rule rather than the transport, because it runs
+ * only for an item that is genuinely going to a YouTube player: a step from a
+ * saved list can hand off to a catalogue track on the other engine, and that
+ * must not pull the sheet up over somebody who asked for the next song.
+ *
  * `'restore'` is the fourth case and the reason this is an enum rather than a
  * boolean: a remount or an internal store change must move nothing at all.
  */
@@ -83,7 +96,11 @@ export function prepareYouTubePlaybackSurface(
   reason: YouTubePresentationReason = 'user-selection',
 ): void {
   activateYouTube()
-  if (reason === 'user-selection' || reason === 'collection-transition') {
+  if (
+    reason === 'user-selection' ||
+    reason === 'collection-transition' ||
+    reason === 'session-step'
+  ) {
     useUiStore.getState().setNowPlayingOpen(true)
   }
 }
@@ -843,28 +860,86 @@ export function toggleYouTubePlayback(store: Store = useYouTubeStore): void {
 
   if (!engine.isReady()) {
     const item = state.item
+    /**
+     * Where to pick the video up. Captured before anything is started, because
+     * the start itself publishes a position of its own.
+     *
+     * This is the ordinary path now rather than a recovery from a stalled
+     * construction: collapsing destroys the player, so a press of Play on the
+     * collapsed bar always arrives here. The expanded view is opened by
+     * `unifiedPlayPause` a moment earlier, the stage mounts, and the request
+     * below is flushed into the player it builds.
+     */
+    const resumeAt = state.currentTime
     resetYouTubeStartGuard()
     tracePlayback('user:recover-player')
     store.getState().setStatus('loading')
-    void engine.start(item, { mode: 'play', recover: true }).catch((error: unknown) => {
-      // A recovery that cannot build a player either leaves the visitor exactly
-      // where they were — cued, visible, and free to try again — rather than in
-      // an error state a second press could not leave.
-      if (isPlayerCreationAbandoned(error)) {
-        store.getState().setStatus('cued')
-        store.getState().setAwaitingUserPlay(true, 'player-not-ready')
-        return
-      }
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : 'YouTube could not play this video.'
-      store.getState().setError(message)
-    })
+    void engine
+      .start(item, { mode: 'play', recover: true, startAt: resumeAt })
+      .catch((error: unknown) => {
+        // A recovery that cannot build a player either leaves the visitor exactly
+        // where they were — cued, visible, and free to try again — rather than in
+        // an error state a second press could not leave.
+        if (isPlayerCreationAbandoned(error)) {
+          store.getState().setStatus('cued')
+          store.getState().setAwaitingUserPlay(true, 'player-not-ready')
+          return
+        }
+        const message =
+          error instanceof Error && error.message
+            ? error.message
+            : 'YouTube could not play this video.'
+        store.getState().setError(message)
+      })
     return
   }
 
   engine.resume()
+}
+
+/**
+ * Stops the player because its stage is going away, and remembers where it was.
+ *
+ * Called from the stage's own unmount, which now happens on every collapse: the
+ * player is mounted only while the expanded view is open, so coming down removes
+ * it from the page entirely. That is deliberate — a docked player beside the
+ * mini-player is what made a video look like a second, separate product, and
+ * hiding one instead of removing it would leave a live player where the visitor
+ * cannot see it, which is the background playback the policies prohibit.
+ *
+ * The pause is what makes the position survive. `engine.pause()` publishes the
+ * player's exact clock before its progress timer stops, so the store holds the
+ * real position rather than one up to a second old, and the stage restores from
+ * that on the way back up.
+ *
+ * A **collapse, not a dismissal**: the item stays loaded, the session and the
+ * collection stay intact, and the bar goes on showing the video with a Play
+ * button. `closeYouTubeSurface` is the other thing, and has its own control.
+ */
+export function suspendYouTubePlayback(store: Store = useYouTubeStore): void {
+  const engine = getYouTubeEngine()
+  if (!engine.isReady()) return
+
+  /**
+   * Read before the pause and written straight to the store, rather than left
+   * to the engine's own progress event.
+   *
+   * This runs from the stage's unmount, and React cleans effects up in
+   * declaration order — the engine→store subscription is set up first (so it
+   * cannot miss a command `attach()` flushes) and therefore torn down first. A
+   * position the engine *emits* at this moment has no listener left. Asking for
+   * it and writing it here does not care about any of that ordering.
+   */
+  const at = engine.getCurrentTime()
+  engine.pause()
+
+  const state = store.getState()
+  // The duration is left alone: a length the player never reported is not this
+  // function's to invent, and the read model already falls back to the item's.
+  if (at > 0) state.setProgress(at, state.duration)
+  // Only a playback in progress becomes a pause. A cued, errored or already
+  // paused video is left saying what it already said.
+  if (state.status === 'playing' || state.status === 'loading') state.setStatus('paused')
 }
 
 /**

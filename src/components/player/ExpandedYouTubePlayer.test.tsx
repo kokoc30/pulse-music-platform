@@ -286,13 +286,24 @@ describe('the expanded view for a video', () => {
     expect(handle!.compareDocumentPosition(frame!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  /**
+   * The invariant, at every point of a round trip: **never two**.
+   *
+   * The collapsed count used to be one — the player was docked beside the
+   * mini-player so it could stay mounted — and it is zero now. That is the
+   * change this pass is about: a docked player made a collapsed video look like
+   * a Pulse bar with a separate YouTube box beside it, where an audio track
+   * showed one compact row.
+   */
   it('never has more than one embedded player on the page', async () => {
     const { user } = await expandedOnVideo()
     expect(embeddedFrames()).toBe(1)
 
     await user.click(screen.getByRole('button', { name: 'Collapse Now Playing' }))
     await waitFor(() => expect(expanded()).toBeNull())
-    expect(embeddedFrames()).toBe(1)
+    // None, rather than one hidden: an iframe parked offscreen or at zero
+    // opacity is still a live player where the visitor cannot see it.
+    expect(embeddedFrames()).toBe(0)
 
     await user.click(screen.getByRole('button', { name: 'Open Now Playing' }))
     await screen.findByRole('dialog', { name: 'Now playing' })
@@ -300,28 +311,46 @@ describe('the expanded view for a video', () => {
   })
 
   /**
-   * The identity claim, which is why the stage is a sibling of both
-   * presentations rather than a child of either.
+   * What survives a round trip, now that the player itself does not.
    *
-   * Reparenting an iframe reloads it, so expanding and collapsing must not do
-   * it. The same DOM node, the same engine player and the same position survive
-   * a full round trip.
+   * This used to assert the opposite — the same DOM node, the same engine player,
+   * one construction ever — because the stage was a sibling of both
+   * presentations and only its box changed. That identity was worth having and
+   * it cost a docked video card floating beside the mini-player, which is the
+   * defect this pass removes.
+   *
+   * So the player *is* rebuilt, deliberately, and the claim moves to what the
+   * visitor actually cares about: the same video, at the same position, in the
+   * same collection, with a working player at the end of it. A rebuild that lost
+   * the position would be its own bug, which is why the pause on the way down
+   * publishes the player's exact clock.
    */
-  it('keeps the same player, position and session across expand and collapse', async () => {
+  it('keeps the same video, position and session across expand and collapse', async () => {
     const { user, youtube } = await expandedOnVideo()
-    const stage = stages()[0]
-    const player = youtube.current()
-    useYouTubeStore.getState().setProgress(73, 240)
+    const item = useYouTubeStore.getState().item
+    /**
+     * The *player's* clock, not the store's, and the distinction is the point.
+     *
+     * Collapsing pauses, and the pause publishes what the player actually
+     * reports — so a position written only to the store would be overwritten by
+     * the truth a moment later, exactly as it should be. Setting it here proves
+     * the position that survives is the one the video was really at.
+     */
+    youtube.current()?.setCurrentTime(73)
 
     await user.click(screen.getByRole('button', { name: 'Collapse Now Playing' }))
     await waitFor(() => expect(expanded()).toBeNull())
+    // Gone, not hidden.
+    expect(stages()).toHaveLength(0)
+    expect(youtube.current()).toBeNull()
+
     await user.click(screen.getByRole('button', { name: 'Open Now Playing' }))
     await screen.findByRole('dialog', { name: 'Now playing' })
 
-    expect(stages()[0]).toBe(stage)
-    expect(youtube.current()).toBe(player)
-    // One player was ever built, and it was never destroyed on the way.
-    expect(youtube.created).toBe(1)
+    // A player again — a new one, and exactly one.
+    expect(stages()).toHaveLength(1)
+    expect(youtube.current()).not.toBeNull()
+    expect(useYouTubeStore.getState().item?.videoId).toBe(item?.videoId)
     expect(useYouTubeStore.getState().currentTime).toBe(73)
     expect(collectionSession().context).toEqual(LIKED_CONTEXT)
   })
@@ -338,20 +367,28 @@ describe('the expanded view for a video', () => {
     expect(observer.activeObservers()).toBe(before)
   })
 
+  /**
+   * The reported screenshot, as an assertion: one bottom bar and nothing else.
+   *
+   * `stages()` was 1 here, and that one was the floating box. Collapsed, a video
+   * is now exactly what a track is — a compact row with a thumbnail in it.
+   */
   it('leaves one compact presentation behind when it comes down', async () => {
     const { user } = await expandedOnVideo()
 
     await user.click(screen.getByRole('button', { name: 'Collapse Now Playing' }))
     await waitFor(() => expect(expanded()).toBeNull())
 
-    // One bar, one player, and no leftover expanded controls under it.
+    // One bar, no player, and no leftover expanded controls under it.
     expect(miniPlayer()).not.toBeNull()
-    expect(stages()).toHaveLength(1)
+    expect(stages()).toHaveLength(0)
     expect(document.querySelectorAll('.now-playing-body')).toHaveLength(0)
     expect(screen.queryByRole('button', { name: 'Collapse Now Playing' })).toBeNull()
-    // Still the same video, still playing.
+    // The video is still loaded and still the visitor's place in the list; it is
+    // paused rather than playing, because there is no longer a player it could
+    // honestly be playing in.
     expect(useYouTubeStore.getState().item?.title).toBe('Tangarjhek Manyak')
-    expect(useYouTubeStore.getState().status).toBe('playing')
+    expect(useYouTubeStore.getState().status).toBe('paused')
   })
 
   /**

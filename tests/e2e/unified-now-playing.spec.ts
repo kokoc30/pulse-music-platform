@@ -225,12 +225,13 @@ test.describe('the player follows the engine that is playing', () => {
     await expect(bar(page)).toHaveCount(0)
     await expect(dialog).toHaveAttribute('aria-modal', 'true')
 
-    // Coming down leaves one compact player with the same video in it, still
-    // the same iframe — and the player belongs to playback rather than to the
-    // route, so it survives a navigation intact.
+    // Coming down leaves one compact bar with the same video in it, and no
+    // player anywhere — the embed exists only while the expanded view is open.
+    // What belongs to playback rather than to the route is the *item*, so it
+    // survives a navigation intact.
     await collapseSheet(page)
     await expect(bar(page)).toHaveCount(1)
-    await expect(page.getByTestId('youtube-stage')).toHaveCount(1)
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(0)
     await page.getByRole('link', { name: 'Pulse home' }).click()
     await expect(page.getByRole('heading', { name: 'Trending songs' })).toBeVisible()
     await expect(playerTitle(page)).toHaveText('Sourp Sarkis')
@@ -277,7 +278,15 @@ test.describe('where playback starts', () => {
       .toBe(true)
   })
 
-  test('the player clears 200 x 200 in both presentations', async ({ page }) => {
+  /**
+   * The floor applies wherever a player exists — and collapsed, none does.
+   *
+   * This measured a *docked* stage in the collapsed presentation, which is the
+   * floating box the collapsed model removes. There is nothing to measure there
+   * now, and asserting its absence is the stronger claim: a player kept below
+   * the floor and a player kept out of sight are the same violation.
+   */
+  test('the player clears 200 x 200 wherever it exists', async ({ page }) => {
     await playFirstVideo(page)
 
     // Through `stageHitTest`, which lets every animation on the page settle
@@ -291,9 +300,8 @@ test.describe('where playback starts', () => {
 
     await collapseSheet(page)
 
-    const docked = await stageHitTest(page)
-    expect(docked.width).toBeGreaterThanOrEqual(200)
-    expect(docked.height).toBeGreaterThanOrEqual(200)
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(0)
+    await expect(page.locator('iframe[data-e2e-youtube]')).toHaveCount(0)
   })
 
   /**
@@ -320,7 +328,18 @@ test.describe('where playback starts', () => {
     await expect(bar(page).getByTestId('youtube-stage')).toHaveCount(0)
   })
 
-  test('expanding and collapsing never rebuilds or stops the player', async ({ page }) => {
+  /**
+   * The reverse of what this asserted, and the reversal is the point.
+   *
+   * Keeping one player across the round trip is why the stage was docked beside
+   * the mini-player, and the docked stage is the reported defect. So the player
+   * *is* destroyed on the way down and rebuilt on the way up — exactly one of
+   * each, never two at once — and what survives instead is the video and the
+   * position, which is what the visitor was actually keeping.
+   */
+  test('expanding and collapsing rebuilds exactly one player, and keeps the video', async ({
+    page,
+  }) => {
     await playFirstVideo(page)
 
     // Read as two numbers rather than as the whole recorder object: it also
@@ -335,33 +354,40 @@ test.describe('where playback starts', () => {
       })
 
     await expect.poll(() => counts().then((c) => c.created)).toBe(1)
-    const before = await counts()
+    const video = await page.evaluate(
+      () =>
+        (window as unknown as { __pulseYouTube?: { lastVideoId?: string | null } }).__pulseYouTube
+          ?.lastVideoId ?? null,
+    )
 
     await page.getByRole('button', { name: 'Collapse Now Playing' }).click()
     await expect(page.getByRole('dialog', { name: 'Now playing' })).toHaveCount(0)
+    // Destroyed, not parked: one built, one destroyed, none on the page.
+    await expect.poll(() => counts().then((c) => c.destroyed)).toBe(1)
+    await expect(page.locator('iframe[data-e2e-youtube]')).toHaveCount(0)
 
     await page.getByRole('button', { name: 'Open Now Playing' }).click()
     await expect(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible()
 
-    // No second iframe, no destroyed one, and still playing. The stage is a
-    // stable child of the player shell and only its box changes between the two
-    // presentations — reparenting an iframe, or remounting one, reloads it.
-    expect(await counts()).toEqual(before)
+    // A second player, and only ever one at a time.
+    await expect.poll(() => counts().then((c) => c.created)).toBe(2)
+    await expect(page.locator('iframe[data-e2e-youtube]')).toHaveCount(1)
     await expect(
       page.getByRole('dialog', { name: 'Now playing' }).getByTestId('youtube-stage'),
     ).toBeVisible()
+    // Holding the same video the visitor left.
     await expect
       .poll(() =>
         page.evaluate(
           () =>
-            (window as unknown as { __pulseYouTube?: { playing?: boolean } }).__pulseYouTube
-              ?.playing ?? false,
+            (window as unknown as { __pulseYouTube?: { lastVideoId?: string | null } })
+              .__pulseYouTube?.lastVideoId ?? null,
         ),
       )
-      .toBe(true)
+      .toBe(video)
   })
 
-  test('nothing is painted over the player in either presentation', async ({ page }) => {
+  test('nothing is painted over the player', async ({ page }) => {
     await playFirstVideo(page)
 
     // The compositor's answer, not a rectangle comparison: whatever is at the
@@ -371,12 +397,10 @@ test.describe('where playback starts', () => {
     expect(expanded.height).toBeGreaterThanOrEqual(200)
     expect(expanded.covering).toEqual(['stage', 'stage', 'stage'])
 
+    // Collapsed there is no player to paint over, which is a stronger guarantee
+    // than an unobscured docked one.
     await collapseSheet(page)
-
-    const docked = await stageHitTest(page)
-    expect(docked.width).toBeGreaterThanOrEqual(200)
-    expect(docked.height).toBeGreaterThanOrEqual(200)
-    expect(docked.covering).toEqual(['stage', 'stage', 'stage'])
+    await expect(page.getByTestId('youtube-stage')).toHaveCount(0)
   })
 
   test('an audio result still starts in the bar, exactly as before', async ({ page }) => {
