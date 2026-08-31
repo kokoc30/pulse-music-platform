@@ -131,6 +131,20 @@ function silenceStateEvents(player: ReturnType<FakeYouTubeFactory['current']>) {
   }
 }
 
+/**
+ * Silences the live player *and* every player built from here on.
+ *
+ * A test used to reach for `factory.current()` partway through a transition,
+ * because the preparation had already built an empty player by then. It no
+ * longer does — a player is constructed only once there is a video to construct
+ * it around, which is the fix — so there is nothing to reach for, and a test
+ * that wants to change how the player behaves has to be handed it instead.
+ */
+function silencePlayers() {
+  silenceStateEvents(factory.current())
+  factory.onCreate = silenceStateEvents
+}
+
 const status = () => useYouTubeStore.getState().status
 const awaiting = () => useYouTubeStore.getState().awaitingUserPlayReason
 
@@ -166,9 +180,9 @@ describe('a visible player that accepts the start', () => {
     await vi.advanceTimersByTimeAsync(400)
     await handedOff
 
-    // `playVideo` rather than `loadVideoById`, and that is right: phase 1 cued
-    // this very video while the measurement settled, so the play resumes the
-    // player it prepared instead of reloading it. Both are documented play
+    // `loadVideoById`: the player is constructed around this video and has
+    // never started, so load-and-play is the documented command for it rather
+    // than a resume of something that never ran. Both are documented play
     // paths; what matters — and what was wrong before — is that the final
     // command is not `cueVideoById`.
     expect(PLAY_COMMANDS).toContain(commands.at(-1))
@@ -419,7 +433,7 @@ describe('a play command that starts nothing', () => {
     await vi.advanceTimersByTimeAsync(150)
     // Every command is accepted and none of them starts anything, which is
     // precisely what a silent refusal looks like from here.
-    silenceStateEvents(factory.current())
+    silencePlayers()
     await vi.advanceTimersByTimeAsync(300 + START_CONFIRMATION_MS + 200)
     await handedOff
     return handedOff
@@ -427,12 +441,12 @@ describe('a play command that starts nothing', () => {
 
   it('gives up after one attempt and asks for a press', async () => {
     const handedOff = handOff()
-    // Observed late, so the player already exists — built by the preparation
-    // cue — and can be silenced before the authorised play command is issued.
+    // Every player this factory builds from here on accepts commands and reports
+    // nothing back, which is what a silent refusal looks like from the app.
     observeAt(300, 0.95)
     await vi.advanceTimersByTimeAsync(150)
     // From here it accepts every command and reports nothing back.
-    silenceStateEvents(factory.current())
+    silencePlayers()
     await vi.advanceTimersByTimeAsync(300 + START_CONFIRMATION_MS + 200)
     await handedOff
 
@@ -445,7 +459,7 @@ describe('a play command that starts nothing', () => {
     const handedOff = handOff()
     observeAt(300, 0.95)
     await vi.advanceTimersByTimeAsync(150)
-    silenceStateEvents(factory.current())
+    silencePlayers()
     await vi.advanceTimersByTimeAsync(300 + START_CONFIRMATION_MS + 200)
     await handedOff
 
@@ -457,7 +471,7 @@ describe('a play command that starts nothing', () => {
     const handedOff = handOff()
     observeAt(300, 0.95)
     await vi.advanceTimersByTimeAsync(150)
-    silenceStateEvents(factory.current())
+    silencePlayers()
     await vi.advanceTimersByTimeAsync(300 + START_CONFIRMATION_MS + 200)
     await handedOff
     const issued = commands.length
@@ -481,7 +495,9 @@ describe('the generated iframe permission', () => {
 
     // A current API build sets `autoplay` itself, so this is the expected read —
     // and the point is that it is a read rather than an assumption.
-    expect(lastTraceDetail('decide:measured')?.iframeAllowsAutoplay).toBe(true)
+    // Read from the frame after it exists: before the start there is no player
+    // and therefore no frame, and a `null` there would say nothing at all.
+    expect(lastTraceDetail('engine:iframe')?.allowsAutoplay).toBe(true)
   })
 
   it('is delegated when the API build did not include it', async () => {
@@ -525,7 +541,7 @@ describe('the sequence a real phone reported', () => {
 
   /** Accepts the command, reports nothing itself — the test drives the states. */
   function silentPlayer() {
-    silenceStateEvents(factory.current())
+    silencePlayers()
   }
 
   async function handOffThen(states: number[]) {
@@ -633,15 +649,45 @@ describe('the command an authorised automatic start issues', () => {
     expect(commands).toEqual(['loadVideoById'])
   })
 
-  it('builds the player without giving it a video', async () => {
+  /**
+   * The reversal a physical device forced, and the reason it is asserted rather
+   * than left to the implementation.
+   *
+   * This used to require the opposite: a player constructed *empty*, with the id
+   * reaching it only through the load command. The reasoning was sound and the
+   * documented constructor supports it — and on a real phone that construction
+   * never emitted `onReady`, so nothing was ever built, no command was ever
+   * issued, and Play did nothing. The video-seeded construction is the one a
+   * direct click has always used and the one physical devices confirm works, so
+   * the automatic path converges on it instead of keeping a lifecycle of its own.
+   */
+  it('builds the player around the video it is about to play', async () => {
     const handedOff = handOff()
     observeAt(50, 0.92)
     await vi.advanceTimersByTimeAsync(400)
     await handedOff
 
-    // Constructed empty: the id reaches the player through the load command and
-    // through nothing else.
-    expect(factory.players[0]?.options.videoId).toBeUndefined()
+    expect(factory.players[0]?.options.videoId).toBe('aram0000001')
+    // And still one authoritative media command, not a cue in front of a load.
+    expect(commands).toEqual(['loadVideoById'])
+  })
+
+  /** The preparation loads the script, and builds nothing. */
+  it('preloads the API script without constructing a player', async () => {
+    const handedOff = handOff()
+
+    // Before any measurement lands there is no player at all — only the script
+    // request that used to be accompanied by an empty player that could hang.
+    await vi.advanceTimersByTimeAsync(100)
+    expect(factory.created).toBe(0)
+    expect(factory.apiPrepared).toBeGreaterThan(0)
+    expect(getYouTubeEngine().isApiReady()).toBe(true)
+    expect(getYouTubeEngine().isReady()).toBe(false)
+
+    observeAt(150, 0.92)
+    await vi.advanceTimersByTimeAsync(400)
+    await handedOff
+    expect(factory.created).toBe(1)
   })
 
   /** A refusal still cues, because that is what a refusal is for. */

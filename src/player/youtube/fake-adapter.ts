@@ -36,6 +36,30 @@ export interface FakeYouTubePlayer extends YouTubePlayerHandle {
 
 export interface FakeYouTubeFactory extends YouTubePlayerFactory {
   /**
+   * Called with every player the moment it is built, before its `onReady`.
+   *
+   * The seam a test needs now that a player is only constructed once there is a
+   * video to construct it around: there is no instance to reach for in advance,
+   * so a test that wants to change how a player behaves has to be handed it.
+   */
+  onCreate: ((player: FakeYouTubePlayer) => void) | null
+  /** How many times the script preload was asked for. */
+  readonly apiPrepared: number
+  /**
+   * Hold the next `create()` open: the player is built, and its `onReady` — and
+   * therefore the promise the engine is waiting on — is withheld until released.
+   *
+   * The behaviour a physical device showed, and the one the whole recovery path
+   * exists for. Left unreleased it never settles at all, which is the failure
+   * itself; released after the engine has moved on, it is the *late* arrival
+   * that must not be allowed to replace a working player.
+   */
+  deferNextCreate(): void
+  /** Lets every held construction complete, however late. */
+  releaseDeferredCreates(): void
+  /** How many constructions are still being held. */
+  readonly deferredCreates: number
+  /**
    * The `allow` attribute the doubled API puts on the iframe it builds.
    *
    * A real `YT.Player` sets one, and whether it includes `autoplay` decides
@@ -61,10 +85,31 @@ export const DEFAULT_IFRAME_ALLOW =
 export function createFakeYouTubeFactory(): FakeYouTubeFactory {
   const players: FakeYouTubePlayer[] = []
   let failNext: string | null = null
+  let deferNext = false
+  const deferred: (() => void)[] = []
+  let apiPrepared = 0
 
   const factory: FakeYouTubeFactory = {
     players,
     allowAttribute: DEFAULT_IFRAME_ALLOW,
+    onCreate: null,
+    get apiPrepared() {
+      return apiPrepared
+    },
+    deferNextCreate() {
+      deferNext = true
+    },
+    releaseDeferredCreates() {
+      const held = deferred.splice(0, deferred.length)
+      for (const release of held) release()
+    },
+    get deferredCreates() {
+      return deferred.length
+    },
+    prepareApi() {
+      apiPrepared += 1
+      return Promise.resolve()
+    },
     get created() {
       return players.length
     },
@@ -78,6 +123,10 @@ export function createFakeYouTubeFactory(): FakeYouTubeFactory {
     reset() {
       players.length = 0
       failNext = null
+      deferNext = false
+      deferred.length = 0
+      apiPrepared = 0
+      factory.onCreate = null
     },
     create(container, options) {
       if (failNext) {
@@ -206,12 +255,25 @@ export function createFakeYouTubeFactory(): FakeYouTubeFactory {
       }
 
       players.push(player)
+      factory.onCreate?.(player)
       // The real API creates the iframe itself; the fake mirrors that so
       // "the container holds exactly one iframe and nothing else" is testable.
       const iframe = container.ownerDocument.createElement('iframe')
       iframe.title = 'YouTube video player'
       if (factory.allowAttribute) iframe.setAttribute('allow', factory.allowAttribute)
       container.replaceChildren(iframe)
+
+      if (deferNext) {
+        deferNext = false
+        // Built, but silent: no `onReady`, and nothing resolves. Exactly the
+        // shape of the construction that stalled on a real device.
+        return new Promise<YouTubePlayerHandle>((resolve) => {
+          deferred.push(() => {
+            options.events.onReady?.()
+            resolve(player)
+          })
+        })
+      }
 
       options.events.onReady?.()
       return Promise.resolve(player)

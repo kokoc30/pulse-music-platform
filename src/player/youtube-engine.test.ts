@@ -6,12 +6,14 @@ import { createFakeYouTubeFactory } from './youtube/fake-adapter'
 import type { FakeYouTubeFactory } from './youtube/fake-adapter'
 import {
   MINIMUM_DIMENSION,
+  PLAYER_CREATE_TIMEOUT_MS,
   PROGRESS_POLL_MS,
   RECOMMENDED_HEIGHT,
   RECOMMENDED_WIDTH,
   createYouTubeIframeEngine,
   getYouTubeEngine,
   hasYouTubeEngine,
+  isPlayerCreationAbandoned,
   setYouTubeEngine,
 } from './youtube-engine'
 import type { YouTubeEngine } from './youtube-engine'
@@ -265,6 +267,188 @@ describe('teardown', () => {
     // And a later attempt still works — the failure is not sticky.
     await engine.start(video(), { mode: 'play' })
     expect(factory.current()?.playing).toBe(true)
+  })
+})
+
+/* ==========================================================================
+   Player construction — the lifecycle the reported physical failure broke on
+   ========================================================================== */
+
+/**
+ * The invariant every test below serves:
+ *
+ * **A failed, timed-out, detached, superseded or never-ready construction must
+ * never stop a later real start from building a functional player.**
+ *
+ * The engine used to hold one creation promise and share it with everything
+ * that asked. A construction that never settled was therefore inherited for
+ * ever — by the request behind it, by the request queue, and by the visitor's
+ * own press of Play. On a phone that produced a black player with a Play button
+ * that did nothing at all, which is a worse failure than any autoplay refusal.
+ */
+describe('a construction that never becomes ready', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('is abandoned on its bound rather than held for ever', async () => {
+    factory.deferNextCreate()
+    const start = engine.start(video(), { mode: 'play' })
+    const settled = start.then(
+      () => 'resolved',
+      (error: unknown) => (isPlayerCreationAbandoned(error) ? 'abandoned' : 'other'),
+    )
+
+    // Inside the bound it is genuinely still trying: no verdict either way.
+    await vi.advanceTimersByTimeAsync(PLAYER_CREATE_TIMEOUT_MS - 100)
+    expect(engine.describeCreation().state).toBe('creating')
+    expect(engine.isReady()).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(200)
+    expect(await settled).toBe('abandoned')
+    expect(engine.describeCreation()).toMatchObject({ state: 'timed-out', timedOut: true })
+  })
+
+  it('does not poison the next attempt', async () => {
+    factory.deferNextCreate()
+    const abandoned = engine.start(video(), { mode: 'play' }).catch(() => 'abandoned')
+    await vi.advanceTimersByTimeAsync(PLAYER_CREATE_TIMEOUT_MS + 100)
+    await abandoned
+
+    // The whole point: a second attempt builds a working player.
+    await engine.start(video(), { mode: 'play' })
+    expect(engine.isReady()).toBe(true)
+    expect(factory.current()?.playing).toBe(true)
+    expect(engine.describeCreation().state).toBe('ready')
+  })
+
+  /**
+   * A direct press does not wait out the bound, and does not queue behind the
+   * attempt that stalled. Waiting six seconds for a button is the same
+   * unresponsive Play button in a slower disguise.
+   */
+  it('is superseded at once by a start that asks to recover', async () => {
+    factory.deferNextCreate()
+    const stalled = engine.start(video(), { mode: 'play' }).catch(() => 'abandoned')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(engine.isReady()).toBe(false)
+
+    await engine.start(video(), { mode: 'play', recover: true })
+
+    expect(engine.isReady()).toBe(true)
+    expect(factory.current()?.playing).toBe(true)
+    // And the stalled one ends as an abandonment rather than as an error about
+    // the video, which is fine and is nobody's fault.
+    await vi.advanceTimersByTimeAsync(PLAYER_CREATE_TIMEOUT_MS + 100)
+    expect(await stalled).toBe('abandoned')
+  })
+
+  /**
+   * The late arrival. Attempt 1 times out, attempt 2 succeeds, and attempt 1
+   * then reports ready after all — as a slow network genuinely can. It must not
+   * install itself over the player the visitor is watching.
+   */
+  it('cannot install itself once a later attempt has succeeded', async () => {
+    factory.deferNextCreate()
+    const abandoned = engine.start(video(), { mode: 'play' }).catch(() => 'abandoned')
+    await vi.advanceTimersByTimeAsync(PLAYER_CREATE_TIMEOUT_MS + 100)
+    await abandoned
+
+    await engine.start(video({ videoId: 'bbbbbbbbbbb' }), { mode: 'play' })
+    const working = factory.players[1]
+    expect(working.playing).toBe(true)
+
+    // Attempt 1 finally reports ready, long after it stopped mattering.
+    factory.releaseDeferredCreates()
+    await vi.advanceTimersByTimeAsync(10)
+
+    expect(factory.players[0].destroyed).toBe(true)
+    expect(working.destroyed).toBe(false)
+    expect(engine.isPlaying()).toBe(true)
+    expect(engine.getCurrentItem()?.videoId).toBe('bbbbbbbbbbb')
+  })
+
+  it('does not rebuild a player that is working', async () => {
+    await engine.start(video(), { mode: 'play' })
+    engine.pause()
+    await engine.start(video(), { mode: 'play', recover: true })
+
+    expect(factory.created).toBe(1)
+    expect(factory.current()?.playing).toBe(true)
+  })
+})
+
+describe('preparing the infrastructure', () => {
+  it('loads the API script and constructs nothing', async () => {
+    const prepared = await engine.prepare(video())
+
+    expect(prepared).toBe(true)
+    expect(factory.apiPrepared).toBe(1)
+    // The empty player is gone: nothing is built until there is a video for it.
+    expect(factory.created).toBe(0)
+    expect(engine.isApiReady()).toBe(true)
+    expect(engine.isReady()).toBe(false)
+    expect(engine.describeCreation().state).toBe('idle')
+  })
+
+  it('records the item so a remount does not cue over an in-flight start', async () => {
+    await engine.prepare(video({ videoId: 'bbbbbbbbbbb' }))
+    expect(engine.getCurrentItem()?.videoId).toBe('bbbbbbbbbbb')
+  })
+
+  it('never stops a later start from building a player', async () => {
+    await engine.prepare(video())
+    await engine.start(video(), { mode: 'play' })
+    expect(factory.current()?.playing).toBe(true)
+  })
+})
+
+/**
+ * A black, never-ready player showing 0:33 of 4:51 was in the reported
+ * screenshot, and none of it was true of the video on screen. A rail that
+ * confidently reports somebody else's position is worse than an empty one.
+ */
+describe('progress belongs to the video that is loaded', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('forgets the position the moment a different video is requested', async () => {
+    const ticks: [number, number][] = []
+    engine.subscribe({
+      onTimeUpdate: (currentTime, duration) => ticks.push([currentTime, duration]),
+    })
+
+    await engine.start(video(), { mode: 'play' })
+    factory.current()?.setCurrentTime(33)
+    factory.current()?.setDuration(291)
+    await vi.advanceTimersByTimeAsync(PROGRESS_POLL_MS)
+    expect(ticks.at(-1)).toEqual([33, 291])
+
+    // A different video, on a player that never builds — the reported case.
+    // The position is republished as nothing at once, rather than left standing.
+    engine.detach()
+    engine.attach(container)
+    factory.deferNextCreate()
+    void engine.start(video({ videoId: 'bbbbbbbbbbb' }), { mode: 'play' }).catch(() => {})
+
+    expect(ticks.at(-1)).toEqual([0, 0])
+    await vi.advanceTimersByTimeAsync(PROGRESS_POLL_MS * 3)
+    // And nothing republishes the old position while nothing is loaded.
+    expect(ticks.at(-1)).toEqual([0, 0])
+  })
+
+  it('keeps the position when the same video is resumed', async () => {
+    const ticks: [number, number][] = []
+    await engine.start(video(), { mode: 'play' })
+    engine.subscribe({
+      onTimeUpdate: (currentTime, duration) => ticks.push([currentTime, duration]),
+    })
+    factory.current()?.setCurrentTime(33)
+    factory.current()?.setDuration(291)
+
+    engine.pause()
+    await engine.start(video(), { mode: 'play' })
+
+    expect(ticks).not.toContainEqual([0, 0])
   })
 })
 

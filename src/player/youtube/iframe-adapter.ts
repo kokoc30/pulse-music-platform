@@ -75,14 +75,16 @@ export interface YouTubePlayerEvents {
 
 export interface CreatePlayerOptions {
   /**
-   * The video to construct the player around, or absent for an empty one.
+   * The video to construct the player around. Required, and deliberately so.
    *
-   * Optional because the documented constructor treats it as optional, and a
-   * player built without it holds no media until something is loaded in — which
-   * is what lets an authorised automatic start be a single load command rather
-   * than a load on top of a video the constructor already queued.
+   * The documented constructor treats it as optional, and for a while this did
+   * too: an empty player was how a transition prepared itself without holding
+   * any media. A physical device then showed that construction never emitting
+   * `onReady`, while the video-seeded construction a direct click performs
+   * worked every time. The type now says what the deployed environment supports,
+   * so the empty player cannot be reintroduced by accident.
    */
-  videoId?: string
+  videoId: string
   width: number
   height: number
   origin: string
@@ -118,6 +120,19 @@ export interface YouTubePlayerHandle {
 
 export interface YouTubePlayerFactory {
   create(container: HTMLElement, options: CreatePlayerOptions): Promise<YouTubePlayerHandle>
+  /**
+   * Fetches the official IFrame API script, and does nothing else.
+   *
+   * The two halves of "ready" are separate things and this is the first of them:
+   * `YT.Player` exists. It creates no player, holds no media, and cannot hang a
+   * later start — which is the whole distinction the engine now draws, after an
+   * empty player built to stand in for this step sat on a phone for ever without
+   * reporting ready.
+   *
+   * Optional so a test double need not implement a script load it has no script
+   * for; a factory without it simply has nothing to preload.
+   */
+  prepareApi?(): Promise<void>
 }
 
 // --- The real, official implementation ------------------------------------
@@ -298,6 +313,12 @@ export function loadYouTubeIframeApi(): Promise<YtNamespace> {
  * longer disables related videos.
  */
 export const officialYouTubePlayerFactory: YouTubePlayerFactory = {
+  // The existing loader, reused rather than duplicated: one script tag, one
+  // cached promise, and no additional network budget of any kind.
+  async prepareApi() {
+    await loadYouTubeIframeApi()
+  },
+
   async create(container, options) {
     const YT = await loadYouTubeIframeApi()
 

@@ -49,8 +49,13 @@ export interface YouTubePlaybackState {
    *   this application did not initiate playback. Required Minimum
    *   Functionality; the app's own decision.
    * · `'document-hidden'` — the app was in the background. The app's decision.
-   * · `'player-not-ready'` — the player did not become usable within the bound,
-   *   so no command was issued. The app's decision, and a slow one.
+   * · `'player-not-ready'` — the app was permitted to play, tried to build the
+   *   player, and the construction did not complete within its bound, so no
+   *   command was issued. **Not a verdict on the video and not a refusal**: the
+   *   item stays loaded and a press of Play discards the stalled construction
+   *   and builds a fresh one. This is the state the reported physical failure
+   *   was in, and it used to be reported as `awaitingUserPlay` with no reason at
+   *   all beside a Play button that could not act on it.
    * · `'permission-policy'` — the embed's frame was never delegated the
    *   `autoplay` permission, so the browser would refuse any scripted start
    *   whatever else were true. A configuration fact, and the one failure here

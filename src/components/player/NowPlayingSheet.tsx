@@ -243,14 +243,19 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
  * not to start it or the browser refused to let it. Those need different words,
  * and only one of them needs any:
  *
- * · **Visibility, a hidden document, a player that never became usable** — the
- *   app's own decisions, taken while the visitor was elsewhere or the player was
- *   not really on screen. A Play button is a complete answer; a sentence
- *   explaining an internal rule would be noise.
+ * · **Visibility, or a hidden document** — the app's own decisions, taken while
+ *   the visitor was elsewhere or the player was not really on screen. A Play
+ *   button is a complete answer; a sentence explaining an internal rule would be
+ *   noise.
  * · **The browser refused a play this app did issue** — a saved list moved on,
  *   the player is right there, and pressing Play is the only thing that will
  *   work. Saying so is the difference between a considered design and something
  *   that looks broken.
+ * · **The player itself never got built** — the automatic initialisation ran out
+ *   of time. From the visitor's side this is the same situation and needs the
+ *   same sentence: the video is there, and a press is what will start it. It is
+ *   said here only because the press now genuinely recovers it; a message
+ *   pointing at a button that does nothing would be worse than silence.
  *
  * Deliberately not an error, and deliberately not phrased as a failure: nothing
  * went wrong, and nothing in this codebase should try to work around it.
@@ -266,7 +271,8 @@ function AutoplayBlockedNotice() {
   const refused =
     reason === 'autoplay-blocked' ||
     reason === 'player-command-no-start' ||
-    reason === 'player-returned-to-cued'
+    reason === 'player-returned-to-cued' ||
+    reason === 'player-not-ready'
 
   if (!awaiting || !refused) return null
 
@@ -319,11 +325,21 @@ function PlaybackDebugReadout() {
     ['measured', decision.measured],
     ['waited (ms)', decision.waitedMs],
     ['wait ended', measurement.outcome],
+    // The two readinesses, separately. They are independent facts and reading
+    // one for the other is what made the reported failure unplaceable: the
+    // script had loaded perfectly well, and no player was being built at all.
+    ['api ready', measured.apiReady],
     ['player ready', measured.playerReady],
+    // Whether a construction is in flight, succeeded, failed, or ran out of
+    // time — and which attempt. On a device with no developer tools this is the
+    // difference between "nothing is happening" and "something gave up".
+    ['player creation', measured.creation],
+    ['creation gen', measured.creationGeneration],
+    ['creation timed out', measured.creationTimedOut],
     // The configuration fact, read from the real generated frame. If this is
     // false a scripted start cannot succeed however visible the player is, and
     // the fix is a permission rather than a timing.
-    ['iframe autoplay', measured.iframeAllowsAutoplay],
+    ['iframe autoplay', lastTraceDetail('engine:iframe')?.allowsAutoplay],
     ['decision', decision.mode],
     ['withheld', decision.withheld],
     ['commands', tracedValues('engine:command', 'command').join(' → ')],

@@ -20,7 +20,7 @@ import {
   notePlayed,
 } from './related-fetcher'
 import { beginPlaybackTrace, tracePlayback } from './playback-trace'
-import { getYouTubeEngine } from './youtube-engine'
+import { getYouTubeEngine, isPlayerCreationAbandoned } from './youtube-engine'
 import type { PlaybackStartMode } from './youtube-engine'
 import {
   hasMeasuredYouTubeVisibility,
@@ -173,15 +173,25 @@ export interface StartDecision {
  * · **A caller holding a measurement** — a transition inside an already-open
  *   player — uses it and skips the wait entirely.
  * · **Anything else** waits, bounded, for the real observer on the stage phase 1
- *   has just revealed, and then for the player to actually become usable.
+ *   has just revealed. Only for that: see below.
  *
- * **Readiness is part of the decision, not an afterthought.** Visibility and
- * readiness are independent: the box can be laid out and measured a second or
- * more before the IFrame API script has loaded and built a player inside it.
- * Deciding to autoplay on the strength of visibility alone, and then issuing the
- * command into a player that does not exist, is a command that does nothing —
- * the video sits on a thumbnail with the store insisting it is loading. So the
- * two waits run together and the decision is taken after both.
+ * **Readiness is not part of the decision, and putting it there was circular.**
+ * This used to wait for `engine.whenReady()` alongside the measurement and
+ * refuse to play if no player had appeared. That made sense while a player was
+ * built speculatively during phase 1; once the player is only constructed around
+ * the video that is actually going to play, it became a loop — no player may be
+ * built until the decision says play, and the decision would not say play until
+ * a player existed. On a phone the loop resolved the only way it could: a
+ * perfectly visible stage, `withheld: player-not-ready`, and not one command
+ * issued.
+ *
+ * So the two questions are separated, exactly as they are in fact. **Policy**
+ * asks whether a scripted start is permitted here — the document is visible, and
+ * more than half of the real player box is on screen. **Execution** then builds
+ * the player and waits for it, inside `engine.start`, where a failure is a
+ * bounded, recoverable failure to start rather than a policy verdict. Nothing
+ * about the policy is weakened by the move: the same two conditions decide it,
+ * measured the same way, against the same threshold.
  *
  * Nothing here manufactures a ratio. The number that reaches `mayAutoplay` is
  * either one the caller measured or one an `IntersectionObserver` reported on
@@ -223,18 +233,17 @@ async function decideStart(options: StartOptions): Promise<StartDecision> {
 
   tracePlayback('decide:waiting', youTubeVisibilitySnapshot())
   const engine = getYouTubeEngine()
-  const [measurement, ready] = await Promise.all([
-    waitForYouTubeVisibility({ minimumRatio: AUTOPLAY_VISIBILITY_RATIO }),
-    engine.whenReady(),
-  ])
-  const iframe = engine.describeIframe()
+  const measurement = await waitForYouTubeVisibility({ minimumRatio: AUTOPLAY_VISIBILITY_RATIO })
+  const creation = engine.describeCreation()
   tracePlayback('decide:measured', {
     ...measurement,
-    playerReady: ready,
-    // The configuration fact that decides whether a scripted start could ever
-    // succeed, read from the real generated frame rather than assumed.
-    iframeAllowsAutoplay: iframe?.allowsAutoplay ?? null,
-    iframeAllow: iframe?.allow ?? null,
+    // Recorded, never waited on. A player exists here only if something else
+    // built one; the start that follows builds it otherwise.
+    playerReady: engine.isReady(),
+    apiReady: engine.isApiReady(),
+    creation: creation.state,
+    creationGeneration: creation.generation,
+    creationTimedOut: creation.timedOut,
   })
 
   // Re-read the document rather than trusting the value from before the wait:
@@ -251,15 +260,11 @@ async function decideStart(options: StartOptions): Promise<StartDecision> {
     ? 'document-hidden'
     : !allowed
       ? 'visibility'
-      : !ready
-        ? 'player-not-ready'
-        : null
+      : null
 
   return {
     ...base,
-    // A player that never became usable is cued rather than played: issuing a
-    // start into nothing would leave the store claiming `loading` for ever.
-    mode: allowed && ready ? 'play' : 'cue',
+    mode: allowed ? 'play' : 'cue',
     withheld,
     visibleRatio: measurement.ratio,
     measured: measurement.measured,
@@ -491,12 +496,19 @@ async function runStartSequence(
    * load beginning and falling straight back to a cued state —
    * `unstarted → buffering → unstarted → cued`.
    *
-   * `prepare` does the part that was actually wanted and none of the part that
-   * was not: fetch the IFrame API script, construct an empty player, delegate
-   * the autoplay permission on its iframe. No media, no thumbnail, no Data API
-   * request. The script fetch and the iframe construction still overlap the
-   * visibility measurement — which was the whole point — and the authorised
-   * start is then a single `loadVideoById`, the one authoritative media command.
+   * It then constructed an *empty* player instead, and that was wrong in a worse
+   * way: on a real phone the empty construction never emitted `onReady`, so the
+   * shared creation promise never settled, the request behind it never issued a
+   * command, and the Play button inherited the same dead promise. The trace read
+   * `ratio 1, player ready false, commands [], decision cue` — a fully visible
+   * black player nothing could start.
+   *
+   * `prepare` now prepares infrastructure and only infrastructure: it fetches the
+   * IFrame API script and records the requested item. No player, no media, no
+   * thumbnail, no Data API request, and nothing that can hang. The script fetch
+   * still overlaps the visibility measurement — which was the whole point — and
+   * the authorised start then builds the player around the real video, the same
+   * way a direct click does, and issues a single `loadVideoById`.
    *
    * It also keeps the race closed: `prepare` records the requested item, so the
    * stage's remount-restore branch finds one and stays quiet.
@@ -543,6 +555,22 @@ async function runStartSequence(
   try {
     await engine.start(item, { mode: decision.mode })
     tracePlayback('engine:started', { mode: decision.mode, isPlaying: engine.isPlaying() })
+
+    /**
+     * The configuration fact that decides whether a scripted start could ever
+     * succeed, read from the real generated frame rather than assumed.
+     *
+     * Recorded *here* rather than beside the measurement, because there is no
+     * frame to read until the player has been built — and the player is now
+     * built by the start rather than ahead of it. Read before, it was
+     * unfailingly `null`, which is a diagnostic that says nothing while looking
+     * like an answer.
+     */
+    const iframe = engine.describeIframe()
+    tracePlayback('engine:iframe', {
+      allowsAutoplay: iframe?.allowsAutoplay ?? null,
+      allow: iframe?.allow ?? null,
+    })
 
     if (decision.mode === 'cue') {
       store.getState().setAwaitingUserPlay(true, decision.withheld ?? 'visibility')
@@ -614,6 +642,32 @@ async function runStartSequence(
     afterStart()
     return true
   } catch (error) {
+    /**
+     * The player could not be built inside its bound — which is a failure to
+     * *start*, not a failure of the video.
+     *
+     * Reporting it as an error would be wrong twice over: it would put a red
+     * message under a perfectly good video, and `setError` would move the store
+     * to `'error'`, where there is no Play button to recover with. What the
+     * visitor needs is the video still loaded, the surface still open, and one
+     * press that works — so this ends exactly where a withheld autoplay ends,
+     * with the honest reason attached.
+     *
+     * `true` comes back because the item is fine: a collection that read `false`
+     * here would skip a song over a slow player.
+     */
+    if (isPlayerCreationAbandoned(error)) {
+      tracePlayback('engine:player-not-ready')
+      // Nothing is written if this sequence has been overtaken — by a press of
+      // Play, most likely, which may already have built a working player.
+      if (current() && !engine.isReady()) {
+        store.getState().setStatus('cued')
+        store.getState().setAwaitingUserPlay(true, 'player-not-ready')
+      }
+      afterStart()
+      return true
+    }
+
     const message =
       error instanceof Error && error.message ? error.message : 'YouTube could not play this video.'
     tracePlayback('engine:error', { message })
@@ -722,7 +776,30 @@ export function getYouTubeSnapshot(
  * arrangement is how the next reader learns something untrue.
  */
 
-/** The surface's own play/pause control. Always a direct user gesture. */
+/**
+ * The surface's own play/pause control. Always a direct user gesture.
+ *
+ * **A press of Play must always be able to start the loaded video**, and for a
+ * while it could not. `resume()` is `player?.playVideo()`, so with no player it
+ * was a no-op — and the one situation in which the visitor most needs the button
+ * is precisely the one in which no player exists. A physical phone produced it:
+ * a black stage, a cued store, and a Play button that did nothing at all,
+ * whichever way it was pressed. That is a worse outcome than a refused autoplay
+ * and is never acceptable.
+ *
+ * So the press has two paths, and which one it takes is decided by whether there
+ * is a player to talk to:
+ *
+ * · **There is one** — this is a resume, exactly as before. A working player is
+ *   never rebuilt, and the position is kept.
+ * · **There is not** — the press *is* the recovery. It discards whatever stalled
+ *   or failed earlier, builds a fresh player around the video the store is
+ *   showing, and plays it. Being a real gesture, it is authorised outright:
+ *   `mayAutoplay` has always said a press needs no measurement.
+ *
+ * The start guard is reset first so an older sequence, still waiting out its own
+ * bound, cannot land its conclusion on top of the recovery.
+ */
 export function toggleYouTubePlayback(store: Store = useYouTubeStore): void {
   const state = store.getState()
   if (!state.item) return
@@ -735,8 +812,32 @@ export function toggleYouTubePlayback(store: Store = useYouTubeStore): void {
     return
   }
   activateYouTube()
-  engine.resume()
   state.setAwaitingUserPlay(false)
+
+  if (!engine.isReady()) {
+    const item = state.item
+    resetYouTubeStartGuard()
+    tracePlayback('user:recover-player')
+    store.getState().setStatus('loading')
+    void engine.start(item, { mode: 'play', recover: true }).catch((error: unknown) => {
+      // A recovery that cannot build a player either leaves the visitor exactly
+      // where they were — cued, visible, and free to try again — rather than in
+      // an error state a second press could not leave.
+      if (isPlayerCreationAbandoned(error)) {
+        store.getState().setStatus('cued')
+        store.getState().setAwaitingUserPlay(true, 'player-not-ready')
+        return
+      }
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : 'YouTube could not play this video.'
+      store.getState().setError(message)
+    })
+    return
+  }
+
+  engine.resume()
 }
 
 /**
