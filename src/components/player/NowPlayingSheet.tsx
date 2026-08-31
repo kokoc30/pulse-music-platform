@@ -15,12 +15,6 @@ import { useUiStore } from '@/app/ui-store'
 import { LikeButton } from '@/components/library/LikeButton'
 import { TrackMenu } from '@/components/library/TrackMenu'
 import { Artwork } from '@/components/track/Artwork'
-import {
-  isPlaybackDebugEnabled,
-  lastTraceDetail,
-  tracedSteps,
-  tracedValues,
-} from '@/player/playback-trace'
 import { usePlayerStore } from '@/player/player-store'
 import { REPEAT_LABELS } from '@/player/queue-order'
 import {
@@ -137,8 +131,6 @@ export function NowPlayingSheet({ snapshot }: { snapshot: PlaybackSnapshot }) {
       ) : null}
 
       <AutoplayBlockedNotice />
-
-      <PlaybackDebugReadout />
 
       <PlayerProgress
         currentTime={snapshot.currentTime}
@@ -280,84 +272,6 @@ function AutoplayBlockedNotice() {
     <p className="now-playing-hint" role="status">
       Tap play to continue this YouTube track.
     </p>
-  )
-}
-
-/**
- * The diagnostic readout, for a debug build and for nothing else.
- *
- * A physical phone is the one place the reported failure reproduces and the one
- * place a debugger is least useful, so the trace the transition already records
- * is shown on the device that produced it. It says which of the two candidate
- * causes actually happened — a ratio that never cleared the bar, or a play
- * command the browser refused — which is the whole question.
- *
- * Off unless `?debugPlayback=1` or the matching `localStorage` key is set, and
- * it renders nothing at all otherwise. It shows the app's own measurements: no
- * keys, no identifiers, nothing from a provider payload.
- */
-function PlaybackDebugReadout() {
-  const reason = useYouTubeStore((state) => state.awaitingUserPlayReason)
-  const status = useYouTubeStore((state) => state.status)
-
-  if (!isPlaybackDebugEnabled()) return null
-
-  const decision = lastTraceDetail('decide:result') ?? {}
-  const measurement = lastTraceDetail('visibility:resolved') ?? {}
-
-  /**
-   * Rendered as text, so anything that is not already a primitive becomes a
-   * dash rather than `[object Object]` — a readout nobody can act on is worse
-   * than an absent one. The trace's details are `unknown` by design: it records
-   * what happened, and it is not the trace's job to know how this draws it.
-   */
-  const show = (value: unknown): string => {
-    if (typeof value === 'string') return value
-    if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-    return '—'
-  }
-
-  const measured = lastTraceDetail('decide:measured') ?? {}
-
-  const rows: [string, unknown][] = [
-    ['status', status],
-    ['ratio', decision.visibleRatio],
-    ['measured', decision.measured],
-    ['waited (ms)', decision.waitedMs],
-    ['wait ended', measurement.outcome],
-    // The two readinesses, separately. They are independent facts and reading
-    // one for the other is what made the reported failure unplaceable: the
-    // script had loaded perfectly well, and no player was being built at all.
-    ['api ready', measured.apiReady],
-    ['player ready', measured.playerReady],
-    // Whether a construction is in flight, succeeded, failed, or ran out of
-    // time — and which attempt. On a device with no developer tools this is the
-    // difference between "nothing is happening" and "something gave up".
-    ['player creation', measured.creation],
-    ['creation gen', measured.creationGeneration],
-    ['creation timed out', measured.creationTimedOut],
-    // The configuration fact, read from the real generated frame. If this is
-    // false a scripted start cannot succeed however visible the player is, and
-    // the fix is a permission rather than a timing.
-    ['iframe autoplay', lastTraceDetail('engine:iframe')?.allowsAutoplay],
-    ['decision', decision.mode],
-    ['withheld', decision.withheld],
-    ['commands', tracedValues('engine:command', 'command').join(' → ')],
-    ['states', tracedValues('engine:state', 'state').join(' → ')],
-    ['outcome', lastTraceDetail('engine:outcome')?.outcome],
-    ['blocked', tracedSteps().includes('engine:autoplay-blocked')],
-    ['awaiting', reason],
-  ]
-
-  return (
-    <dl className="playback-debug" aria-label="Playback diagnostics">
-      {rows.map(([name, value]) => (
-        <div key={name}>
-          <dt>{name}</dt>
-          <dd>{show(value)}</dd>
-        </div>
-      ))}
-    </dl>
   )
 }
 

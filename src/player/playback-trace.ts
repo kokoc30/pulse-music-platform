@@ -17,16 +17,25 @@
  *
  * Guessing between those two is how the wrong layer gets "fixed". So every step
  * of a transition records what it actually observed, and the trace can be read
- * back — by a test, or by a visitor running a debug build on the phone that
- * reproduces it.
+ * back — by a test, or, in development, by the console.
  *
  * ## What this is not
  *
  * Not logging, and not shipped console noise. Recording is a push onto a capped
- * array and nothing else; the console and the on-screen readout are silent
- * unless the debug flag is on. Nothing here changes a decision, and nothing here
- * is read by playback logic — a trace that could alter behaviour would be a
+ * array and nothing else, and **in a production build nothing is ever printed
+ * and nothing can switch that on**. Nothing here changes a decision, and nothing
+ * here is read by playback logic — a trace that could alter behaviour would be a
  * second, invisible source of truth.
+ *
+ * ## It has no user interface
+ *
+ * It briefly had one: an on-screen readout, switched on with `?debugPlayback=1`,
+ * because the failure it was built to diagnose only reproduced on a physical
+ * phone — the one place a debugger is least useful. That investigation is
+ * closed and the panel is gone. What remains is an instrument for tests and for
+ * development, which is what it should have been all along: shipping a public
+ * debug mode means every visitor is one URL away from engineering output on top
+ * of their music.
  */
 
 /** One recorded step. `at` is milliseconds since the transition began. */
@@ -58,29 +67,63 @@ function now(): number {
 }
 
 /**
- * Whether the diagnostic build is switched on.
+ * The obsolete flag a physical-device session may have left behind.
  *
- * `?debugPlayback=1` for a one-off run, or `pulse.debugPlayback` in
- * `localStorage` so a physical-device session survives the reloads a real test
- * involves. Read once and cached: this is consulted on every recorded step, and
- * parsing a URL each time would make the instrument expensive enough to change
- * what it measures.
+ * Testers were asked to set it so a debug build survived the reloads a real
+ * device investigation involves. It no longer switches anything on, and a dead
+ * key sitting in a visitor's browser is the kind of thing that gets rediscovered
+ * years later and misread as live configuration.
+ */
+export const LEGACY_DEBUG_STORAGE_KEY = 'pulse.debugPlayback'
+
+/**
+ * Whether the console trace is switched on — **development only**.
+ *
+ * Two conditions, and the first is not negotiable: `import.meta.env.DEV`. In a
+ * production build this returns `false` whatever the URL says, so no visitor can
+ * turn playback tracing on, and there is nothing for one to turn on — the
+ * on-screen readout this used to gate has been deleted.
+ *
+ * In development, `?debugPlayback=1` prints the trace to the console as it is
+ * recorded. The `localStorage` half is gone with the device investigation that
+ * needed it; see `forgetLegacyPlaybackDebugFlag`.
+ *
+ * Read once and cached: this is consulted on every recorded step, and parsing a
+ * URL each time would make the instrument expensive enough to change what it
+ * measures.
  */
 export function isPlaybackDebugEnabled(): boolean {
   if (debug !== null) return debug
   debug = false
+  if (!import.meta.env.DEV) return debug
   try {
     if (typeof window !== 'undefined') {
-      if (new URLSearchParams(window.location.search).get('debugPlayback') === '1') debug = true
-      else if (window.localStorage.getItem('pulse.debugPlayback') === '1') debug = true
+      debug = new URLSearchParams(window.location.search).get('debugPlayback') === '1'
     }
   } catch {
-    // A context with storage disabled is simply not a debug context.
+    // A context that cannot be read is simply not a debug context.
   }
   return debug
 }
 
-/** Test seam, and the switch the debug overlay writes. */
+/**
+ * Deletes the obsolete debug flag, once, at start-up.
+ *
+ * Scoped to exactly one key. Every other `pulse.*` entry — the library, the
+ * personalization store — belongs to the visitor and is not touched.
+ */
+export function forgetLegacyPlaybackDebugFlag(): void {
+  try {
+    if (typeof window === 'undefined') return
+    if (window.localStorage.getItem(LEGACY_DEBUG_STORAGE_KEY) === null) return
+    window.localStorage.removeItem(LEGACY_DEBUG_STORAGE_KEY)
+  } catch {
+    // Storage disabled or blocked. There is nothing to clean up and nothing
+    // that could go wrong by leaving it.
+  }
+}
+
+/** Test seam. */
 export function setPlaybackDebug(enabled: boolean | null): void {
   debug = enabled
 }
@@ -110,9 +153,20 @@ function record(step: string, detail?: Record<string, unknown>): void {
     ? { at: Math.round(now() - startedAt), step, detail }
     : { at: Math.round(now() - startedAt), step }
   events.push(event)
-  if (!isPlaybackDebugEnabled()) return
-  // eslint-disable-next-line no-console -- the whole point of the debug build.
-  console.info(`[pulse:playback] +${event.at}ms ${step}`, detail ?? '')
+  /**
+   * The console half, and the literal `import.meta.env.DEV` is deliberate.
+   *
+   * `isPlaybackDebugEnabled()` already answers `false` in production, so this
+   * would be unreachable either way — but a bundler cannot prove that through a
+   * function call, and the message template would still be shipped. Written as a
+   * statically foldable condition, the branch and its string are eliminated from
+   * the production bundle outright, which is a stronger guarantee than
+   * unreachable code.
+   */
+  if (import.meta.env.DEV && isPlaybackDebugEnabled()) {
+    // eslint-disable-next-line no-console -- development instrument, DEV-gated.
+    console.info(`[pulse:playback] +${event.at}ms ${step}`, detail ?? '')
+  }
 }
 
 /** The current trace, oldest first. */

@@ -229,41 +229,6 @@
 }
 
 /* ==========================================================================
-   The diagnostic readout
-
-   Rendered only under `?debugPlayback=1`, so none of this is in a normal
-   session. Deliberately plain: it is an instrument, not a surface.
-   ========================================================================== */
-
-.playback-debug {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 10px;
-  margin: 0;
-  padding: 8px 10px;
-  border: 1px dashed var(--color-player-border);
-  border-radius: var(--radius-bar);
-  color: var(--color-text-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.playback-debug > div {
-  display: contents;
-}
-
-.playback-debug dt {
-  color: var(--color-text-dim);
-}
-
-.playback-debug dd {
-  margin: 0;
-  color: var(--color-text);
-  font-variant-numeric: tabular-nums;
-}
-
-/* ==========================================================================
    Scrubber
 
    Same component as the bar, one size larger: a bigger hit area is the whole

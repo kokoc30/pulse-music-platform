@@ -212,6 +212,47 @@ test.describe('the visible player', () => {
     expect(vars).not.toHaveProperty('modestbranding')
   })
 
+  /**
+   * The production build has no debug mode, and this is the build that proves
+   * it: these specs run against `vite preview` of the real bundle, where
+   * `import.meta.env.DEV` is false.
+   *
+   * The diagnostic readout existed to place one hand-off failure on a physical
+   * phone. That is done, and it is not something to leave switchable in a music
+   * player — a visitor pasting a URL should not land on a monospace table of
+   * engineering measurements sitting on top of their music.
+   */
+  test('shows no diagnostic panel in production, even with ?debugPlayback=1', async ({ page }) => {
+    const traced: string[] = []
+    page.on('console', (message) => {
+      if (message.text().includes('[pulse:playback]')) traced.push(message.text())
+    })
+
+    await page.goto('/search?q=nothing here&debugPlayback=1')
+    await page.getByTestId('youtube-fallback').click()
+    await page.locator(rows).first().click()
+    await expect(page.locator(`${stage} iframe`)).toHaveCount(1)
+
+    // The product UI, on whichever viewport this project runs.
+    const sheet = page.getByRole('dialog', { name: /now playing/i })
+    await expect(sheet).toBeVisible()
+    await expect(page.locator(surface)).toBeVisible()
+    await expect(sheet.getByRole('button', { name: /^(Play|Pause)$/ })).toBeVisible()
+    await expect(sheet.getByRole('slider', { name: /seek/i })).toBeVisible()
+
+    // And none of the instrument: no panel, no leftover container, no labels.
+    await expect(page.locator('.playback-debug')).toHaveCount(0)
+    await expect(page.getByLabel('Playback diagnostics')).toHaveCount(0)
+    for (const label of ['iframe autoplay', 'player creation', 'withheld', 'wait ended']) {
+      await expect(sheet.getByText(label, { exact: true })).toHaveCount(0)
+    }
+    // Nor a gap where it used to be: nothing in the sheet is an empty box.
+    await expect(sheet.locator('dl')).toHaveCount(0)
+
+    // The console stays quiet too.
+    expect(traced).toEqual([])
+  })
+
   test('keeps the close control outside the iframe', async ({ page }) => {
     await page.locator(rows).first().click()
     await expect(page.locator(`${stage} iframe`)).toHaveCount(1)

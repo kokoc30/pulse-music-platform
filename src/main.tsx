@@ -5,12 +5,17 @@ import { createRoot } from 'react-dom/client'
 import App from '@/app/App'
 import { createAudiusProvider } from '@/music/audius/adapter'
 import { setMusicProvider } from '@/music/provider'
+import { forgetLegacyPlaybackDebugFlag } from '@/player/playback-trace'
 import { watchInstallAvailability } from '@/pwa/install'
 import { registerServiceWorker } from '@/pwa/register-sw'
 import '@/styles/index.css'
 
 // One provider instance for the whole application, registered before render.
 setMusicProvider(createAudiusProvider())
+
+// A physical-device debug session may have left a flag behind that no longer
+// switches anything on. Removed once, and nothing else in storage is touched.
+forgetLegacyPlaybackDebugFlag()
 
 const container = document.getElementById('root')
 if (!container) throw new Error('Root container #root is missing from index.html')
