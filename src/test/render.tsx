@@ -22,6 +22,8 @@ import { initialPlayerState, usePlayerStore } from '@/player/player-store'
 import { clearAutoplayBuffer, clearSessionPool } from '@/player/autoplay'
 import { clearCollection } from '@/player/collection-session'
 import { resetPlaybackCoordinator } from '@/player/playback-coordinator'
+import { resetPlaybackTrace } from '@/player/playback-trace'
+import { resetYouTubeStartGuard } from '@/player/youtube-actions'
 import { createFakeYouTubeFactory } from '@/player/youtube/fake-adapter'
 import type { FakeYouTubeFactory } from '@/player/youtube/fake-adapter'
 import { createYouTubeIframeEngine, setYouTubeEngine } from '@/player/youtube-engine'
@@ -97,6 +99,11 @@ export function resetAppState(): FakeAudioEngine {
   })
 
   useYouTubeStore.setState({ ...initialYouTubeState })
+  // A start sequence spans two bounded waits and can outlive the test that began
+  // it. The guard is what makes a stale one stop writing; resetting it here means
+  // the next test's transition is the newest rather than one more in a queue.
+  resetYouTubeStartGuard()
+  resetPlaybackTrace()
   resetPlaybackCoordinator()
   // The collection session is a module-level singleton like every other line
   // here. One left running would keep answering "what plays next" in a test that

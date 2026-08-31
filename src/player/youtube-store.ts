@@ -22,6 +22,7 @@ export type AwaitingPlayReason =
   | 'permission-policy'
   | 'autoplay-blocked'
   | 'player-command-no-start'
+  | 'player-returned-to-cued'
 
 export interface YouTubePlaybackState {
   /** The item the surface is showing. Null means the surface is closed. */
@@ -58,13 +59,16 @@ export interface YouTubePlaybackState {
    *   or the provider said so, through the documented `onAutoplayBlocked`.
    *   **Not** the app's decision, and nothing in this codebase can or should
    *   work around it.
-   * · `'player-command-no-start'` — the app issued a play command, nothing
-   *   refused it out loud, and playback still never began. The quiet form of the
-   *   case above: a browser that declines without firing the event, which is
-   *   what a real phone reported — the correct video loaded, YouTube's own red
-   *   play overlay still on it, and no error anywhere. Distinguished because a
-   *   silent refusal and a loud one look identical from the store and need the
-   *   same response but a different diagnosis.
+   * · `'player-command-no-start'` — the app issued a play command and the player
+   *   said nothing at all inside the confirmation window. The quiet form of the
+   *   case above: a browser that declines without firing the event.
+   * · `'player-returned-to-cued'` — the app issued a play command, the player
+   *   *began* (`buffering`) and then fell back to `cued`. This is the sequence a
+   *   physical phone actually reported —
+   *   `unstarted → buffering → unstarted → cued` — and it is the most specific
+   *   silent refusal there is: the command was accepted, the start was attempted,
+   *   and something stopped it without raising anything. Nothing in this codebase
+   *   can or should work around it.
    */
   awaitingUserPlayReason: AwaitingPlayReason | null
   currentTime: number

@@ -447,15 +447,11 @@ test.describe('what the application actually asked the player to do', () => {
    */
   test('handles a genuine refusal without retrying or skipping the item', async ({ page }) => {
     await likeAudioVideoAudio(page)
+    // A page-level flag the doubled API reads when it initialises, so the very
+    // first scripted start is the one that is refused. Set on the page rather
+    // than on the recorder, which the next navigation replaces.
     await page.addInitScript(() => {
-      // Armed before the player exists, so the very first scripted start is the
-      // one that is refused.
-      const install = () => {
-        const globals = window as unknown as { __pulseYouTube?: { blockAutoplay: boolean } }
-        if (globals.__pulseYouTube) globals.__pulseYouTube.blockAutoplay = true
-        else setTimeout(install, 10)
-      }
-      install()
+      ;(window as unknown as { __pulseBlockAutoplay: boolean }).__pulseBlockAutoplay = true
     })
 
     await reachTheVideo(page)
@@ -479,7 +475,7 @@ test.describe('what the application actually asked the player to do', () => {
 
     // One Play button, and the honest explanation beside it.
     await expect(sheet.getByRole('button', { name: 'Play', exact: true })).toHaveCount(1)
-    await expect(sheet.getByText(/asked for a tap before playing/i)).toBeVisible()
+    await expect(sheet.getByText(/tap play to continue/i)).toBeVisible()
 
     // No retry loop, and the collection did not move past the item.
     await page.waitForTimeout(2_000)
@@ -536,5 +532,132 @@ test.describe('what the visitor sees after the hand-off', () => {
     // And the clock moves, which a cued player's never does.
     const elapsed = () => sheet.locator('.progress span').first().innerText()
     await expect.poll(elapsed, { timeout: 10_000 }).not.toBe('0:00')
+  })
+})
+
+/**
+ * One authoritative media command, in a real browser.
+ *
+ * The hand-off used to prepare the player by *cueing* the video, so an
+ * authorised automatic start issued `cue` and then `loadVideoById` at a player
+ * the constructor had already been given the same id for. Preparation now builds
+ * an empty player and loads nothing, so the start is a single documented
+ * command — which is both the correct shape and one fewer thing to have caused
+ * the load-then-fall-back a physical device reported.
+ */
+test.describe('the command sequence a hand-off produces', () => {
+  test.use({ viewport: MOBILE })
+
+  test.beforeEach(async ({ page }) => {
+    await stubAllProviders(page)
+  })
+
+  test('is exactly one loadVideoById, with no preparatory cue', async ({ page }) => {
+    await likeAudioVideoAudio(page)
+    await reachTheVideo(page)
+    await expect(nowPlayingSheet(page)).toBeVisible()
+
+    const recorded = await page.evaluate(
+      () =>
+        (window as unknown as { __pulseYouTube?: { commands?: string[] } }).__pulseYouTube
+          ?.commands ?? [],
+    )
+    expect(recorded).toEqual(['loadVideoById'])
+  })
+
+  test('reaches playing through the documented state sequence', async ({ page }) => {
+    await likeAudioVideoAudio(page)
+    await reachTheVideo(page)
+
+    // `buffering` on its own is never treated as success; the store only says
+    // playing once the player does.
+    await expect(nowPlayingSheet(page).getByRole('button', { name: 'Pause' })).toBeVisible()
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __pulseYouTube?: { playing?: boolean } }).__pulseYouTube
+              ?.playing ?? false,
+        ),
+      )
+      .toBe(true)
+  })
+})
+
+/**
+ * The exact sequence a physical device produced, end to end.
+ *
+ * `buffering → unstarted → cued`, with no error and no `onAutoplayBlocked`. The
+ * app did everything right — the view opened, the player was visible and ready,
+ * one documented load command went out — and the player fell back to its
+ * thumbnail anyway. A silent refusal.
+ *
+ * What must not happen is what did: the diagnostic reporting `outcome: started`
+ * because buffering had been seen, beside a store that said `cued`.
+ */
+test.describe('a player that loads, buffers and falls back to cued', () => {
+  test.use({ viewport: MOBILE })
+
+  test.beforeEach(async ({ page }) => {
+    await stubAllProviders(page)
+  })
+
+  test('is reported as a refusal, not as a start', async ({ page }) => {
+    await likeAudioVideoAudio(page)
+    await page.addInitScript(() => {
+      ;(window as unknown as { __pulseRefuseNextStart: boolean }).__pulseRefuseNextStart = true
+    })
+    await reachTheVideo(page)
+    const sheet = nowPlayingSheet(page)
+    await expect(sheet).toBeVisible()
+
+    // One Play control and the honest line beside it — never a spinner, and
+    // never a claim that it is playing.
+    await expect(sheet.getByRole('button', { name: 'Play', exact: true })).toHaveCount(1)
+    await expect(sheet.getByRole('button', { name: 'Pause' })).toHaveCount(0)
+    await expect(sheet.getByText(/tap play to continue/i)).toBeVisible()
+
+    // The collection stayed on the item rather than skipping past it.
+    await expect(
+      sheet.getByRole('heading', { name: 'Night Signal (Official Video)' }),
+    ).toBeVisible()
+
+    // And nothing was re-issued in the seconds that followed.
+    const issued = await page.evaluate(
+      () =>
+        (window as unknown as { __pulseYouTube?: { commands?: string[] } }).__pulseYouTube?.commands
+          ?.length ?? 0,
+    )
+    await page.waitForTimeout(2_000)
+    expect(
+      await page.evaluate(
+        () =>
+          (window as unknown as { __pulseYouTube?: { commands?: string[] } }).__pulseYouTube
+            ?.commands?.length ?? 0,
+      ),
+    ).toBe(issued)
+  })
+
+  test('a manual press then starts it, and the list carries on afterwards', async ({ page }) => {
+    await likeAudioVideoAudio(page)
+    await page.addInitScript(() => {
+      ;(window as unknown as { __pulseRefuseNextStart: boolean }).__pulseRefuseNextStart = true
+    })
+    await reachTheVideo(page)
+    const sheet = nowPlayingSheet(page)
+    await expect(sheet.getByRole('button', { name: 'Play', exact: true })).toBeVisible()
+
+    await sheet.getByRole('button', { name: 'Play', exact: true }).click()
+    await expect(sheet.getByRole('button', { name: 'Pause' })).toBeVisible()
+
+    // And when it ends, the collection continues to the next saved song.
+    await page.evaluate(() =>
+      (
+        window as unknown as { __pulseYouTube: { endCurrent: () => void } }
+      ).__pulseYouTube.endCurrent(),
+    )
+    await expect(sheet.getByRole('heading', { name: 'Night Drive' })).toBeVisible({
+      timeout: 15_000,
+    })
   })
 })

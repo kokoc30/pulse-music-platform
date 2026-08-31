@@ -319,26 +319,58 @@ export async function playYouTubeVideo(
 }
 
 /**
- * How long an issued play command has to produce playback before it is treated
- * as having been declined.
+ * How long an issued play command has to reach `playing` before it is treated as
+ * having been declined.
  *
- * Long enough for a buffer to begin on a slow mobile connection — a start
- * announces itself with `buffering` well before any content arrives, so this is
- * measuring the round trip to the player rather than the network. Short enough
- * that a visitor is not left in front of a spinner over a video that is never
- * going to start.
+ * Longer than it once was, and deliberately: success now requires *playing*
+ * rather than merely *buffering*, and a real buffer on a phone on a slow
+ * connection legitimately takes seconds. This bound is a backstop rather than
+ * the usual exit — a refusal announces itself by dropping back to `cued`, which
+ * ends the wait at once, and a success announces itself by playing.
  */
-export const START_CONFIRMATION_MS = 2_500
-
-export type StartOutcome = 'started' | 'blocked' | 'error' | 'no-start'
+export const START_CONFIRMATION_MS = 6_000
 
 /**
- * Watches YouTube's own state events for the answer to "did it start".
+ * What became of an authorised automatic start.
  *
- * `buffering` counts, and counts as success: it is the player saying it has
- * accepted the command and gone to fetch content. Waiting for `playing` alone
- * would report a refusal every time a phone on a slow connection took longer
- * than the bound to fill its buffer.
+ * `'started'` means one thing only: the player reached `playing`. It used to
+ * also mean "reached `buffering`", and that was a false positive with real
+ * consequences — a physical phone reported
+ * `unstarted → buffering → unstarted → cued` while the diagnostic panel said
+ * `outcome: started` beside `status: cued`, two statements that cannot both be
+ * true. A diagnostic that contradicts itself is worse than none, because it
+ * sends the next person to the wrong layer.
+ */
+export type StartOutcome =
+  | 'started'
+  | 'blocked'
+  | 'error'
+  /** Buffering began and the player then fell back to a cued/unstarted state. */
+  | 'returned-to-cued'
+  | 'timeout'
+
+/**
+ * Watches YouTube's own state events for the answer to "did it actually start".
+ *
+ * **`buffering` is an intermediate state, not an outcome.** It is the player
+ * saying it accepted the command and went to fetch content; whether it then
+ * plays is a different question, and on a real device the answer was no. So a
+ * buffer is recorded and the watch continues.
+ *
+ * The sequences and what they mean:
+ *
+ * · `… → playing` — started. The only success.
+ * · `… → buffering → cued` / `→ unstarted` — the player took the command, began,
+ *   and was stopped. A silent refusal: no error, no `onAutoplayBlocked`, and
+ *   from the store indistinguishable from a start still in flight. Resolved
+ *   immediately, because there is nothing left to wait for.
+ * · `onAutoplayBlocked` — a refusal the browser announced.
+ * · `onError` — the video itself failed.
+ * · nothing at all inside the bound — timed out.
+ *
+ * A `cued` or `unstarted` event *before* any buffering is the player settling
+ * after the command and is ignored: the real trace opens with `unstarted`, and
+ * treating that as a refusal would fail every start instantly.
  */
 async function confirmPlaybackStarted(
   engine: ReturnType<typeof getYouTubeEngine>,
@@ -348,6 +380,8 @@ async function confirmPlaybackStarted(
 
   return await new Promise<StartOutcome>((resolve) => {
     let settled = false
+    let buffered = false
+
     const finish = (outcome: StartOutcome) => {
       if (settled) return
       settled = true
@@ -358,14 +392,57 @@ async function confirmPlaybackStarted(
 
     const unsubscribe = engine.subscribe({
       onStateChange: (state) => {
-        if (state === 'playing' || state === 'buffering') finish('started')
+        if (state === 'playing') {
+          finish('started')
+          return
+        }
+        if (state === 'buffering') {
+          // Progress, not success. Recorded so a later fall-back to a cued state
+          // can be told from the player merely settling before it ever began.
+          buffered = true
+          tracePlayback('confirm:buffering')
+          return
+        }
+        if (buffered && (state === 'cued' || state === 'unstarted')) {
+          finish('returned-to-cued')
+        }
       },
       onAutoplayBlocked: () => finish('blocked'),
       onError: () => finish('error'),
     })
 
-    const timer = setTimeout(() => finish('no-start'), timeoutMs)
+    const timer = setTimeout(() => finish('timeout'), timeoutMs)
   })
+}
+
+/**
+ * The newest start sequence wins, and older ones stop writing.
+ *
+ * A sequence now spans two bounded waits — the visibility measurement and the
+ * confirmation that playback really began — so it can be in flight for seconds,
+ * and in those seconds the visitor can press Next, open something else, or let
+ * the collection move on. Whatever it eventually concludes is then a conclusion
+ * about a video nobody is listening to any more, and writing it to the shared
+ * store would overwrite the truth with stale news: a `cued` status and a "press
+ * play" prompt landing on top of a track that is already playing.
+ *
+ * The engine solved the same problem for player commands with a request token.
+ * This is that discipline applied one layer up, to the store writes — because
+ * dropping the command is not enough if the *conclusion* still lands.
+ */
+let latestStart = 0
+
+/**
+ * Invalidates every start sequence currently in flight.
+ *
+ * Bumps rather than zeroes, and the difference is the whole point: setting the
+ * counter back to zero would make a *stale* sequence's token match the next
+ * one's, so an abandoned transition would come back to life and write its
+ * conclusion into a player it no longer has anything to do with. A monotonic
+ * counter can only ever invalidate.
+ */
+export function resetYouTubeStartGuard(): void {
+  latestStart += 1
 }
 
 /**
@@ -381,6 +458,10 @@ async function runStartSequence(
   store: Store,
   afterStart: () => void,
 ): Promise<boolean> {
+  const token = (latestStart += 1)
+  /** True while this sequence is still the one the visitor is waiting on. */
+  const current = () => token === latestStart
+
   beginPlaybackTrace(`youtube:${item.videoId}`)
   tracePlayback('reveal:begin', {
     reason: options.reason ?? 'user-selection',
@@ -399,19 +480,26 @@ async function runStartSequence(
   const engine = getYouTubeEngine()
 
   /**
-   * A transition that is going to wait prepares the player *while* it waits.
+   * A transition that is going to wait builds the *player* while it waits — and
+   * loads nothing into it.
    *
-   * Cueing is the documented way to build and line up a player without
-   * initiating playback: no audiovisual content starts, nothing is hidden, no
-   * Data API quota is spent, and it is exactly what the engine would do a moment
-   * later anyway. Doing it here rather than after the decision means the IFrame
-   * API script and the iframe are being built during the very milliseconds the
-   * visibility observer is settling, instead of afterwards — which is most of
-   * the latency between "the list moved on" and "the video started" on a phone.
+   * This used to issue a `cue`, on the reasoning that cueing is the documented
+   * way to line an item up without initiating playback. That is true, and it was
+   * still the wrong instrument: it meant an authorised automatic start sent two
+   * media commands, `cue` then `loadVideoById`, at a player the constructor had
+   * already been given the same id for. A physical device then reported the
+   * load beginning and falling straight back to a cued state —
+   * `unstarted → buffering → unstarted → cued`.
    *
-   * It also removes a race by construction: setting the engine's current item
-   * now means the stage's remount-restore branch finds one and stays quiet,
-   * rather than issuing a cue of its own alongside the play.
+   * `prepare` does the part that was actually wanted and none of the part that
+   * was not: fetch the IFrame API script, construct an empty player, delegate
+   * the autoplay permission on its iframe. No media, no thumbnail, no Data API
+   * request. The script fetch and the iframe construction still overlap the
+   * visibility measurement — which was the whole point — and the authorised
+   * start is then a single `loadVideoById`, the one authoritative media command.
+   *
+   * It also keeps the race closed: `prepare` records the requested item, so the
+   * stage's remount-restore branch finds one and stays quiet.
    *
    * Two callers skip it, and both would be paying for nothing:
    *
@@ -422,8 +510,8 @@ async function runStartSequence(
    */
   const willWait = !options.userInitiated && typeof options.visibleRatio !== 'number'
   if (willWait) {
-    tracePlayback('prepare:cue')
-    void engine.start(item, { mode: 'cue' }).catch(() => {
+    tracePlayback('prepare:player')
+    void engine.prepare(item).catch(() => {
       // A failure here is reported by the play attempt that follows it.
     })
   }
@@ -431,6 +519,21 @@ async function runStartSequence(
   // PHASE 2 — DECIDE. Visibility and player readiness, together, bounded.
   const decision = await decideStart(options)
   tracePlayback('decide:result', { ...decision })
+
+  /**
+   * Something newer took over while this was measuring, so this sequence stops
+   * acting — and reports **success**.
+   *
+   * That return value is not a formality. `advanceCollection` reads `false` as
+   * *this saved item could not be played* and steps past it, so returning false
+   * here would make a superseded transition silently skip a song. Being
+   * overtaken is not the same as being unplayable: the item is fine, and the
+   * newer sequence owns what happens to it now.
+   */
+  if (!current()) {
+    tracePlayback('superseded', { at: 'decide' })
+    return true
+  }
 
   // PHASE 3 — START OR CUE.
   if (decision.mode === 'play' && store.getState().status === 'cued') {
@@ -462,28 +565,51 @@ async function runStartSequence(
      * overlay. A browser can decline a scripted start without saying so, and
      * from the store that is indistinguishable from a start still in flight.
      *
-     * So the outcome is confirmed rather than assumed, once, within a bound. One
-     * attempt: this never re-issues the command, because a refusal repeated is
-     * still a refusal and a loop of `playVideo()` is exactly the kind of
-     * pestering an autoplay policy exists to stop.
+     * **Watched in the background, and deliberately not awaited.** The caller's
+     * question is "was this item started", and it has been answered the moment
+     * the command goes out; whether the player then honours it is a correction
+     * that arrives seconds later. Blocking on it would hold up everything behind
+     * this — `advanceCollection` would not return until playback was confirmed,
+     * and the collection's own bookkeeping would sit behind a network buffer.
+     *
+     * One attempt either way: this never re-issues the command, because a
+     * refusal repeated is still a refusal and a loop of `playVideo()` is exactly
+     * the pestering an autoplay policy exists to stop.
      */
-    const outcome = await confirmPlaybackStarted(engine)
-    tracePlayback('engine:outcome', { outcome })
+    void confirmPlaybackStarted(engine).then((outcome) => {
+      tracePlayback('engine:outcome', { outcome })
 
-    if (outcome === 'started') {
-      if (engine.isPlaying()) store.getState().setStatus('playing')
-      afterStart()
-      return true
-    }
+      // The confirmation is the longest wait in the sequence, so this is the
+      // guard that matters most: a six-second-old conclusion must never
+      // overwrite whatever the visitor is actually listening to now.
+      if (!current()) {
+        tracePlayback('superseded', { at: 'confirm' })
+        return
+      }
 
-    if (outcome === 'no-start') {
-      // Nothing refused it out loud and nothing began. Recorded as its own
-      // reason so a diagnosis can tell a silent refusal from a loud one.
-      store.getState().setStatus('cued')
-      store.getState().setAwaitingUserPlay(true, 'player-command-no-start')
-    }
-    // `blocked` and `error` are already reported by the engine subscription,
-    // which owns those two events and the reasons that go with them.
+      if (outcome === 'started') {
+        store.getState().setStatus('playing')
+        return
+      }
+
+      /**
+       * Every remaining outcome ends the same way for the visitor — a cued,
+       * visible player and one Play button — and differently for a diagnosis.
+       *
+       * `blocked` and `error` are already reported by the engine subscription,
+       * which owns those two events and the reasons that go with them; touching
+       * the store here would replace a specific answer with a vaguer one.
+       */
+      if (outcome === 'returned-to-cued' || outcome === 'timeout') {
+        store.getState().setStatus('cued')
+        store
+          .getState()
+          .setAwaitingUserPlay(
+            true,
+            outcome === 'returned-to-cued' ? 'player-returned-to-cued' : 'player-command-no-start',
+          )
+      }
+    })
 
     afterStart()
     return true

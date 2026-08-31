@@ -6,6 +6,7 @@ import { lastTraceDetail, resetPlaybackTrace, tracedSteps } from './playback-tra
 import { resetPlaybackCoordinator } from './playback-coordinator'
 import { initialPlayerState, usePlayerStore } from './player-store'
 import { clearPlayedSession } from './related-fetcher'
+import { YT_STATE as YT } from './youtube/iframe-adapter'
 import { createFakeYouTubeFactory } from './youtube/fake-adapter'
 import type { FakeYouTubeFactory } from './youtube/fake-adapter'
 import {
@@ -377,7 +378,7 @@ describe('the transition trace', () => {
 
     const steps = tracedSteps()
     expect(steps).toContain('reveal:begin')
-    expect(steps).toContain('prepare:cue')
+    expect(steps).toContain('prepare:player')
     expect(steps).toContain('visibility:observed')
     expect(steps).toContain('visibility:resolved')
     expect(steps).toContain('decide:result')
@@ -449,7 +450,7 @@ describe('a play command that starts nothing', () => {
     await handedOff
 
     expect(PLAY_COMMANDS).toContain(commands.at(-1))
-    expect(lastTraceDetail('engine:outcome')?.outcome).toBe('no-start')
+    expect(lastTraceDetail('engine:outcome')?.outcome).toBe('timeout')
   })
 
   it('does not re-issue the command afterwards', async () => {
@@ -497,5 +498,160 @@ describe('the generated iframe permission', () => {
     // And nothing the API put there was lost doing it.
     expect(frame?.allow).toContain('encrypted-media')
     expect(frame?.allow).toContain('picture-in-picture')
+  })
+})
+
+/* ==========================================================================
+   The exact sequence a physical phone reported
+   ========================================================================== */
+
+/**
+ * `unstarted → buffering → unstarted → cued`, with no error and no
+ * `onAutoplayBlocked` — the trace a real device produced while the diagnostic
+ * panel claimed `outcome: started` beside `status: cued`.
+ *
+ * Those two statements cannot both be true, and the reason they appeared
+ * together is the defect: the confirmation stopped watching at the first
+ * `buffering` and called it success. Buffering is the player saying it accepted
+ * the command and went to fetch content. Whether it then plays is a different
+ * question, and here the answer was no.
+ */
+describe('the sequence a real phone reported', () => {
+  /** Drives YouTube's own state numbers, in order, on the live player. */
+  function emitStates(states: number[]) {
+    const player = factory.current()
+    for (const state of states) player?.emitState(state)
+  }
+
+  /** Accepts the command, reports nothing itself — the test drives the states. */
+  function silentPlayer() {
+    silenceStateEvents(factory.current())
+  }
+
+  async function handOffThen(states: number[]) {
+    const handedOff = handOff()
+    observeAt(300, 0.95)
+    await vi.advanceTimersByTimeAsync(150)
+    silentPlayer()
+    await vi.advanceTimersByTimeAsync(300)
+    await handedOff
+    emitStates(states)
+    // Let the confirmation window run out if the states did not settle it.
+    await vi.advanceTimersByTimeAsync(START_CONFIRMATION_MS + 200)
+  }
+
+  it('does not call buffering a success', async () => {
+    await handOffThen([YT.UNSTARTED, YT.BUFFERING, YT.UNSTARTED, YT.CUED])
+
+    expect(lastTraceDetail('engine:outcome')?.outcome).toBe('returned-to-cued')
+    expect(lastTraceDetail('engine:outcome')?.outcome).not.toBe('started')
+  })
+
+  it('leaves the player cued and asking for a press, with the honest reason', async () => {
+    await handOffThen([YT.UNSTARTED, YT.BUFFERING, YT.UNSTARTED, YT.CUED])
+
+    expect(status()).toBe('cued')
+    expect(useYouTubeStore.getState().awaitingUserPlay).toBe(true)
+    expect(awaiting()).toBe('player-returned-to-cued')
+  })
+
+  /**
+   * The invariant that made the panel self-contradictory. `outcome: started`
+   * beside `status: cued` must be impossible, whichever way the states fall.
+   */
+  it('never reports started while the store says cued', async () => {
+    await handOffThen([YT.UNSTARTED, YT.BUFFERING, YT.UNSTARTED, YT.CUED])
+
+    const outcome = lastTraceDetail('engine:outcome')?.outcome
+    if (status() === 'cued') expect(outcome).not.toBe('started')
+    if (outcome === 'started') expect(status()).toBe('playing')
+  })
+
+  it('does not retry the command after falling back', async () => {
+    await handOffThen([YT.UNSTARTED, YT.BUFFERING, YT.UNSTARTED, YT.CUED])
+    const issued = commands.length
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(commands).toHaveLength(issued)
+  })
+
+  it('keeps the collection on this item rather than skipping it', async () => {
+    await handOffThen([YT.UNSTARTED, YT.BUFFERING, YT.UNSTARTED, YT.CUED])
+    expect(useYouTubeStore.getState().item?.videoId).toBe('aram0000001')
+  })
+
+  it('confirms a start that genuinely reaches playing', async () => {
+    await handOffThen([YT.UNSTARTED, YT.BUFFERING, YT.PLAYING])
+
+    expect(lastTraceDetail('engine:outcome')?.outcome).toBe('started')
+    expect(status()).toBe('playing')
+    expect(useYouTubeStore.getState().awaitingUserPlay).toBe(false)
+  })
+
+  /**
+   * A slow connection buffers for seconds before anything plays. That must not
+   * be mistaken for a refusal — which is why the bound is generous and why
+   * `buffering` merely keeps the watch open rather than ending it either way.
+   */
+  it('waits out a long buffer rather than calling it a refusal', async () => {
+    const handedOff = handOff()
+    observeAt(300, 0.95)
+    await vi.advanceTimersByTimeAsync(150)
+    silentPlayer()
+    await vi.advanceTimersByTimeAsync(300)
+    await handedOff
+
+    factory.current()?.emitState(YT.BUFFERING)
+    await vi.advanceTimersByTimeAsync(START_CONFIRMATION_MS - 1_000)
+    // Still watching: no verdict either way while the player is working.
+    expect(lastTraceDetail('engine:outcome')).toBeUndefined()
+
+    factory.current()?.emitState(YT.PLAYING)
+    await vi.advanceTimersByTimeAsync(50)
+
+    expect(lastTraceDetail('engine:outcome')?.outcome).toBe('started')
+    expect(status()).toBe('playing')
+  })
+})
+
+/* ==========================================================================
+   One authoritative media command
+   ========================================================================== */
+
+describe('the command an authorised automatic start issues', () => {
+  /**
+   * The preparation builds the *player*, not a cued video, so the hand-off is a
+   * single `loadVideoById` rather than `cue → loadVideoById`. One authoritative
+   * media command, at a player that holds nothing until it is given something.
+   */
+  it('is exactly one load, with no preparatory cue in front of it', async () => {
+    const handedOff = handOff()
+    observeAt(50, 0.92)
+    await vi.advanceTimersByTimeAsync(400)
+    await handedOff
+
+    expect(commands).toEqual(['loadVideoById'])
+  })
+
+  it('builds the player without giving it a video', async () => {
+    const handedOff = handOff()
+    observeAt(50, 0.92)
+    await vi.advanceTimersByTimeAsync(400)
+    await handedOff
+
+    // Constructed empty: the id reaches the player through the load command and
+    // through nothing else.
+    expect(factory.players[0]?.options.videoId).toBeUndefined()
+  })
+
+  /** A refusal still cues, because that is what a refusal is for. */
+  it('still cues when the decision withholds playback', async () => {
+    const handedOff = handOff()
+    observeAt(50, 0.42)
+    await vi.advanceTimersByTimeAsync(50 + VISIBILITY_SETTLE_MS + 100)
+    await handedOff
+
+    expect(commands.at(-1)).toBe('cue')
+    expect(awaiting()).toBe('visibility')
   })
 })

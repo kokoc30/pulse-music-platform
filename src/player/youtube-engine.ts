@@ -96,6 +96,28 @@ export interface YouTubeEngine {
    */
   start(item: MediaItem, request: StartRequest): Promise<void>
   /**
+   * Builds the player without loading anything into it.
+   *
+   * Initialisation only: fetch the IFrame API script, construct a `YT.Player`
+   * with **no `videoId`**, delegate the autoplay permission on the iframe it
+   * creates, and stop. No `cueVideoById`, no `loadVideoById`, no media of any
+   * kind — nothing that a policy could regard as playback, and nothing that
+   * costs a Data API request.
+   *
+   * It exists because the previous arrangement prepared the player by *cueing*
+   * the video, which meant an authorised automatic start issued two media
+   * commands (`cue` then `loadVideoById`) at a player that had already been
+   * given the same id at construction. A phone then reported the load beginning
+   * and falling straight back to a cued state. Whether the extra command caused
+   * that or merely accompanied it, one authoritative media command is the
+   * correct shape, and this is what makes it possible.
+   *
+   * The item is recorded as the requested one so nothing else — the stage's own
+   * remount-restore branch, in particular — mistakes an in-flight start for an
+   * idle engine and cues over it.
+   */
+  prepare(item: MediaItem): Promise<boolean>
+  /**
    * True once a player instance exists and can accept commands.
    *
    * Separate from "the container is on screen": the element can be laid out for
@@ -162,9 +184,6 @@ export const PROGRESS_POLL_MS = 1_000
  * cued player and one Play button.
  */
 export const PLAYER_READY_TIMEOUT_MS = 4_000
-
-/** Cheap next to a network script load, and it cannot miss a resolution. */
-const PLAYER_READY_POLL_MS = 25
 
 export interface EngineOptions {
   factory?: YouTubePlayerFactory
@@ -238,6 +257,19 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
   let queue: Promise<unknown> = Promise.resolve()
   let latestRequest = 0
 
+  /**
+   * Someone has asked for a player to exist, without asking for any media.
+   *
+   * Held separately from the request queue because `prepare()` issues no
+   * command: it is the reason `attach()` builds a player for a surface that has
+   * only just mounted, and the reason `whenReady()` knows there is something
+   * worth waiting for.
+   */
+  let wantsPlayer = false
+
+  /** Resolved the instant a player exists, so readiness is never answered late. */
+  const readyWaiters = new Set<(ready: boolean) => void>()
+
   const emit = (fn: (events: YouTubeEngineEvents) => void) => {
     for (const listener of listeners) fn(listener)
   }
@@ -267,14 +299,24 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
     emit((events) => events.onStateChange?.(state))
   }
 
-  async function ensurePlayer(item: YouTubeVideoItem): Promise<YouTubePlayerHandle> {
+  /**
+   * Builds the one player, or hands back the one that exists.
+   *
+   * `seed` is the video to construct it around, and `null` means *construct it
+   * empty* — the documented constructor accepts no `videoId`, and a player built
+   * without one holds no media at all until something is loaded into it. That is
+   * what `prepare()` uses, so an authorised start can be a single
+   * `loadVideoById` rather than a load on top of a video the constructor had
+   * already queued.
+   */
+  async function ensurePlayer(seed: YouTubeVideoItem | null): Promise<YouTubePlayerHandle> {
     if (player) return player
     if (!container) throw new Error('The YouTube player has no visible container yet.')
     // Concurrent calls share one creation: two clicks must not build two
     // players (agents/28 → "One YouTube player instance").
     creating ??= factory
       .create(container, {
-        videoId: item.videoId,
+        ...(seed ? { videoId: seed.videoId } : {}),
         width: RECOMMENDED_WIDTH,
         height: RECOMMENDED_HEIGHT,
         origin: options.origin ?? (typeof window === 'undefined' ? '' : window.location.origin),
@@ -296,6 +338,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       .then((created) => {
         player = created
         creating = null
+        for (const waiter of [...readyWaiters]) waiter(true)
         /**
          * The autoplay delegation, guaranteed here as well as in the factory.
          *
@@ -405,6 +448,17 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       container = next
       const request = pending
       pending = null
+
+      // A preparation asked for before the surface existed. Started now, without
+      // waiting for the queue, because it issues no command and its whole point
+      // is to overlap the visibility measurement rather than follow it.
+      if (!request && wantsPlayer && !player) {
+        void ensurePlayer(null).catch(() => {
+          // Reported by the start that follows, which has a caller to tell.
+        })
+        return
+      }
+
       if (!request) return
       // Through the same queue, so the flushed request takes its place in the
       // same order as everything else. A failure here has no caller left to
@@ -428,6 +482,7 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       current = null
       loaded = null
       pending = null
+      wantsPlayer = false
       // Anything still queued was for a player that no longer exists.
       latestRequest += 1
       queue = Promise.resolve()
@@ -439,30 +494,47 @@ export function createYouTubeIframeEngine(options: EngineOptions = {}): YouTubeE
       await enqueue(requireYouTubeItem(item), request.mode)
     },
 
+    async prepare(item) {
+      const video = requireYouTubeItem(item)
+      // Recorded as the requested item without a command being issued, so the
+      // stage's remount-restore branch can tell an in-flight start from an idle
+      // engine and stays quiet rather than cueing over it.
+      current = video
+      wantsPlayer = true
+      if (player) return true
+      // No container yet — React has not mounted the stage. `attach()` picks
+      // this up, which is the same documented order every other request follows.
+      if (!container) return false
+      try {
+        await ensurePlayer(null)
+        return true
+      } catch {
+        // A script that will not load is reported by the start that follows.
+        return false
+      }
+    },
+
     isReady: () => player !== null,
 
     async whenReady(timeoutMs = PLAYER_READY_TIMEOUT_MS) {
       if (player) return true
       // Nothing is being built and nothing is queued: waiting would be waiting
       // for something nobody asked for.
-      if (!creating && !pending && latestRequest === 0) return false
+      if (!creating && !pending && !wantsPlayer && latestRequest === 0) return false
 
       return await new Promise<boolean>((resolve) => {
         let settled = false
         const finish = (ready: boolean) => {
           if (settled) return
           settled = true
-          clearInterval(poll)
           clearTimeout(cap)
+          readyWaiters.delete(finish)
           resolve(ready)
         }
-        // The creation promise is shared and may already have been consumed by
-        // another caller, so readiness is observed rather than awaited: a short
-        // poll costs nothing next to a network script load and cannot miss a
-        // resolution it did not subscribe to.
-        const poll = setInterval(() => {
-          if (player) finish(true)
-        }, PLAYER_READY_POLL_MS)
+        // Notified the moment the player is assigned rather than polled for it.
+        // A poll would answer up to its own interval late, and this wait sits
+        // directly in front of the visitor's next song.
+        readyWaiters.add(finish)
         const cap = setTimeout(() => finish(player !== null), timeoutMs)
       })
     },

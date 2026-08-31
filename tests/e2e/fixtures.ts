@@ -509,10 +509,16 @@ const FAKE_IFRAME_API = `
     // 'the app asked and the browser refused' distinguishable from 'the app
     // never asked' — the single question the reported failure turned on.
     commands: [],
-    // Flipped by a test to make this player behave like a mobile browser that
-    // declines a scripted, unmuted start. Off by default.
-    blockAutoplay: false,
+    // Seeded from a page-level flag a test sets with an init script, so it
+    // survives the navigation that re-creates this recorder. Setting it on the
+    // recorder directly would race the assignment above.
+    blockAutoplay: window.__pulseBlockAutoplay === true,
     blocked: 0,
+    // One-shot: the first start is accepted, buffers, and falls straight back to
+    // a cued thumbnail with no error and no autoplay-blocked event — the exact
+    // sequence a physical phone reported. Consumed on use, so a manual press
+    // afterwards behaves normally, which is what really happens.
+    refuseNextStart: window.__pulseRefuseNextStart === true,
   }
 
   function Player(element, config) {
@@ -541,6 +547,13 @@ const FAKE_IFRAME_API = `
       }
     }
 
+    function silentlyRefuse() {
+      window.__pulseYouTube.refuseNextStart = false
+      fire(STATE.BUFFERING)
+      fire(STATE.UNSTARTED)
+      fire(STATE.CUED)
+    }
+
     function refuse() {
       window.__pulseYouTube.blocked += 1
       if (config.events && config.events.onAutoplayBlocked) config.events.onAutoplayBlocked()
@@ -556,12 +569,14 @@ const FAKE_IFRAME_API = `
       window.__pulseYouTube.lastVideoId = id
       window.__pulseYouTube.playCalls += 1
       if (window.__pulseYouTube.blockAutoplay) return refuse()
+      if (window.__pulseYouTube.refuseNextStart) return silentlyRefuse()
       fire(STATE.PLAYING)
     }
     this.playVideo = function () {
       window.__pulseYouTube.commands.push('playVideo')
       window.__pulseYouTube.playCalls += 1
       if (window.__pulseYouTube.blockAutoplay) return refuse()
+      if (window.__pulseYouTube.refuseNextStart) return silentlyRefuse()
       fire(STATE.PLAYING)
     }
     // Test seam: drive a natural end, which is the one state a test cannot

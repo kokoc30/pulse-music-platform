@@ -74,7 +74,15 @@ export interface YouTubePlayerEvents {
 }
 
 export interface CreatePlayerOptions {
-  videoId: string
+  /**
+   * The video to construct the player around, or absent for an empty one.
+   *
+   * Optional because the documented constructor treats it as optional, and a
+   * player built without it holds no media until something is loaded in — which
+   * is what lets an authorised automatic start be a single load command rather
+   * than a load on top of a video the constructor already queued.
+   */
+  videoId?: string
   width: number
   height: number
   origin: string

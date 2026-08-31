@@ -259,11 +259,20 @@ function AutoplayBlockedNotice() {
   const reason = useYouTubeStore((state) => state.awaitingUserPlayReason)
   const awaiting = useYouTubeStore((state) => state.awaitingUserPlay)
 
-  if (!awaiting || reason !== 'autoplay-blocked') return null
+  // The three refusals, loud and quiet. A browser that says `onAutoplayBlocked`,
+  // one that accepts the command and never starts, and one that starts and falls
+  // straight back to a thumbnail are the same thing from the visitor's side: the
+  // app asked, the browser declined, and a tap is what will work.
+  const refused =
+    reason === 'autoplay-blocked' ||
+    reason === 'player-command-no-start' ||
+    reason === 'player-returned-to-cued'
+
+  if (!awaiting || !refused) return null
 
   return (
     <p className="now-playing-hint" role="status">
-      Your browser asked for a tap before playing this video.
+      Tap play to continue this YouTube track.
     </p>
   )
 }
