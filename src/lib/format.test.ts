@@ -38,6 +38,13 @@ describe('formatCount', () => {
     expect(formatCount(12_000_000)).toBe('12M')
   })
 
+  it('never renders a rounded-up boundary as 10.0K / 1000K / 10.0M', () => {
+    expect(formatCount(9_999)).toBe('10K')
+    expect(formatCount(999_499)).toBe('999K')
+    expect(formatCount(999_999)).toBe('1.0M')
+    expect(formatCount(9_999_999)).toBe('10M')
+  })
+
   it('is safe for missing or invalid values', () => {
     expect(formatCount(undefined)).toBe('0')
     expect(formatCount(-5)).toBe('0')
